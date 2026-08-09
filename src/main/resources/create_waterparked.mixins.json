@@ -1,0 +1,36 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.omori_sunny.create_waterparked.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "AnchorPeerFakeTracksMixin",
+    "AnchorPeerCurveClientIndexMixin",
+    "BezierBankBlendMixin",
+    "CoasterAnchorBezierOptimizerMixin",
+    "CoasterAnchorpointBlockEntityTypeMixin",
+    "CoasterBezierHandleEditMixin",
+    "CoasterBezierRailFramesMixin",
+    "CoasterOpenEndExtensionMixin",
+    "CoasterPathGraphManagerMixin",
+    "CoasterPeerCurveHandleLengthsMixin",
+    "CoasterTrackPlacementMixin"
+  ],
+  "client": [
+    "client.AnchorPeerCurvePickMixin",
+    "client.AnchorPeerCurveOutlineSupportMixin",
+    "client.BezierHandleDragManagerMixin",
+    "client.BezierHandleEditModeMixin",
+    "client.BezierHandleOverlayMixin",
+    "client.ChainLiftAnchorShaftRendererMixin",
+    "client.CoasterCurveSelectionOutlineRendererMixin",
+    "client.CoasterTrackPlacementPreviewMixin",
+    "client.LevelRendererAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
+}

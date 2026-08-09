@@ -1,0 +1,36 @@
+# MacOS
+.DS_Store
+
+# Gradle
+.gradle/
+build/
+
+# Kotlin compiler sessions
+.kotlin/
+
+# IntelliJ
+out/
+.idea/
+*.iml
+.idea_modules/
+
+# Eclipse
+.classpath
+.project
+.settings/
+.factorypath
+
+# Local settings
+local.properties
+
+# Crash logs
+hs_err_pid*
+*.log
+
+# Common working directory
+run/
+
+# Local dependencies
+libs/
+
+MODELING.md

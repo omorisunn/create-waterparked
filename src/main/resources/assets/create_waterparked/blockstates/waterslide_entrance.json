@@ -1,0 +1,30 @@
+{
+  "variants": {
+    "facing=up": {
+      "model": "create_waterparked:block/waterslide_entrance"
+    },
+    "facing=down": {
+      "model": "create_waterparked:block/waterslide_entrance",
+      "x": 180
+    },
+    "facing=north": {
+      "model": "create_waterparked:block/waterslide_entrance",
+      "x": 90
+    },
+    "facing=south": {
+      "model": "create_waterparked:block/waterslide_entrance",
+      "x": 90,
+      "y": 180
+    },
+    "facing=west": {
+      "model": "create_waterparked:block/waterslide_entrance",
+      "x": 90,
+      "y": 270
+    },
+    "facing=east": {
+      "model": "create_waterparked:block/waterslide_entrance",
+      "x": 90,
+      "y": 90
+    }
+  }
+}

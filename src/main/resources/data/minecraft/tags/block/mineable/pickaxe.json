@@ -1,0 +1,8 @@
+{
+  "replace": false,
+  "values": [
+    "create_waterparked:waterslide_track",
+    "create_waterparked:waterslide_anchor",
+    "create_waterparked:waterslide_entrance"
+  ]
+}

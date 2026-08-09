@@ -1,0 +1,12 @@
+{
+	"ambientocclusion": false,
+	"loader": "neoforge:obj",
+	"flip_v": true,
+	"model": "simulatedcoasters:models/block/track/coaster_track/segment_right.obj",
+	"textures": {
+		"0": "simulatedcoasters:block/coaster_track/standard_track",
+		"1": "simulatedcoasters:block/coaster_track/standard_track_mip",
+		"2": "simulatedcoasters:block/coaster_track/standard_track_crossing",
+		"particle": "create:block/industrial_iron_block"
+	}
+}
