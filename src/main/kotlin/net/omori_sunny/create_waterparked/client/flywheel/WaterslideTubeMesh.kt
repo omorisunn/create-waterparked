@@ -197,6 +197,7 @@ object WaterslideTubeMesh {
     private fun signature(config: WaterslideSectorConfig, maxRadius: Float): String =
         buildString {
             append(maxRadius)
+            append('|').append(config.startAngle)
             for (s in config.sectors) {
                 append('|').append(s.id)
                     .append(',').append(s.material)
@@ -207,7 +208,7 @@ object WaterslideTubeMesh {
         }
 
     private fun build(level: Level, config: WaterslideSectorConfig, maxRadius: Float): TubeModels {
-        val placed = WaterslideSectorLayout.place(config.sectors)
+        val placed = WaterslideSectorLayout.place(config)
         val crossN = max(
             8,
             ceil((2.0 * Math.PI * maxRadius * PIXELS_PER_BLOCK / TILE_SUBDIVISION_PX)).toInt()

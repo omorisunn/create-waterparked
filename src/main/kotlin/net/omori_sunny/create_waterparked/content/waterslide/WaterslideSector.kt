@@ -60,12 +60,15 @@ data class WaterslideSector(
 class WaterslideSectorConfig {
     val sectors = mutableListOf<WaterslideSector>()
     var nextId = 1
+    // ring start angle, moves the seam
+    var startAngle: Float = 0f
 
     fun newId(): Int = nextId++
 
     fun copyOf(): WaterslideSectorConfig {
         val copy = WaterslideSectorConfig()
         copy.nextId = nextId
+        copy.startAngle = startAngle
         copy.sectors += sectors.map { it.copy() }
         return copy
     }
@@ -96,6 +99,7 @@ class WaterslideSectorConfig {
 
     fun write(tag: CompoundTag) {
         tag.putInt("NextId", nextId)
+        tag.putFloat("Start", startAngle)
         val list = ListTag()
         for (sector in sectors) {
             val entry = CompoundTag()
@@ -109,6 +113,7 @@ class WaterslideSectorConfig {
         fun read(tag: CompoundTag): WaterslideSectorConfig {
             val config = WaterslideSectorConfig()
             config.nextId = tag.getInt("NextId")
+            config.startAngle = if (tag.contains("Start", 5)) tag.getFloat("Start") else 0f
             for (entry in tag.getList("Sectors", 10)) {
                 if (entry is CompoundTag) {
                     config.sectors += WaterslideSector.read(entry)
@@ -147,7 +152,8 @@ data class PlacedSector(
 object WaterslideSectorLayout {
     const val FULL_CIRCLE = 360f
 
-    fun place(sectors: List<WaterslideSector>): List<PlacedSector> {
+    fun place(config: WaterslideSectorConfig): List<PlacedSector> {
+        val sectors = config.sectors
         val fixedSum = sectors
             .filter { it.type == SectorType.FIXED }
             .sumOf { it.widthDegrees.toDouble() }
@@ -156,7 +162,7 @@ object WaterslideSectorLayout {
         val remaining = (FULL_CIRCLE - fixedSum).coerceAtLeast(0f)
         val autoWidth = if (autoCount > 0) remaining / autoCount else 0f
 
-        var cursor = 0f
+        var cursor = config.startAngle
         val out = ArrayList<PlacedSector>(sectors.size)
         for (sector in sectors) {
             val width = if (sector.type == SectorType.FIXED) sector.widthDegrees else autoWidth
@@ -170,17 +176,25 @@ object WaterslideSectorLayout {
     fun insertionIndex(placed: List<PlacedSector>, clickAngle: Float): Int {
         val angle = normalize(clickAngle)
         for ((index, p) in placed.withIndex()) {
-            if (angle >= p.startAngle && angle < p.endAngle) {
-                val mid = (p.startAngle + p.endAngle) / 2f
-                return if (angle < mid) index else index + 1
-            }
+            if (!containsAngle(p, angle)) continue
+            val mid = normalize(p.startAngle + (p.endAngle - p.startAngle) / 2f)
+            return if (angle < mid) index else index + 1
         }
         return placed.size
     }
 
     fun sectorAt(placed: List<PlacedSector>, clickAngle: Float): PlacedSector? {
         val angle = normalize(clickAngle)
-        return placed.firstOrNull { angle >= it.startAngle && angle < it.endAngle }
+        return placed.firstOrNull { containsAngle(it, angle) }
+    }
+
+// wrap-aware containment
+    private fun containsAngle(p: PlacedSector, angle: Float): Boolean {
+        val width = p.endAngle - p.startAngle
+        if (width >= 359.5f) return true
+        val start = normalize(p.startAngle)
+        val end = normalize(p.endAngle)
+        return if (start <= end) angle >= start && angle < end else angle >= start || angle < end
     }
 
     fun normalize(angle: Float): Float = ((angle % FULL_CIRCLE) + FULL_CIRCLE) % FULL_CIRCLE
@@ -190,13 +204,13 @@ object WaterslideSectorLayout {
         val index = config.sectors.indexOfFirst { it.id == sectorId }
         if (index < 0) return
         val target = config.sectors[index]
-        val placed = place(config.sectors)
+        val placed = place(config)
         val old = placed.firstOrNull { it.sector.id == sectorId } ?: return
         if (abs(normalize(newCenterAngle - old.centerAngle)) <= 0.5f) return
 
         val width = old.endAngle - old.startAngle
         config.sectors.removeAt(index)
-        val remaining = place(config.sectors)
+        val remaining = place(config)
         val insertIndex = insertionIndex(remaining, newCenterAngle)
         val canFix = target.type == SectorType.FIXED ||
             (width > 0.5f && width < 359.5f)
@@ -213,7 +227,7 @@ object WaterslideSectorLayout {
     fun applyBoundaryResize(config: WaterslideSectorConfig, sectorId: Int, newBoundaryAngle: Float) {
         val idx = config.sectors.indexOfFirst { it.id == sectorId }
         if (idx < 0) return
-        val placed = place(config.sectors)
+        val placed = place(config)
         val prev = placed[idx]
         val next = placed[(idx + 1) % placed.size]
         if (prev.sector.id == next.sector.id) return
@@ -232,5 +246,7 @@ object WaterslideSectorLayout {
         config.sectors[idx] = prev.sector.copy(type = SectorType.FIXED, widthDegrees = wPrev)
         config.sectors[(idx + 1) % config.sectors.size] =
             next.sector.copy(type = SectorType.FIXED, widthDegrees = wNext)
+// seam drag rotates the ring
+        if (idx == placed.size - 1) config.startAngle = boundary
     }
 }

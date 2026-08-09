@@ -2,6 +2,7 @@ package net.omori_sunny.create_waterparked.client.editor
 
 import com.mojang.blaze3d.vertex.PoseStack
 import com.simibubi.create.AllItems
+import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleLiftTextures
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleOverlayRenderTypes
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode
@@ -41,6 +42,17 @@ object WaterslideRadiusEdit {
     @JvmStatic
     fun isDragging(): Boolean = dragging
 
+    // hover or drag, for CCS suppression
+    @JvmStatic
+    fun isHoveringOrDragging(mc: Minecraft): Boolean {
+        if (dragging) return true
+        val level = mc.level ?: return false
+        if (!BezierHandleEditMode.isActive()) return false
+        val anchor = BezierHandleEditMode.getActiveAnchor() ?: return false
+        val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return false
+        return isHovering(mc, level, anchor, be.radius)
+    }
+
     // preview radius
     fun radiusAt(level: Level, anchorPos: BlockPos, fallback: Float): Float {
         previewRadii[anchorPos]?.let { return it }
@@ -55,6 +67,7 @@ object WaterslideRadiusEdit {
         if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
         val anchor = BezierHandleEditMode.getActiveAnchor() ?: return clear()
         val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return clear()
+        if (WaterslideSectorEdit.isDraggingControlPoint() || BezierHandleDragManager.isDraggingHandle()) return
 
         val useDown = mc.options.keyUse.isDown
         if (dragging) {

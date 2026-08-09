@@ -63,7 +63,7 @@ class WaterslideSectorEditPayload(
                         action, angleDegrees, config.sectors.size
                     )
                     if (config.sectors.size >= ModConfig.maxSectors()) return@enqueueWork
-                    val placed = WaterslideSectorLayout.place(config.sectors)
+                    val placed = WaterslideSectorLayout.place(config)
                     val insertIndex = WaterslideSectorLayout.insertionIndex(placed, angleDegrees)
                     val material = if (action == SectorEditAction.ADD_BLOCK) SectorMaterial.BLOCK else SectorMaterial.OPEN
                     val newSector = WaterslideSector(
@@ -77,7 +77,7 @@ class WaterslideSectorEditPayload(
                 }
 
                 SectorEditAction.DELETE -> {
-                    val placed = WaterslideSectorLayout.place(config.sectors)
+                    val placed = WaterslideSectorLayout.place(config)
                     val target = WaterslideSectorLayout.sectorAt(placed, angleDegrees) ?: return@enqueueWork
                     config.sectors.removeAll { it.id == target.sector.id }
                 }

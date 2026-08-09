@@ -213,6 +213,8 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             bufferSource: MultiBufferSource
         ) {
             val level = anchor.level ?: return
+// flywheel owns the pipe when active
+            if (VisualizationManager.supportsVisualization(level)) return
             val bePos = anchor.blockPos
             poseStack.pushPose()
             poseStack.translate(-bePos.x.toDouble(), -bePos.y.toDouble(), -bePos.z.toDouble())
@@ -235,7 +237,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             poseStack: PoseStack,
             bufferSource: MultiBufferSource
         ) {
-            val placed = WaterslideSectorLayout.place(config.sectors)
+            val placed = WaterslideSectorLayout.place(config)
             val r0 = radiusAt(level, bc.bePositions.getFirst())
             val r1 = radiusAt(level, bc.bePositions.getSecond())
             val count = bc.getSegmentCount().coerceAtLeast(1)
@@ -805,7 +807,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
 
 // selection outline
 
-        private data class OutlineSample(val center: Vec3, val lat: Vec3, val up: Vec3)
+        private data class OutlineSample(val center: Vec3, val lat: Vec3, val up: Vec3, val half: Float)
 
 // CCS outline mixin
         @JvmStatic
@@ -825,8 +827,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             if (!WaterslideTrackMaterials.isWaterslide(primary)) return
             val r0 = radiusAt(level, primary.bePositions.getFirst())
             val r1 = radiusAt(level, primary.bePositions.getSecond())
-            val half = max(r0, r1) + 0.45f
-            val samples = outlineSamples(level, primary)
+            val samples = outlineSamples(level, primary, r0, r1)
             if (samples.size < 2) return
 
             val lines = bufferSource.getBuffer(RenderType.lines())
@@ -837,8 +838,8 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                 val prev = samples[i - 1]
                 val curr = samples[i]
                 for (c in 0 until 4) {
-                    val (u0, v0) = outlineCorner(c, half)
-                    val (u1, v1) = outlineCorner(c, half)
+                    val (u0, v0) = outlineCorner(c, prev.half)
+                    val (u1, v1) = outlineCorner(c, curr.half)
                     outlineSegment(
                         lines, pose,
                         prev.center.add(prev.lat.scale(u0.toDouble())).add(prev.up.scale(v0.toDouble())),
@@ -847,14 +848,16 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                     )
                 }
             }
-            outlineEndRing(lines, pose, samples.first(), half, r, g, b, a)
-            outlineEndRing(lines, pose, samples.last(), half, r, g, b, a)
+            outlineEndRing(lines, pose, samples.first(), r, g, b, a)
+            outlineEndRing(lines, pose, samples.last(), r, g, b, a)
             poseStack.popPose()
         }
 
         private fun outlineSamples(
             level: Level,
-            bc: com.simibubi.create.content.trains.track.BezierConnection
+            bc: com.simibubi.create.content.trains.track.BezierConnection,
+            r0: Float,
+            r1: Float
         ): List<OutlineSample> {
             val count = bc.getSegmentCount().coerceAtLeast(1)
             val out = ArrayList<OutlineSample>(count + 3)
@@ -893,7 +896,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                     up = up.scale(-1.0)
                 }
                 prevLat = lat
-                out += OutlineSample(center, lat, up)
+                out += OutlineSample(center, lat, up, Mth.lerp(t, r0, r1) + 0.45f)
             }
 
             val ext0 = openEndExtensionBlocks(level, bc, atFirst = true)
@@ -924,15 +927,14 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             lines: VertexConsumer,
             pose: PoseStack.Pose,
             sample: OutlineSample,
-            half: Float,
             r: Float,
             g: Float,
             b: Float,
             a: Float
         ) {
             for (c in 0 until 4) {
-                val (u0, v0) = outlineCorner(c, half)
-                val (u1, v1) = outlineCorner((c + 1) % 4, half)
+                val (u0, v0) = outlineCorner(c, sample.half)
+                val (u1, v1) = outlineCorner((c + 1) % 4, sample.half)
                 outlineSegment(
                     lines, pose,
                     sample.center.add(sample.lat.scale(u0.toDouble())).add(sample.up.scale(v0.toDouble())),

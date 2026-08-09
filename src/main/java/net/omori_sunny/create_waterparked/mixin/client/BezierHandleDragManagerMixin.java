@@ -51,22 +51,27 @@ public abstract class BezierHandleDragManagerMixin {
         }
     }
 
-    @Inject(method = "clientTick(Lnet/minecraft/client/Minecraft;)V", at = @At("HEAD"))
+    @Inject(method = "clientTick(Lnet/minecraft/client/Minecraft;)V", at = @At("HEAD"), cancellable = true)
     private static void waterslide$clientTick(Minecraft mc, CallbackInfo ci) {
-        WaterslideSectorEdit.mixinClientTick(mc);
         WaterslideRadiusEdit.mixinClientTick(mc);
+        WaterslideSectorEdit.mixinClientTick(mc);
+        if (WaterslideRadiusEdit.isDragging() || WaterslideSectorEdit.isDraggingControlPoint()) {
+            ci.cancel();
+        }
     }
 
     @Inject(method = "isHoveringOrDraggingAnyHandle(Lnet/minecraft/client/Minecraft;)Z", at = @At("HEAD"), cancellable = true)
     private static void waterslide$anyHandle(Minecraft mc, CallbackInfoReturnable<Boolean> cir) {
-        if (WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc)) {
+        if (WaterslideRadiusEdit.isHoveringOrDragging(mc) ||
+            WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc)) {
             cir.setReturnValue(true);
         }
     }
 
     @Inject(method = "shouldSuppressVanillaUse(Lnet/minecraft/client/Minecraft;)Z", at = @At("HEAD"), cancellable = true)
     private static void waterslide$suppressUse(Minecraft mc, CallbackInfoReturnable<Boolean> cir) {
-        if (WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc)) {
+        if (WaterslideRadiusEdit.isHoveringOrDragging(mc) ||
+            WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc)) {
             cir.setReturnValue(true);
         }
     }

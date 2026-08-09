@@ -43,6 +43,9 @@ public class WaterslideTubeVisual extends AbstractVisual
 
     private static final Set<WaterslideTubeVisual> ACTIVE =
         Collections.newSetFromMap(new IdentityHashMap<>());
+    private static boolean wasEditing = false;
+    private static boolean wasDragging = false;
+    private static BlockPos lastEditAnchor = null;
 
     private final WaterslideAnchorBlockEntity be;
     private final List<TubeCurve> curves = new ArrayList<>();
@@ -129,14 +132,23 @@ public class WaterslideTubeVisual extends AbstractVisual
     // translucent when edited; refresh while dragging
     public static void tickVisibility() {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null) return;
+        if (mc.level == null) {
+            wasEditing = false;
+            wasDragging = false;
+            lastEditAnchor = null;
+            return;
+        }
         boolean edit = BezierHandleEditMode.isActive();
         BlockPos editAnchor = edit ? BezierHandleEditMode.getActiveAnchor() : null;
+        boolean editingNow = edit && editAnchor != null;
+        boolean editExited = wasEditing && !editingNow;
         boolean showSkeleton = ModClientConfig.INSTANCE.showSkeletonWhenTranslucent();
         boolean dragging =
             WaterslideSectorEdit.INSTANCE.isDraggingControlPoint() ||
                 WaterslideRadiusEdit.INSTANCE.isDragging() ||
                 BezierHandleDragManager.isDraggingTangentHandle();
+        boolean dragEnded = wasDragging && !dragging;
+        BlockPos refreshAnchor = editExited || dragEnded ? lastEditAnchor : editingNow ? editAnchor : null;
         // iterate snapshots
         for (WaterslideTubeVisual visual : new ArrayList<>(ACTIVE)) {
             if (visual.be.isRemoved() || visual.be.getLevel() != mc.level) continue;
@@ -148,10 +160,17 @@ public class WaterslideTubeVisual extends AbstractVisual
                         editAnchor.equals(c.curve.bePositions.getSecond()));
                 c.setTranslucent(belongs);
             }
-            // avoid per-tick rebuild
-            if (dragging && editAnchor != null) {
-                visual.refreshAnchorCurves(editAnchor);
+            // refresh only while dragging or after edit/drag end
+            if (refreshAnchor != null) {
+                visual.refreshAnchorCurves(refreshAnchor);
             }
+        }
+        wasEditing = editingNow;
+        wasDragging = dragging;
+        if (editingNow) {
+            lastEditAnchor = editAnchor;
+        } else if (editExited) {
+            lastEditAnchor = null;
         }
     }
 

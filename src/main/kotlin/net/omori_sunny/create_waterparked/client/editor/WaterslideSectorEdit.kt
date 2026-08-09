@@ -240,7 +240,7 @@ object WaterslideSectorEdit {
         val base = configForCurve(level, key) ?: return
         if (base.sectors.size >= ModConfig.maxSectors()) return
         val config = base.copyOf()
-        val placed = WaterslideSectorLayout.place(config.sectors)
+        val placed = WaterslideSectorLayout.place(config)
         val insertIndex = WaterslideSectorLayout.insertionIndex(placed, angle)
         val material = if (action == SectorEditAction.ADD_BLOCK) SectorMaterial.BLOCK else SectorMaterial.OPEN
         config.sectors.add(
@@ -379,6 +379,7 @@ object WaterslideSectorEdit {
         if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
         val anchor = BezierHandleEditMode.getActiveAnchor() ?: return clear()
         val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return clear()
+        if (WaterslideRadiusEdit.isDragging() || BezierHandleDragManager.isDraggingHandle()) return
 
         val useDown = mc.options.keyUse.isDown
         if (dragging || draggingBoundary) {
@@ -416,7 +417,7 @@ object WaterslideSectorEdit {
             val config = configForCurve(level, pick.key) ?: return
             previewConfigs[pick.key] = config.copyOf()
             dragCurveKey = pick.key
-            val placed = WaterslideSectorLayout.place(config.sectors)
+            val placed = WaterslideSectorLayout.place(config)
             val p = placed.firstOrNull { it.sector.id == pick.sectorId }
             if (pick.boundary) {
                 draggingBoundary = true
@@ -519,7 +520,7 @@ object WaterslideSectorEdit {
         for ((peer, raw) in be.anchorPeerCurvesView) {
             val primary = if (raw.isPrimary) raw else raw.secondary()
             val config = previewConfigFor(anchor, peer) ?: configForCurve(level, curveKey(anchor, peer)) ?: continue
-            val placed = WaterslideSectorLayout.place(config.sectors)
+            val placed = WaterslideSectorLayout.place(config)
             val t = if (primary.bePositions.getFirst() == anchor) 0f else 1f
             val live = liveAnchorFrame(level, anchor)
             val center = live?.center ?: CoasterAnchorpointBlockEntity.worldCenter(level, anchor)
@@ -535,6 +536,7 @@ object WaterslideSectorEdit {
                 out += ControlPoint(key, p.sector.id, pos)
             }
 // junction control points
+            if (placed.size < 2) continue
             val seenBoundaries = HashSet<Float>()
             for (p in placed) {
                 val angle = WaterslideSectorLayout.normalize(p.endAngle)
