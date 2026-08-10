@@ -1,5 +1,6 @@
 package net.omori_sunny.create_waterparked.client.editor
 
+import com.simibubi.create.content.trains.track.BezierConnection
 import dev.silvergold.simulatedcoasters.track.CoasterAnchorBezierOptimizer
 import dev.silvergold.simulatedcoasters.track.CoasterTrackGauge
 import dev.silvergold.simulatedcoasters.track.CoasterTrackPlacement
@@ -9,6 +10,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlo
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackItem
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.game.WaterslideConnectionRules
+import net.omori_sunny.create_waterparked.game.WaterslideNeighborSmoothing
 import net.omori_sunny.create_waterparked.game.WaterslideTrackPlacement
 import net.omori_sunny.create_waterparked.network.WaterslideAnchorClearPayload
 import net.minecraft.ChatFormatting
@@ -32,12 +34,15 @@ object WaterslidePlacementPreview {
     private const val KEY_FIRST = "waterslide_anchor_first"
     private const val KEY_HOVER = "waterslide_anchor_hover"
     private const val KEY_INVALID = "waterslide_anchor_invalid"
+    private const val KEY_NEIGHBOR = "waterslide_placement_preview_neighbor_"
+    private const val NEIGHBOR_SLOTS = 4
 
     private const val COLOR_OK = 0x1D9AEF
     private const val COLOR_BAD = 0xEA5A47
     private const val COLOR_GREEN = 0x1D9AEF
 
     private var prevSegmentCount = 0
+    private var neighborCounts = IntArray(NEIGHBOR_SLOTS)
 
     private val previewLift: Double
         get() = CoasterTrackGauge.coasterPreviewSpineVerticalBumpBlocks().toDouble()
@@ -78,6 +83,7 @@ object WaterslidePlacementPreview {
         val targetState = level.getBlockState(target)
         if (targetState.block !is WaterslideAnchorBlock) {
             removeHoverAndCurve()
+            clearNeighborPreviews()
             showTargetOutline(level, target, KEY_INVALID, COLOR_BAD)
             // Invalid hover preview.
             val virtualSecond = target.above()
@@ -104,16 +110,22 @@ object WaterslidePlacementPreview {
         showAnchorOutline(level, target, KEY_HOVER, if (result.valid) COLOR_GREEN else COLOR_BAD)
 
         // Curve preview, red when invalid.
-        val bc = CoasterAnchorBezierOptimizer.buildAnchorAnchorBezier(
+        val placement = CoasterAnchorBezierOptimizer.buildAnchorAnchorPlacement(
             level, first, target, WaterslideTrackMaterials.WATERSLIDE, false
         )
-        if (bc != null) {
+        if (placement != null) {
             val color = if (result.valid) COLOR_OK else COLOR_BAD
-            prevSegmentCount = CoasterTrackPlacement.drawCoasterCurveOutlinePreview(
-                bc, KEY_CURVE, color, previewLift, prevSegmentCount
+            val smoothing = WaterslideNeighborSmoothing.build(
+                level, first, target, placement.primary(), placement
             )
+            val previewCurve = smoothing?.primary ?: placement.primary()
+            prevSegmentCount = CoasterTrackPlacement.drawCoasterCurveOutlinePreview(
+                previewCurve, KEY_CURVE, color, previewLift, prevSegmentCount
+            )
+            drawNeighborPreviews(level, smoothing?.neighbors ?: emptyList<Any>(), color)
         } else {
             clearCurve()
+            clearNeighborPreviews()
         }
 
         if (result.valid) {
@@ -153,6 +165,7 @@ object WaterslidePlacementPreview {
     private fun removeHoverAndCurve() {
         Outliner.getInstance().remove(KEY_HOVER)
         clearCurve()
+        clearNeighborPreviews()
     }
 
     private fun clearCurve() {
@@ -162,10 +175,39 @@ object WaterslidePlacementPreview {
         }
     }
 
+// smoothed neighbor previews
+    private fun drawNeighborPreviews(level: Level, neighbors: List<*>, color: Int) {
+        val counts = IntArray(NEIGHBOR_SLOTS)
+        for ((i, n) in neighbors.withIndex()) {
+            if (i >= NEIGHBOR_SLOTS) break
+            val bc = n as? BezierConnection ?: continue
+            counts[i] = CoasterTrackPlacement.drawCoasterCurveOutlinePreview(
+                bc, KEY_NEIGHBOR + i, color, previewLift, neighborCounts[i]
+            )
+        }
+        for (i in neighbors.size until NEIGHBOR_SLOTS) {
+            if (neighborCounts[i] > 0) {
+                CoasterTrackPlacement.clearCoasterCurveOutlinePreview(KEY_NEIGHBOR + i, neighborCounts[i])
+            }
+            counts[i] = 0
+        }
+        neighborCounts = counts
+    }
+
+    private fun clearNeighborPreviews() {
+        for (i in 0 until NEIGHBOR_SLOTS) {
+            if (neighborCounts[i] > 0) {
+                CoasterTrackPlacement.clearCoasterCurveOutlinePreview(KEY_NEIGHBOR + i, neighborCounts[i])
+            }
+        }
+        neighborCounts = IntArray(NEIGHBOR_SLOTS)
+    }
+
     private fun clearAll() {
         Outliner.getInstance().remove(KEY_FIRST)
         Outliner.getInstance().remove(KEY_HOVER)
         Outliner.getInstance().remove(KEY_INVALID)
         clearCurve()
+        clearNeighborPreviews()
     }
 }

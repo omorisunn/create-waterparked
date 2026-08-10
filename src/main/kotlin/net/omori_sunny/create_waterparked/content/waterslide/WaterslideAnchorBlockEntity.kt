@@ -1,6 +1,7 @@
 package net.omori_sunny.create_waterparked.content.waterslide
 
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
+import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.minecraft.core.BlockPos
@@ -40,6 +41,23 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
         notifyBlockUpdated()
     }
 
+// drop the config when the curve is removed
+    fun removeSectorConfig(peer: BlockPos) {
+        if (sectorConfigs.remove(peer.immutable()) == null) return
+        setChanged()
+        notifyBlockUpdated()
+    }
+
+// reset the opening when the last curve goes
+    fun resetRadiusIfEmpty() {
+        if (legCount() != 0) return
+        val def = ModConfig.defaultSlideRadius()
+        if (radius == def) return
+        radius = def
+        setChanged()
+        notifyBlockUpdated()
+    }
+
 // init missing configs
     fun initCurveSectorConfig(level: ServerLevel, peer: BlockPos) {
         val peerPos = peer.immutable()
@@ -47,9 +65,22 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
         val remote = peerBe?.sectorConfigs?.get(blockPos.immutable())
         val local = sectorConfigs[peerPos]
 
-        val config = local ?: remote ?: WaterslideSectorConfig.defaultConfig()
+// inherit the style of an existing slide at either anchor
+        val config = local ?: remote ?: inheritedSectorConfig(level, peerPos)
+            ?: WaterslideSectorConfig.defaultConfig()
         if (local == null) setSectorConfig(peerPos, config)
         if (remote == null) peerBe?.setSectorConfig(blockPos, config)
+    }
+
+    private fun inheritedSectorConfig(level: Level, peerPos: BlockPos): WaterslideSectorConfig? {
+        for ((p, c) in sectorConfigs) {
+            if (p != peerPos && anchorPeerCurvesView.containsKey(p)) return c.copyOf()
+        }
+        val peerBe = level.getBlockEntity(peerPos) as? WaterslideAnchorBlockEntity ?: return null
+        for ((p, c) in peerBe.sectorConfigs) {
+            if (p != blockPos && peerBe.anchorPeerCurvesView.containsKey(p)) return c.copyOf()
+        }
+        return null
     }
 
     fun setWaterActive(active: Boolean) {
@@ -101,19 +132,26 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
     }
 
     override fun read(tag: CompoundTag, registries: HolderLookup.Provider, clientPacket: Boolean) {
-        super.read(tag, registries, clientPacket)
+// restore radius first, curve loading may need it
         waterActive = if (tag.contains("WaterActive", 1)) tag.getBoolean("WaterActive") else false
         radius = if (tag.contains("Radius", 5)) {
             ModConfig.clampSlideRadius(tag.getFloat("Radius"))
         } else {
             ModConfig.defaultSlideRadius()
         }
+        super.read(tag, registries, clientPacket)
         sectorConfigs.clear()
         for (entry in tag.getList("SectorConfigs", 10)) {
             if (entry is CompoundTag && entry.contains("Peer", 4) && entry.contains("Config", 10)) {
                 sectorConfigs[BlockPos.of(entry.getLong("Peer"))] =
                     WaterslideSectorConfig.read(entry.getCompound("Config"))
             }
+        }
+// drop configs without a live curve
+        sectorConfigs.keys.retainAll(anchorPeerCurvesView.keys)
+// refresh visuals after curve data arrives
+        if (level?.isClientSide == true) {
+            WaterslideTubeVisual.refreshAnchor(blockPos)
         }
     }
 

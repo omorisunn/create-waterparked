@@ -8,7 +8,9 @@
     "AnchorPeerCurveClientIndexMixin",
     "BezierBankBlendMixin",
     "CoasterAnchorBezierOptimizerMixin",
+    "CoasterAnchorpointBlockAngleMixin",
     "CoasterAnchorpointBlockEntityLiftMixin",
+    "CoasterAnchorpointBlockEntityRemoveCurveMixin",
     "CoasterAnchorpointBlockEntityTypeMixin",
     "CoasterBezierHandleEditMixin",
     "CoasterBezierRailFramesMixin",
@@ -25,6 +27,7 @@
     "client.BezierHandleOverlayMixin",
     "client.ChainLiftAnchorShaftRendererMixin",
     "client.CoasterCurveSelectionOutlineRendererMixin",
+    "client.CoasterCurveDyeOutlineClientMixin",
     "client.CoasterTrackPlacementPreviewMixin",
     "client.LevelRendererAccessor"
   ],

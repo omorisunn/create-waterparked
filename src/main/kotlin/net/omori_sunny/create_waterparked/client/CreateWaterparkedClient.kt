@@ -3,12 +3,15 @@ package net.omori_sunny.create_waterparked.client
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRadiusEdit
+import net.omori_sunny.create_waterparked.client.editor.WaterslideDyeOutline
+import net.omori_sunny.create_waterparked.client.editor.WaterslideEditorRenderTypes
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPreview
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.minecraft.client.Minecraft
+import org.joml.Matrix4f
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
 import net.neoforged.bus.api.EventPriority
@@ -31,6 +34,7 @@ object CreateWaterparkedClient {
         MOD_BUS.addListener(::onClientSetup)
         MOD_BUS.addListener(::onRegisterRenderers)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onRightClickBlock)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(WaterslidePlacementPreview::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideHotbarSync::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideSectorEdit::onClientTick)
@@ -64,7 +68,16 @@ object CreateWaterparkedClient {
                 WaterslideCurveRenderer.renderAllInEvent(event.poseStack, buffers)
             // flush pipe batches
             RenderLevelStageEvent.Stage.AFTER_LEVEL ->
-                WaterslideCurveRenderer.endBatches(buffers)
+                {
+                    WaterslideCurveRenderer.endBatches(buffers)
+                    val mc = Minecraft.getInstance()
+                    val camera = mc.gameRenderer.mainCamera
+                    WaterslideDyeOutline.render(
+                        mc, event.poseStack, buffers,
+                        camera.position, Matrix4f().set(camera.rotation())
+                    )
+                    buffers.endBatch(WaterslideEditorRenderTypes.COLORED_QUADS)
+                }
             else -> {}
         }
     }

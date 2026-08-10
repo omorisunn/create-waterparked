@@ -12,6 +12,8 @@ import java.lang.reflect.Method
 // CCS neighbor smoothing via its private placement pipeline
 object WaterslideNeighborSmoothing {
 
+    private var lastErrorLog = 0L
+
     data class Batch(
         val primary: BezierConnection,
         val neighbors: List<*>
@@ -38,7 +40,7 @@ object WaterslideNeighborSmoothing {
 
 // build the smoothing batch
     fun build(
-        level: ServerLevel,
+        level: Level,
         a: BlockPos,
         b: BlockPos,
         primary: BezierConnection,
@@ -46,13 +48,32 @@ object WaterslideNeighborSmoothing {
     ): Batch? {
         return try {
             val batch = finalizeMethod.invoke(null, level, a, b, primary, result) ?: return null
-            val finalPrimary = batch.javaClass.getMethod("primary").invoke(batch) as? BezierConnection
+            val primaryMethod = batch.javaClass.getMethod("primary").also { it.isAccessible = true }
+            val neighborsMethod = batch.javaClass.getMethod("neighbors").also { it.isAccessible = true }
+            var finalPrimary = primaryMethod.invoke(batch) as? BezierConnection
                 ?: return null
-            val neighbors = batch.javaClass.getMethod("neighbors").invoke(batch) as? List<*>
-                ?: return null
-            Batch(finalPrimary, neighbors)
+            val neighbors = (neighborsMethod.invoke(batch) as? List<*>) ?: return null
+// force exact opposite handles at every shared anchor
+            val forcedNeighbors = neighbors.mapNotNull { n ->
+                var curve = n as? BezierConnection ?: return@mapNotNull null
+                for (w in result.neighborJoinWrites) {
+                    val shared = w.sharedAnchor()
+                    if (curve.bePositions.getFirst() != shared &&
+                        curve.bePositions.getSecond() != shared
+                    ) continue
+                    val axis = w.axisIntoCurveAtSharedAnchor().normalize()
+                    curve = CoasterTrackPlacement.curveWithAxisAtEndpointPreservingPeerForJoin(
+                        level, curve, shared, axis
+                    )
+                    finalPrimary = CoasterTrackPlacement.curveWithAxisAtEndpointForEdit(
+                        level, finalPrimary, shared, axis.scale(-1.0)
+                    )
+                }
+                curve
+            }
+            Batch(finalPrimary, forcedNeighbors)
         } catch (e: ReflectiveOperationException) {
-            CreateWaterparked.LOGGER.error("Waterslide neighbor smoothing failed", e)
+            logError("Waterslide neighbor smoothing failed", e)
             null
         }
     }
@@ -62,7 +83,14 @@ object WaterslideNeighborSmoothing {
         try {
             putNeighborsMethod.invoke(null, level, neighbors)
         } catch (e: ReflectiveOperationException) {
-            CreateWaterparked.LOGGER.error("Waterslide neighbor smoothing commit failed", e)
+            logError("Waterslide neighbor smoothing commit failed", e)
         }
+    }
+
+    private fun logError(message: String, e: ReflectiveOperationException) {
+        val now = System.currentTimeMillis()
+        if (now - lastErrorLog < 5000) return
+        lastErrorLog = now
+        CreateWaterparked.LOGGER.error(message, e)
     }
 }

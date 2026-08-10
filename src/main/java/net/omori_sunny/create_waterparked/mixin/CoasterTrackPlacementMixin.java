@@ -12,6 +12,29 @@ import org.spongepowered.asm.mixin.injection.At;
 @Mixin(CoasterTrackPlacement.class)
 public abstract class CoasterTrackPlacementMixin {
 
+// allow waterslide in the hub smoothing pipeline
+    @WrapOperation(
+        method = "syncPlacementHubEndpointFrame(Lnet/minecraft/world/level/Level;"
+            + "Lcom/simibubi/create/content/trains/track/BezierConnection;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/phys/Vec3;)Lcom/simibubi/create/content/trains/track/BezierConnection;",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
+    )
+    private static boolean waterslide$syncHubFrame(ResourceLocation self, Object other, Operation<Boolean> original) {
+        return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
+    }
+
+    @WrapOperation(
+        method = "syncPlacementCurveHubEndpoints(Lnet/minecraft/world/level/Level;"
+            + "Lcom/simibubi/create/content/trains/track/BezierConnection;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;)"
+            + "Lcom/simibubi/create/content/trains/track/BezierConnection;",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
+    )
+    private static boolean waterslide$syncHubEndpoints(ResourceLocation self, Object other, Operation<Boolean> original) {
+        return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
+    }
+
     @WrapOperation(
         method = "validateEditedCoasterCurve(Lnet/minecraft/world/level/Level;"
             + "Lcom/simibubi/create/content/trains/track/BezierConnection;Ljava/util/List;)Z",

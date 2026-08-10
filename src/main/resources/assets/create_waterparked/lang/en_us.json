@@ -10,5 +10,6 @@
   "create_waterparked.connect.missing_anchor": "Water slide anchor data is missing",
   "create_waterparked.connect.cannot_accept": "One of the anchors cannot accept another connection",
   "create_waterparked.connect.already_connected": "These two anchors are already connected",
-  "create_waterparked.connect.invalid_curve": "Cannot build a slide curve between these anchors"
+  "create_waterparked.connect.invalid_curve": "Cannot build a slide curve between these anchors",
+  "create_waterparked.track.bezier_edit_radius_meters": "Radius: %sm"
 }

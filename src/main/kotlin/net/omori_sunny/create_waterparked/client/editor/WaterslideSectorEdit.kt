@@ -3,13 +3,17 @@ package net.omori_sunny.create_waterparked.client.editor
 import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
 import com.simibubi.create.AllItems
+import com.simibubi.create.content.trains.track.TrackBlockOutline
 import com.simibubi.create.content.trains.track.BezierConnection
+import dev.silvergold.simulatedcoasters.client.track.AnchorPeerCurveHit
+import dev.silvergold.simulatedcoasters.client.track.AnchorPeerCurveOutlineSupport
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager
 import dev.silvergold.simulatedcoasters.client.track.CoasterAnchorClientSpace
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleOverlayRenderTypes
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode
 import dev.silvergold.simulatedcoasters.client.track.EndpointHandleTextures
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleTangentTextures
+import dev.silvergold.simulatedcoasters.client.track.TrackOutlineBezierAccess
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlock
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
@@ -26,6 +30,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorCon
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.network.SectorEditAction
+import net.omori_sunny.create_waterparked.network.WaterslideSectorBlockEditPayload
 import net.omori_sunny.create_waterparked.network.WaterslideSectorEditPayload
 import net.minecraft.client.Minecraft
 import net.minecraft.client.multiplayer.ClientLevel
@@ -40,11 +45,13 @@ import net.minecraft.util.Mth
 import net.minecraft.world.InteractionResult
 import net.minecraft.world.phys.AABB
 import net.minecraft.world.item.BlockItem
+import net.minecraft.world.item.DyeItem
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
 import net.neoforged.neoforge.client.event.ClientTickEvent
+import net.neoforged.neoforge.client.event.InputEvent
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent
 import net.neoforged.neoforge.network.PacketDistributor
 import org.joml.Matrix4f
@@ -369,6 +376,170 @@ object WaterslideSectorEdit {
     }
 
     private data class WallHit(val curve: BezierConnection, val t: Float, val angle: Float)
+
+// cursor sector lookup result
+    data class SectorHit(
+        val curve: BezierConnection,
+        val sectorId: Int,
+        val t: Float,
+        val angleDegrees: Float,
+        val startAngleDegrees: Float,
+        val endAngleDegrees: Float,
+        val blockId: net.minecraft.resources.ResourceLocation?,
+        val widthDegrees: Float,
+        val arcLengthBlocks: Float
+    )
+
+// sector id under the cursor
+    @JvmStatic
+    fun sectorIdUnderCursor(mc: Minecraft): Int? = sectorUnderCursor(mc)?.sectorId
+
+// change the sector block under the cursor
+    @JvmStatic
+    fun setSectorBlock(mc: Minecraft, sectorId: Int, blockId: net.minecraft.resources.ResourceLocation?): Boolean {
+        val hit = sectorUnderCursor(mc) ?: return false
+        if (sectorId >= 0 && hit.sectorId != sectorId) return false
+        PacketDistributor.sendToServer(
+            WaterslideSectorBlockEditPayload(
+                hit.curve.bePositions.getFirst(),
+                hit.curve.bePositions.getSecond(),
+                hit.sectorId,
+                blockId
+            )
+        )
+        return true
+    }
+
+// sector block and size under the cursor
+    @JvmStatic
+    fun sectorUnderCursor(mc: Minecraft): SectorHit? {
+        val player = mc.player ?: return null
+        val level = mc.level ?: return null
+        val eye = player.eyePosition
+        val view = player.getViewVector(1f)
+        var best: WallHit? = null
+        var bestD = Double.MAX_VALUE
+        var d = 0.0
+        while (d <= 6.0) {
+            val hit = resolveWallHit(level, eye.add(view.scale(d)))
+            if (hit != null && d < bestD) {
+                bestD = d
+                best = hit
+            }
+            d += 0.15
+        }
+        val wall = best ?: return null
+        val key = curveKey(wall.curve.bePositions.getFirst(), wall.curve.bePositions.getSecond())
+        val config = configForCurve(level, key) ?: return null
+        val placed = WaterslideSectorLayout.place(config)
+        val p = WaterslideSectorLayout.sectorAt(placed, wall.angle) ?: return null
+        val r0 = radiusAt(level, wall.curve.bePositions.getFirst())
+        val r1 = radiusAt(level, wall.curve.bePositions.getSecond())
+        val radius = Mth.lerp(wall.t, r0, r1)
+        val arc = Math.toRadians((p.endAngle - p.startAngle).toDouble()).toFloat() * radius
+        return SectorHit(
+            wall.curve, p.sector.id, wall.t, wall.angle,
+            p.startAngle, p.endAngle, p.sector.blockId,
+            p.endAngle - p.startAngle, arc
+        )
+    }
+
+// dye the sector under the cursor on the use key
+    @JvmStatic
+    fun onUseItemKey(event: InputEvent.InteractionKeyMappingTriggered) {
+        if (!event.isUseItem) return
+        val mc = Minecraft.getInstance()
+        if (!trySendDyeApply(mc)) return
+        event.setCanceled(true)
+        event.setSwingHand(true)
+    }
+
+// CCS-style dye resolution
+    private fun trySendDyeApply(mc: Minecraft): Boolean {
+        val player = mc.player ?: return false
+        val level = mc.level ?: return false
+        val dye = heldDye(player)
+        if (dye == null) {
+            CreateWaterparked.LOGGER.debug(
+                "dye: no DyeItem in hands main={} off={}",
+                player.mainHandItem.item, player.offhandItem.item
+            )
+            return false
+        }
+        val curve = resolveHoveredPrimary(level)
+        if (curve == null) {
+            CreateWaterparked.LOGGER.debug("dye: no hovered curve (hitActive={} trackOutline={})",
+                AnchorPeerCurveHit.isActive(), TrackBlockOutline.result != null)
+            return false
+        }
+        if (!AnchorPeerCurveOutlineSupport.hasSaneOutlineBounds(curve)) {
+            CreateWaterparked.LOGGER.debug("dye: insane outline bounds")
+            return false
+        }
+        val hitVec = resolveHoveredWorldHit(mc)
+        if (hitVec == null) {
+            CreateWaterparked.LOGGER.debug("dye: no world hit")
+            return false
+        }
+        val wall = resolveWallHit(level, hitVec)
+        if (wall == null) {
+            CreateWaterparked.LOGGER.debug("dye: no wall hit at {}", hitVec)
+            return false
+        }
+        val key = curveKey(wall.curve.bePositions.getFirst(), wall.curve.bePositions.getSecond())
+        val config = configForCurve(level, key)
+        if (config == null) {
+            CreateWaterparked.LOGGER.debug("dye: no sector config")
+            return false
+        }
+        val placed = WaterslideSectorLayout.place(config)
+        val p = WaterslideSectorLayout.sectorAt(placed, wall.angle)
+        if (p == null) {
+            CreateWaterparked.LOGGER.debug("dye: no sector at angle {}", wall.angle)
+            return false
+        }
+        val blockId = p.sector.blockId
+        if (blockId == null) {
+            CreateWaterparked.LOGGER.debug("dye: sector {} is open", p.sector.id)
+            return false
+        }
+        val newBlock = net.omori_sunny.create_waterparked.game.WaterslideSectorBlockEdit.dyedBlockFor(blockId, dye.dyeColor)
+        if (newBlock == null) {
+            CreateWaterparked.LOGGER.debug("dye: no dyed variant for {}", blockId)
+            return false
+        }
+        PacketDistributor.sendToServer(
+            WaterslideSectorBlockEditPayload(
+                wall.curve.bePositions.getFirst(),
+                wall.curve.bePositions.getSecond(),
+                p.sector.id,
+                newBlock
+            )
+        )
+        CreateWaterparked.LOGGER.debug("dye: sector {} {} -> {}", p.sector.id, blockId, newBlock)
+        return true
+    }
+
+    private fun heldDye(player: net.minecraft.world.entity.player.Player): DyeItem? =
+        (player.mainHandItem.item as? DyeItem) ?: (player.offhandItem.item as? DyeItem)
+
+    private fun resolveHoveredPrimary(level: Level): BezierConnection? {
+        val curve = if (AnchorPeerCurveHit.isActive()) {
+            AnchorPeerCurveHit.curve()
+        } else {
+            val sel = TrackBlockOutline.result
+            if (sel != null) TrackOutlineBezierAccess.primaryBezierForSelection(sel) else null
+        } ?: return null
+        return if (curve.isPrimary) curve else curve.secondary()
+    }
+
+    private fun resolveHoveredWorldHit(mc: Minecraft): Vec3? {
+        if (AnchorPeerCurveHit.isActive()) {
+            return mc.hitResult?.location ?: AnchorPeerCurveHit.vec()
+        }
+        val sel = TrackBlockOutline.result ?: return null
+        return sel.vec
+    }
 
     data class LiveAnchorFrame(val center: Vec3, val lateral: Vec3, val up: Vec3)
 

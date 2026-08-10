@@ -174,6 +174,18 @@ public class WaterslideTubeVisual extends AbstractVisual
         }
     }
 
+    // rebuild after a BE data packet
+    public static void refreshAnchor(BlockPos anchor) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) return;
+        for (WaterslideTubeVisual visual : new ArrayList<>(ACTIVE)) {
+            if (visual.be.isRemoved() || visual.be.getLevel() != mc.level) continue;
+            if (visual.be.getBlockPos().equals(anchor)) {
+                visual.collect();
+            }
+        }
+    }
+
     private void refreshAnchorCurves(BlockPos anchor) {
         for (TubeCurve c : new ArrayList<>(curves)) {
             if (!curves.contains(c)) continue;

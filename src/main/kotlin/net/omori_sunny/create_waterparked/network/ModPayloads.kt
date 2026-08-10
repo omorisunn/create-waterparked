@@ -31,6 +31,11 @@ object ModPayloads {
             WaterslideSectorEditPayload.STREAM_CODEC,
             WaterslideSectorEditPayload::handleOnServer
         )
+        registrar.playToServer(
+            WaterslideSectorBlockEditPayload.TYPE,
+            WaterslideSectorBlockEditPayload.STREAM_CODEC,
+            WaterslideSectorBlockEditPayload::handleOnServer
+        )
         registrar.playToClient(
             WaterslideHotbarSelectionSyncPayload.TYPE,
             WaterslideHotbarSelectionSyncPayload.STREAM_CODEC,

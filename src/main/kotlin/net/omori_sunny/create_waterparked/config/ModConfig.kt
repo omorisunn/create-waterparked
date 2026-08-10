@@ -23,6 +23,10 @@ object ModConfig {
         .comment("Maximum lift at a slide anchor, in blocks.")
         .defineInRange("maxSlideLift", 4.0, 0.5, 16.0)
 
+    val DISABLE_SLIDE_ANGLE_LIMIT: ModConfigSpec.BooleanValue = BUILDER
+        .comment("Remove bezier curve angle limits for water slides.")
+        .define("disableSlideCurveAngleLimit", true)
+
     val SLIDE_FRICTION: ModConfigSpec.DoubleValue = BUILDER
         .comment("Horizontal friction while the player is on a water slide. Lower = faster.")
         .defineInRange("slideFriction", 0.88, 0.0, 1.0)
@@ -44,6 +48,8 @@ object ModConfig {
     fun defaultSlideRadius(): Float = clampSlideRadius(DEFAULT_SLIDE_RADIUS.get().toFloat())
 
     fun maxSlideLift(): Float = MAX_SLIDE_LIFT.get().toFloat().coerceIn(0.5f, 16f)
+
+    fun disableSlideCurveAngleLimit(): Boolean = DISABLE_SLIDE_ANGLE_LIMIT.get()
 
     fun clampSlideRadius(value: Float): Float {
         val min = MIN_SLIDE_RADIUS.get().toFloat()

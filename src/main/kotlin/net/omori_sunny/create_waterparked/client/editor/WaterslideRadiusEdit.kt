@@ -17,6 +17,9 @@ import net.omori_sunny.create_waterparked.network.WaterslideRadiusEditPayload
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.MultiBufferSource
 import net.minecraft.core.BlockPos
+import net.minecraft.network.chat.Component
+import net.minecraft.network.chat.Style
+import net.minecraft.network.chat.TextColor
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
@@ -54,6 +57,7 @@ object WaterslideRadiusEdit {
     }
 
     // preview radius
+    @JvmStatic
     fun radiusAt(level: Level, anchorPos: BlockPos, fallback: Float): Float {
         previewRadii[anchorPos]?.let { return it }
         return (level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity)?.radius ?: fallback
@@ -74,6 +78,13 @@ object WaterslideRadiusEdit {
             val target = dragTargetWorld(mc, level, anchor) ?: return clear()
             val radius = radiusFromDistance(target.distanceTo(anchorCenter(level, anchor)))
             previewRadii[anchor] = radius
+            player.displayClientMessage(
+                Component.translatable(
+                    "create_waterparked.track.bezier_edit_radius_meters",
+                    CoasterBezierHandleEdit.formatLiftMetersReadout(radius)
+                ).withStyle(Style.EMPTY.withColor(TextColor.fromRgb(0xFFFFFF))),
+                true
+            )
             if (!useDown) {
                 PacketDistributor.sendToServer(WaterslideRadiusEditPayload(anchor, radius))
                 previewRadii.remove(anchor)

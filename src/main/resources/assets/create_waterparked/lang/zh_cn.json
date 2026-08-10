@@ -9,5 +9,6 @@
   "create_waterparked.track.must_attach_to_slide_anchors": "水滑梯必须连接到水滑梯锚点上",
   "create_waterparked.connect.missing_anchor": "水滑梯锚点数据缺失",
   "create_waterparked.connect.cannot_accept": "其中一个锚点无法再接受连接",
-  "create_waterparked.connect.invalid_curve": "无法在这两个锚点之间生成滑梯曲线"
+  "create_waterparked.connect.invalid_curve": "无法在这两个锚点之间生成滑梯曲线",
+  "create_waterparked.track.bezier_edit_radius_meters": "半径：%sm"
 }

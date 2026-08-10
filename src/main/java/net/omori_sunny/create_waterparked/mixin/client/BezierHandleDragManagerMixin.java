@@ -4,6 +4,8 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.simibubi.create.content.trains.track.BezierConnection;
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager;
+import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode;
+import dev.silvergold.simulatedcoasters.track.CoasterBezierHandleEdit;
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity;
 import net.omori_sunny.create_waterparked.config.ModConfig;
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit;
@@ -12,6 +14,8 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlo
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
@@ -42,6 +46,32 @@ public abstract class BezierHandleDragManagerMixin {
     private static float waterslide$hudLift(CoasterAnchorpointBlockEntity be, Operation<Float> original) {
         float value = original.call(be);
         return be instanceof WaterslideAnchorBlockEntity slide ? value - slide.getRadius() : value;
+    }
+
+// status hud radius segment
+    @WrapOperation(
+        method = "renderBezierEditAnchorStatusHud(Lnet/minecraft/client/Minecraft;"
+            + "Lnet/minecraft/client/gui/GuiGraphics;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/network/chat/Component;translatable(Ljava/lang/String;"
+                + "[Ljava/lang/Object;)Lnet/minecraft/network/chat/MutableComponent;"
+        )
+    )
+    private static MutableComponent waterslide$statusLift(
+        String key, Object[] args, Operation<MutableComponent> original) {
+        MutableComponent component = original.call(key, args);
+        if (!"simulatedcoasters.track.bezier_edit_anchor_status_lift".equals(key)) return component;
+        Minecraft mc = Minecraft.getInstance();
+        BlockPos anchor = BezierHandleEditMode.getActiveAnchor();
+        if (anchor == null || mc.level == null) return component;
+        if (!(mc.level.getBlockEntity(anchor) instanceof WaterslideAnchorBlockEntity be)) return component;
+        float radius = WaterslideRadiusEdit.INSTANCE.radiusAt(mc.level, anchor, be.getRadius());
+        return component
+            .append(Component.translatable("simulatedcoasters.track.bezier_edit_anchor_status_sep"))
+            .append(Component.translatable(
+                "create_waterparked.track.bezier_edit_radius_meters",
+                CoasterBezierHandleEdit.formatLiftMetersReadout(radius)));
     }
 
 // slide lift snaps to the independent max
