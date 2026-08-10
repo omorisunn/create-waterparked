@@ -19,6 +19,7 @@ import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial
 import net.omori_sunny.create_waterparked.content.waterslide.SectorType
+import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlock
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSector
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
@@ -103,6 +104,8 @@ object WaterslideSectorEdit {
 
 // add open / delete sector
         if (!AllItems.WRENCH.isIn(player.offhandItem)) return
+// anchor clicks pass through
+        if (event.level.getBlockState(event.pos).block is WaterslideAnchorBlock) return
         val hitVec = event.hitVec?.location ?: return
         val hit = resolveWallHit(event.level, hitVec) ?: return
         val action = when {

@@ -8,6 +8,7 @@
     "AnchorPeerCurveClientIndexMixin",
     "BezierBankBlendMixin",
     "CoasterAnchorBezierOptimizerMixin",
+    "CoasterAnchorpointBlockEntityLiftMixin",
     "CoasterAnchorpointBlockEntityTypeMixin",
     "CoasterBezierHandleEditMixin",
     "CoasterBezierRailFramesMixin",

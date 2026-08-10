@@ -5,14 +5,18 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.simibubi.create.content.trains.track.BezierConnection;
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager;
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity;
+import net.omori_sunny.create_waterparked.config.ModConfig;
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit;
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRadiusEdit;
+import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity;
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -21,6 +25,46 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 // allow slide handles and sector control point dragging
 @Mixin(BezierHandleDragManager.class)
 public abstract class BezierHandleDragManagerMixin {
+
+    @Shadow
+    private static BlockPos dragLiftAnchorPos;
+
+// hud lift readout without the radius offset
+    @WrapOperation(
+        method = "renderBezierEditAnchorStatusHud(Lnet/minecraft/client/Minecraft;"
+            + "Lnet/minecraft/client/gui/GuiGraphics;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Ldev/silvergold/simulatedcoasters/track/anchor/CoasterAnchorpointBlockEntity;"
+                + "getLiftBlocks()F"
+        )
+    )
+    private static float waterslide$hudLift(CoasterAnchorpointBlockEntity be, Operation<Float> original) {
+        float value = original.call(be);
+        return be instanceof WaterslideAnchorBlockEntity slide ? value - slide.getRadius() : value;
+    }
+
+// slide lift snaps to the independent max
+    @WrapOperation(
+        method = "liftDragVirtualTarget(Lnet/minecraft/client/Minecraft;"
+            + "Lnet/minecraft/world/level/Level;Lnet/minecraft/world/phys/Vec3;)"
+            + "Lnet/minecraft/world/phys/Vec3;",
+        at = @At(
+            value = "INVOKE",
+            target = "Ldev/silvergold/simulatedcoasters/track/CoasterBezierHandleEdit;"
+                + "snapLiftBlocksToNearestHalf(F)F"
+        )
+    )
+    private static float waterslide$liftSnap(float value, Operation<Float> original) {
+        Level level = Minecraft.getInstance().level;
+        if (level != null && level.getBlockEntity(dragLiftAnchorPos) instanceof WaterslideAnchorBlockEntity be) {
+            float max = Math.max(ModConfig.INSTANCE.maxSlideLift() - be.getRadius(), 0.25f);
+            float clamped = Mth.clamp(value, 0.25f, max);
+            if (clamped < 0.5f) return 0.25f;
+            return Mth.clamp(Math.round(clamped * 2f) / 2f, 0.25f, max);
+        }
+        return original.call(value);
+    }
 
     @WrapOperation(
         method = "rayPickClosestTangentHandle(Lnet/minecraft/client/Minecraft;)"

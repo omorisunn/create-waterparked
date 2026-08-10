@@ -25,6 +25,9 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
     var radius: Float = ModConfig.defaultSlideRadius()
         private set
 
+// effective lift includes the pipe radius
+    override fun getLiftBlocks(): Float = super.getLiftBlocks() + radius
+
 // sector configs
     val sectorConfigs: MutableMap<BlockPos, WaterslideSectorConfig> = mutableMapOf()
 

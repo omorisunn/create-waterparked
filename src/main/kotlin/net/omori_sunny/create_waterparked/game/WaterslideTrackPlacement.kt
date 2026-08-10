@@ -2,7 +2,10 @@ package net.omori_sunny.create_waterparked.game
 
 import com.simibubi.create.AllDataComponents
 import com.simibubi.create.AllSoundEvents
+import com.simibubi.create.content.trains.track.BezierConnection
 import dev.silvergold.simulatedcoasters.track.CoasterAnchorBezierOptimizer
+import dev.silvergold.simulatedcoasters.track.graph.CoasterTrackPropagator
+import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlock
@@ -19,6 +22,7 @@ import net.minecraft.world.InteractionHand
 import net.minecraft.world.entity.player.Player
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.level.Level
+import net.minecraft.world.phys.Vec3
 
 // Slide connection state machine.
 object WaterslideTrackPlacement {
@@ -140,13 +144,23 @@ object WaterslideTrackPlacement {
             return false
         }
 
-        val curve = CoasterAnchorBezierOptimizer.buildAnchorAnchorBezier(
+        val placement = CoasterAnchorBezierOptimizer.buildAnchorAnchorPlacement(
             level, first, secondAnchor, WaterslideTrackMaterials.WATERSLIDE, false
         ) ?: return false
+        val primary = placement.primary()
+        if (!CoasterAnchorBezierOptimizer.isBuiltPlacementCurveValid(primary)) return false
         val beA = level.getBlockEntity(first) as? WaterslideAnchorBlockEntity ?: return false
 
-        beA.putAnchorPeerCurve(level, secondAnchor, curve)
+        CoasterTrackPropagator.runBatchUpdate(level, Runnable {
+            val smoothing = WaterslideNeighborSmoothing.build(level, first, secondAnchor, primary, placement)
+            val finalCurve = smoothing?.primary ?: primary
+            beA.putAnchorPeerCurve(level, secondAnchor, finalCurve)
+            if (smoothing != null) {
+                WaterslideNeighborSmoothing.commitNeighbors(level, smoothing.neighbors)
+            }
+        })
         beA.initCurveSectorConfig(level, secondAnchor)
+        logJunction(level, first, secondAnchor, placement)
         CreateWaterparked.LOGGER.info("Slide connected {} -> {}", first, secondAnchor)
 
         clearPendingConnection(stack)
@@ -155,5 +169,39 @@ object WaterslideTrackPlacement {
             syncMainHand(player, hand, null)
         }
         return true
+    }
+
+// junction alignment check
+    private fun logJunction(
+        level: ServerLevel,
+        a: BlockPos,
+        b: BlockPos,
+        result: CoasterAnchorBezierOptimizer.AnchorAnchorBuildResult
+    ) {
+        val dots = result.neighborJoinWrites.mapNotNull { write ->
+            val raw = (level.getBlockEntity(write.sharedAnchor()) as? CoasterAnchorpointBlockEntity)
+                ?.getAnchorPeerCurvesView()?.get(write.remotePos()) ?: return@mapNotNull null
+            val bc = if (raw.isPrimary) raw else raw.secondary()
+            val committed = (level.getBlockEntity(a) as? CoasterAnchorpointBlockEntity)
+                ?.getAnchorPeerCurvesView()?.get(b) ?: return@mapNotNull null
+            val primaryBc = if (committed.isPrimary) committed else committed.secondary()
+            val nAxis = axisAt(bc, write.sharedAnchor()) ?: return@mapNotNull null
+            val pAxis = axisAt(primaryBc, write.sharedAnchor()) ?: return@mapNotNull null
+            nAxis.normalize().dot(pAxis.normalize())
+        }
+        CreateWaterparked.LOGGER.info(
+            "Slide junction {} -> {}: smoothedNeighbors={} axisDot={}",
+            a, b, result.neighborJoinWrites.size, dots
+        )
+    }
+
+    private fun axisAt(bc: BezierConnection, anchor: BlockPos): Vec3? {
+        return if (bc.bePositions.getFirst() == anchor) {
+            bc.axes.getFirst()
+        } else if (bc.bePositions.getSecond() == anchor) {
+            bc.axes.getSecond()
+        } else {
+            null
+        }
     }
 }

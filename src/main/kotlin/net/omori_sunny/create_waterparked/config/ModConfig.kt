@@ -19,6 +19,10 @@ object ModConfig {
         .comment("Maximum slide opening radius, in blocks.")
         .defineInRange("maxSlideRadius", 2.5, 0.1, 20.0)
 
+    val MAX_SLIDE_LIFT: ModConfigSpec.DoubleValue = BUILDER
+        .comment("Maximum lift at a slide anchor, in blocks.")
+        .defineInRange("maxSlideLift", 4.0, 0.5, 16.0)
+
     val SLIDE_FRICTION: ModConfigSpec.DoubleValue = BUILDER
         .comment("Horizontal friction while the player is on a water slide. Lower = faster.")
         .defineInRange("slideFriction", 0.88, 0.0, 1.0)
@@ -38,6 +42,8 @@ object ModConfig {
     val SPEC: ModConfigSpec = BUILDER.build()
 
     fun defaultSlideRadius(): Float = clampSlideRadius(DEFAULT_SLIDE_RADIUS.get().toFloat())
+
+    fun maxSlideLift(): Float = MAX_SLIDE_LIFT.get().toFloat().coerceIn(0.5f, 16f)
 
     fun clampSlideRadius(value: Float): Float {
         val min = MIN_SLIDE_RADIUS.get().toFloat()
