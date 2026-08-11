@@ -2,6 +2,7 @@ package net.omori_sunny.create_waterparked.client.editor
 
 import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
+import com.simibubi.create.AllKeys
 import com.simibubi.create.AllItems
 import com.simibubi.create.content.trains.track.BezierConnection
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager
@@ -65,6 +66,7 @@ object WaterslideSectorEdit {
     private const val PICK_RADIUS = 0.3
     private const val CONTROL_RING_SCALE = 1.35f
     private const val WALL_SEGMENTS = 24
+    private const val BOUNDARY_ALIGN_RANGE = 3f
     private const val KEY_PENDING = "waterslide_sector_pending"
     private const val KEY_TARGET_OK = "waterslide_sector_target_ok"
     private const val KEY_TARGET_BAD = "waterslide_sector_target_bad"
@@ -641,7 +643,19 @@ object WaterslideSectorEdit {
         if (dragging || draggingBoundary) {
             val key = dragCurveKey ?: return clear()
             val curve = findCurve(level, key) ?: return clear()
-            val targetAngle = angleFromDrag(mc, level, anchor, curve) ?: return clear()
+            if (draggingBoundary && level.gameTime % 20 == 0L) {
+                player.displayClientMessage(
+                    Component.translatable(
+                        "create_waterparked.track.sector_boundary_snap_hint",
+                        Component.literal("[${AllKeys.ALT_MODIFIER.getBoundKey()}]")
+                    ),
+                    true
+                )
+            }
+            var targetAngle = angleFromDrag(mc, level, anchor, curve) ?: return clear()
+            if (!AllKeys.ALT_MODIFIER.isPressed()) {
+                targetAngle = alignedBoundaryAngle(level, anchor, curve, key, targetAngle) ?: targetAngle
+            }
             val config = previewConfigs[key] ?: return clear()
             if (draggingBoundary) {
                 currentBoundaryAngle = easeAngle(currentBoundaryAngle, targetAngle)
@@ -868,6 +882,49 @@ object WaterslideSectorEdit {
 
     private fun applyMove(config: WaterslideSectorConfig, sectorId: Int, newCenterAngle: Float) {
         WaterslideSectorLayout.applyMove(config, sectorId, newCenterAngle)
+    }
+
+    // snap to the nearest boundary of the connected curve on the other side
+    private fun alignedBoundaryAngle(
+        level: Level,
+        anchor: BlockPos,
+        curve: BezierConnection,
+        draggedKey: Pair<Long, Long>,
+        target: Float
+    ): Float? {
+        val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return null
+        val tDrag = if (curve.bePositions.getFirst() == anchor) 0f else 1f
+        val latD = CoasterBezierRailFrames.lateralAt(curve, tDrag, level)
+        val upD = CoasterBezierRailFrames.faceUpAt(curve, tDrag, level)
+        val radD = Math.toRadians(target.toDouble())
+        val dirD = latD.scale(Math.cos(radD)).add(upD.scale(Math.sin(radD)))
+        val live = anchorOpeningFrame(level, anchor)
+        val latA = live?.lateral ?: latD
+        val upA = live?.up ?: upD
+        var best: Float? = null
+        var bestCos = Math.cos(Math.toRadians(BOUNDARY_ALIGN_RANGE.toDouble()))
+        for ((peer, raw) in be.anchorPeerCurvesView) {
+            val primary = if (raw.isPrimary) raw else raw.secondary()
+            if (!WaterslideTrackMaterials.isWaterslide(primary)) continue
+            val otherKey = curveKey(anchor, peer)
+            if (otherKey == draggedKey) continue
+            val config = previewConfigFor(anchor, peer) ?: configForCurve(level, otherKey) ?: continue
+            val placed = WaterslideSectorLayout.place(config)
+            if (placed.size < 2) continue
+            val seen = HashSet<Float>()
+            for (p in placed) {
+                val angle = WaterslideSectorLayout.normalize(p.endAngle)
+                if (!seen.add(angle)) continue
+                val rad = Math.toRadians(angle.toDouble())
+                val dirA = latA.scale(Math.cos(rad)).add(upA.scale(Math.sin(rad)))
+                val cos = dirD.dot(dirA).coerceIn(-1.0, 1.0)
+                if (cos > bestCos) {
+                    bestCos = cos
+                    best = Math.toDegrees(Math.atan2(dirA.dot(upD), dirA.dot(latD))).toFloat()
+                }
+            }
+        }
+        return best?.let { WaterslideSectorLayout.normalize(it) }
     }
 
     // Helpers.

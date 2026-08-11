@@ -43,6 +43,34 @@ object ModConfig {
         .comment("Border size in pixels used for 9-slice tiling of block textures on sectors.")
         .defineInRange("sectorBorderPx", 2, 0, 8)
 
+    val SLIDE_WATER_FRICTION: ModConfigSpec.DoubleValue = BUILDER
+        .comment("Friction multiplier inside water-filled slide pipes.")
+        .defineInRange("slideWaterFriction", 0.01, 0.0, 1.0)
+
+    val WATER_DRAIN_RATE_MB: ModConfigSpec.DoubleValue = BUILDER
+        .comment("Water consumed per second while a slide is watered, in millibuckets.")
+        .defineInRange("waterDrainRateMbPerSecond", 10.0, 0.0, 1000.0)
+
+    val ANCHOR_FLUID_CAPACITY: ModConfigSpec.IntValue = BUILDER
+        .comment("Water capacity of a slide anchor, in millibuckets.")
+        .defineInRange("anchorFluidCapacity", 1000, 1, 10000)
+
+    val SLIDE_MAX_ENTRY_SPEED: ModConfigSpec.DoubleValue = BUILDER
+        .comment("Maximum entry speed for slide trajectory computation, in blocks/second.")
+        .defineInRange("slideMaxEntrySpeedBlocksPerSecond", 30.0, 1.0, 100.0)
+
+    val SLIDE_SAMPLE_SPACING: ModConfigSpec.DoubleValue = BUILDER
+        .comment("Trajectory sample spacing along the slide spine, in blocks.")
+        .defineInRange("slideTrajectorySampleSpacing", 0.5, 0.1, 4.0)
+
+    val SLIDE_MAX_PATH_BLOCKS: ModConfigSpec.DoubleValue = BUILDER
+        .comment("Maximum slide path length for one trajectory, in blocks.")
+        .defineInRange("slideMaxPathBlocks", 512.0, 16.0, 8192.0)
+
+    val SLIDE_MAX_TRAJECTORY_SAMPLES: ModConfigSpec.IntValue = BUILDER
+        .comment("Maximum number of trajectory samples sent to the client.")
+        .defineInRange("slideMaxTrajectorySamples", 4096, 64, 32768)
+
     val SPEC: ModConfigSpec = BUILDER.build()
 
     fun defaultSlideRadius(): Float = clampSlideRadius(DEFAULT_SLIDE_RADIUS.get().toFloat())
@@ -64,6 +92,20 @@ object ModConfig {
     fun maxSectors(): Int = MAX_SECTORS.get().coerceIn(2, 128)
 
     fun sectorBorderPx(): Int = SECTOR_BORDER_PX.get().coerceIn(0, 16)
+
+    fun slideWaterFriction(): Double = SLIDE_WATER_FRICTION.get().coerceIn(0.0, 1.0)
+
+    fun waterDrainRateMbPerSecond(): Double = WATER_DRAIN_RATE_MB.get().coerceIn(0.0, 1000.0)
+
+    fun anchorFluidCapacity(): Int = ANCHOR_FLUID_CAPACITY.get().coerceIn(1, 10000)
+
+    fun slideMaxEntrySpeed(): Double = SLIDE_MAX_ENTRY_SPEED.get().coerceIn(1.0, 100.0)
+
+    fun slideTrajectorySampleSpacing(): Double = SLIDE_SAMPLE_SPACING.get().coerceIn(0.1, 4.0)
+
+    fun slideMaxPathBlocks(): Double = SLIDE_MAX_PATH_BLOCKS.get().coerceIn(16.0, 8192.0)
+
+    fun slideMaxTrajectorySamples(): Int = SLIDE_MAX_TRAJECTORY_SAMPLES.get().coerceIn(64, 32768)
 
     @Suppress("DEPRECATION")
     fun register() {

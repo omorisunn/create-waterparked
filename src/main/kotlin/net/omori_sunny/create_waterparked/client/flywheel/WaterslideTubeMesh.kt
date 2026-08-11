@@ -15,11 +15,14 @@ import dev.engine_room.flywheel.lib.vertex.FullVertexView
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
 import dev.silvergold.simulatedcoasters.track.CoasterOpenEndExtension
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
+import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.config.ModConfig
+import net.omori_sunny.create_waterparked.content.waterslide.PlacedSector
 import net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
 import net.minecraft.client.Minecraft
+import net.minecraft.client.renderer.texture.TextureAtlas
 import net.minecraft.client.renderer.texture.TextureAtlasSprite
 import net.minecraft.core.registries.BuiltInRegistries
 import net.minecraft.resources.ResourceLocation
@@ -31,6 +34,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 
 // shared unit-circle mesh
@@ -39,6 +43,9 @@ object WaterslideTubeMesh {
     private const val WALL_THICKNESS = 0.1f
     private const val TILE_SUBDIVISION_PX = 8f
     private const val PIXELS_PER_BLOCK = 16f
+    private const val WATER_DEPTH = 0.12f
+    private const val WATER_BAND_START = 210f
+    private const val WATER_BAND_END = 330f
 
     private val modelCache = HashMap<String, TubeModels>()
 
@@ -73,7 +80,8 @@ object WaterslideTubeMesh {
         val wallTranslucent: Model,
         val startCapTranslucent: Model,
         val endCapTranslucent: Model,
-        val ringTranslucent: Model
+        val ringTranslucent: Model,
+        val water: Model
     )
 
     data class TubeSegmentFrame(
@@ -217,6 +225,13 @@ object WaterslideTubeMesh {
         val wallVerts = ArrayList<V>()
         val startCapVerts = ArrayList<V>()
         val endCapVerts = ArrayList<V>()
+        val waterVerts = ArrayList<V>()
+        val waterSprite = Minecraft.getInstance().getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
+            .apply(ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "block/water_slide_water"))
+        val wu0 = waterSprite.u0
+        val wu1 = waterSprite.u1
+        val wv0 = waterSprite.v0
+        val wv1 = waterSprite.v1
 
         fun add(
             dst: MutableList<V>,
@@ -233,6 +248,50 @@ object WaterslideTubeMesh {
                 u, v,
                 (Math.round(spriteU0 * 32767f) shl 16) or Math.round(spriteU1 * 32767f),
                 (Math.round(spriteV0 * 65535f) shl 16) or Math.round(spriteV1 * 65535f),
+                nx, ny, nz
+            )
+        }
+
+        fun addSideWall(
+            dst: MutableList<V>,
+            angleDeg: Float,
+            dir: Float,
+            inner: Float,
+            sectorRadians: Float, texW: Float, texH: Float, border: Float,
+            su0: Float, su1: Float, sv0: Float, sv1: Float
+        ) {
+            val a = Math.toRadians(angleDeg.toDouble())
+            val c = cos(a).toFloat()
+            val s = sin(a).toFloat()
+            val dx = -s * dir
+            val dy = c * dir
+            if (dir > 0f) {
+                add(dst, c, s, 0f, dx, dy, 0f, 0f, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                add(dst, c * inner, s * inner, 0f, dx, dy, 0f, 1f, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                add(dst, c * inner, s * inner, 0.5f, dx, dy, 0f, 1f, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                add(dst, c, s, 0.5f, dx, dy, 0f, 0f, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+            } else {
+                add(dst, c, s, 0f, dx, dy, 0f, 0f, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                add(dst, c, s, 0.5f, dx, dy, 0f, 0f, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                add(dst, c * inner, s * inner, 0.5f, dx, dy, 0f, 1f, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                add(dst, c * inner, s * inner, 0f, dx, dy, 0f, 1f, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+            }
+        }
+
+        fun addWater(
+            dst: MutableList<V>,
+            x: Float, y: Float, z: Float,
+            nx: Float, ny: Float, nz: Float,
+            u: Float, v: Float,
+            type: Int,
+            su0: Float, su1: Float, sv0: Float, sv1: Float
+        ) {
+            dst += V(
+                x, y, z,
+                0f, type / 64f, 0f, 0f,
+                u, v,
+                (Math.round(su0 * 32767f) shl 16) or Math.round(su1 * 32767f),
+                (Math.round(sv0 * 65535f) shl 16) or Math.round(sv1 * 65535f),
                 nx, ny, nz
             )
         }
@@ -285,12 +344,84 @@ object WaterslideTubeMesh {
                 add(startCapVerts, c0, s0, 0f, -c0, -s0, -1f, f0, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
                 add(startCapVerts, c1, s1, 0f, -c1, -s1, -1f, f1, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
                 add(startCapVerts, c1, s1, 0f, c1, s1, -1f, f1, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+
+            }
+
+            // side walls next to open sectors
+            val idx = placed.indexOf(p)
+            val prev = placed[(idx - 1 + placed.size) % placed.size]
+            val next = placed[(idx + 1) % placed.size]
+            val inner = 1f - WALL_THICKNESS
+            if (prev.sector.material == SectorMaterial.OPEN) {
+                addSideWall(wallVerts, p.startAngle, -1f, inner, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+            }
+            if (next.sector.material == SectorMaterial.OPEN) {
+                addSideWall(wallVerts, p.endAngle, 1f, inner, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+            }
+
+            // water trough, generated once per sector
+            val overlapStart = max(p.startAngle, WATER_BAND_START)
+            val overlapEnd = min(p.endAngle, WATER_BAND_END)
+            if (overlapEnd > overlapStart) {
+                val bandSpan = WATER_BAND_END - WATER_BAND_START
+                val waterSteps = max(1, ceil((overlapEnd - overlapStart) / 360f * crossN).toInt())
+                for (wj in 0 until waterSteps) {
+                    val w0 = wj.toFloat() / waterSteps
+                    val w1 = (wj + 1).toFloat() / waterSteps
+                    val wa0 = Math.toRadians((overlapStart + (overlapEnd - overlapStart) * w0).toDouble())
+                    val wa1 = Math.toRadians((overlapStart + (overlapEnd - overlapStart) * w1).toDouble())
+                    // one tile across the whole band, continuous across sectors
+                    val u0 = (overlapStart + (overlapEnd - overlapStart) * w0 - WATER_BAND_START) / bandSpan
+                    val u1 = (overlapStart + (overlapEnd - overlapStart) * w1 - WATER_BAND_START) / bandSpan
+                    val c0w = cos(wa0).toFloat()
+                    val s0w = sin(wa0).toFloat()
+                    val c1w = cos(wa1).toFloat()
+                    val s1w = sin(wa1).toFloat()
+                    // bottom arc at inner radius
+                    addWater(waterVerts, c0w, s0w, 0f, -c0w, -s0w, 0f, u0, 0f, 0, wu0, wu1, wv0, wv1)
+                    addWater(waterVerts, c0w, s0w, 0.5f, -c0w, -s0w, 0f, u0, 1f, 0, wu0, wu1, wv0, wv1)
+                    addWater(waterVerts, c1w, s1w, 0.5f, -c1w, -s1w, 0f, u1, 1f, 0, wu0, wu1, wv0, wv1)
+                    addWater(waterVerts, c1w, s1w, 0f, -c1w, -s1w, 0f, u1, 0f, 0, wu0, wu1, wv0, wv1)
+                    // top free surface at inner radius - depth, same winding as bottom
+                    addWater(waterVerts, c0w, s0w, 0f, -c0w, -s0w, 0f, u0, 0f, 1, wu0, wu1, wv0, wv1)
+                    addWater(waterVerts, c0w, s0w, 0.5f, -c0w, -s0w, 0f, u0, 1f, 1, wu0, wu1, wv0, wv1)
+                    addWater(waterVerts, c1w, s1w, 0.5f, -c1w, -s1w, 0f, u1, 1f, 1, wu0, wu1, wv0, wv1)
+                    addWater(waterVerts, c1w, s1w, 0f, -c1w, -s1w, 0f, u1, 0f, 1, wu0, wu1, wv0, wv1)
+                }
             }
         }
+
+        // water side walls at band edges
+        fun bandSector(angle: Float): PlacedSector? =
+            placed.firstOrNull {
+                angle >= it.startAngle - 0.001f && angle <= it.endAngle + 0.001f
+            }?.takeIf { it.sector.material != SectorMaterial.OPEN }
+
+        fun addBandWall(angle: Float, left: Boolean) {
+            if (bandSector(angle) == null) return
+            val a = Math.toRadians(angle.toDouble())
+            val c = cos(a).toFloat()
+            val s = sin(a).toFloat()
+            val nx = if (left) 0.5f else -0.5f
+            if (left) {
+                addWater(waterVerts, c, s, 0f, nx, -0.866f, 0f, 0f, 0f, 2, wu0, wu1, wv0, wv1)
+                addWater(waterVerts, c, s, 0f, nx, -0.866f, 0f, 1f, 0f, 2, wu0, wu1, wv0, wv1)
+                addWater(waterVerts, c, s, 0.5f, nx, -0.866f, 0f, 1f, 1f, 2, wu0, wu1, wv0, wv1)
+                addWater(waterVerts, c, s, 0.5f, nx, -0.866f, 0f, 0f, 1f, 2, wu0, wu1, wv0, wv1)
+            } else {
+                addWater(waterVerts, c, s, 0f, nx, -0.866f, 0f, 0f, 0f, 2, wu0, wu1, wv0, wv1)
+                addWater(waterVerts, c, s, 0.5f, nx, -0.866f, 0f, 0f, 1f, 2, wu0, wu1, wv0, wv1)
+                addWater(waterVerts, c, s, 0.5f, nx, -0.866f, 0f, 1f, 1f, 2, wu0, wu1, wv0, wv1)
+                addWater(waterVerts, c, s, 0f, nx, -0.866f, 0f, 1f, 0f, 2, wu0, wu1, wv0, wv1)
+            }
+        }
+        addBandWall(WATER_BAND_START, left = true)
+        addBandWall(WATER_BAND_END, left = false)
 
         val wallMesh = meshOf(wallVerts, "waterslide_tube_wall")
         val startCapMesh = meshOf(startCapVerts, "waterslide_tube_start_cap")
         val endCapMesh = meshOf(endCapVerts, "waterslide_tube_end_cap")
+        val waterMesh = meshOf(waterVerts, "waterslide_tube_water")
         return TubeModels(
             SingleMeshModel(wallMesh, Materials.CUTOUT_MIPPED_BLOCK),
             SingleMeshModel(startCapMesh, Materials.CUTOUT_MIPPED_BLOCK),
@@ -298,7 +429,8 @@ object WaterslideTubeMesh {
             SingleMeshModel(wallMesh, TUBE_TRANSLUCENT_MATERIAL),
             SingleMeshModel(startCapMesh, TUBE_TRANSLUCENT_MATERIAL),
             SingleMeshModel(endCapMesh, TUBE_TRANSLUCENT_MATERIAL),
-            SingleMeshModel(endCapMesh, RING_TRANSLUCENT_MATERIAL)
+            SingleMeshModel(endCapMesh, RING_TRANSLUCENT_MATERIAL),
+            SingleMeshModel(waterMesh, TUBE_TRANSLUCENT_MATERIAL)
         )
     }
 

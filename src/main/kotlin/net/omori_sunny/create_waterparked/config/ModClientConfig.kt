@@ -16,9 +16,22 @@ object ModClientConfig {
         )
         .define("showSkeletonWhenTranslucent", true)
 
+    val SHOW_SLIDE_EXIT_HINT: ModConfigSpec.BooleanValue = BUILDER
+        .comment("Show the \"Shift to exit\" hint while sliding.")
+        .define("showSlideExitHint", true)
+
+    // camera smoothing while sliding, 0 = off
+    val CAMERA_SMOOTHING: ModConfigSpec.DoubleValue = BUILDER
+        .comment("Camera smoothing strength while sliding. 0 = off, higher = smoother.")
+        .defineInRange("cameraSmoothing", 0.35, 0.0, 0.9)
+
     val SPEC: ModConfigSpec = BUILDER.build()
 
     fun showSkeletonWhenTranslucent(): Boolean = SHOW_SKELETON_WHEN_TRANSLUCENT.get()
+
+    fun showSlideExitHint(): Boolean = SHOW_SLIDE_EXIT_HINT.get()
+
+    fun cameraSmoothing(): Float = CAMERA_SMOOTHING.get().toFloat().coerceIn(0f, 0.9f)
 
     fun register() {
         ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.CLIENT, SPEC)

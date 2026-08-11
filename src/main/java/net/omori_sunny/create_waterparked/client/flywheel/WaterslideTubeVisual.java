@@ -5,13 +5,16 @@ import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.Instancer;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.visual.BlockEntityVisual;
+import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visual.ShaderLightVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.lib.visual.AbstractVisual;
+import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager;
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode;
 import it.unimi.dsi.fastutil.longs.LongArraySet;
 import it.unimi.dsi.fastutil.longs.LongSet;
+import net.createmod.catnip.animation.AnimationTickHolder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.core.BlockPos;
@@ -39,10 +42,11 @@ import java.util.function.Consumer;
 
 // one visual per anchor
 public class WaterslideTubeVisual extends AbstractVisual
-    implements BlockEntityVisual<WaterslideAnchorBlockEntity>, ShaderLightVisual {
+    implements BlockEntityVisual<WaterslideAnchorBlockEntity>, ShaderLightVisual, SimpleDynamicVisual {
 
     private static final Set<WaterslideTubeVisual> ACTIVE =
         Collections.newSetFromMap(new IdentityHashMap<>());
+    private static final float WATER_FLOW_SPEED = 0.025f; // repeats per tick
     private static boolean wasEditing = false;
     private static boolean wasDragging = false;
     private static BlockPos lastEditAnchor = null;
@@ -62,6 +66,13 @@ public class WaterslideTubeVisual extends AbstractVisual
     @Override
     public void update(float partialTick) {
         collect();
+    }
+
+    @Override
+    public void beginFrame(DynamicVisual.Context ctx) {
+        for (TubeCurve c : curves) {
+            c.updateWaterFlow();
+        }
     }
 
     private void collect() {
@@ -204,8 +215,10 @@ public class WaterslideTubeVisual extends AbstractVisual
         private List<WaterslideTubeMesh.TubeSegmentFrame> frames;
         private WaterslideTubeMesh.TubeModels models;
         private final List<WaterslideTubeInstance> instances = new ArrayList<>();
+        private final List<WaterslideTubeInstance> waterInstances = new ArrayList<>();
         private boolean translucent = false;
         private boolean showSkeleton = false;
+        private boolean watered = false;
 
         TubeCurve(BlockPos peer, BezierConnection bc) {
             this.curve = bc;
@@ -227,6 +240,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             this.models = WaterslideTubeMesh.INSTANCE.modelsFor(
                 this.level, config, Math.max(r0, r1)
             );
+            this.watered = be.isCurveWatered(peer);
             rebuildInstances();
         }
 
@@ -246,6 +260,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 config = be.sectorConfigFor(peer);
             }
             this.models = WaterslideTubeMesh.INSTANCE.modelsFor(level, config, Math.max(r0, r1));
+            this.watered = be.isCurveWatered(peer);
             rebuildInstances();
         }
 
@@ -341,6 +356,37 @@ public class WaterslideTubeVisual extends AbstractVisual
             }
             instances.add(endCap);
 
+            // water band
+            if (watered) {
+                Instancer<WaterslideTubeInstance> waterInstancer =
+                    instancerProvider().instancer(
+                        WaterslideTubeInstanceType.INSTANCE,
+                        models.getWater()
+                    );
+                WaterslideTubeInstance[] water = new WaterslideTubeInstance[frames.size()];
+                waterInstancer.createInstances(water);
+                float vBase = 0f;
+                for (int i = 0; i < water.length; i++) {
+                    WaterslideTubeMesh.TubeSegmentFrame f = frames.get(i);
+                    Vec3 mid = f.getPrevSpine().add(f.getCurrSpine()).scale(0.5).add(origin);
+                    int light = LevelRenderer.getLightColor(level, BlockPos.containing(mid));
+                    water[i]
+                        .setSegment(
+                            f.getPrevSpine(), f.getCurrSpine(),
+                            f.getPrevTangent(), f.getCurrTangent(),
+                            f.getPrevLateral(), f.getCurrLateral(),
+                            f.getPrevRadius(), f.getCurrRadius()
+                        )
+                        .light(light)
+                        .color(0.25f, 0.55f, 1f, 0.65f);
+                    water[i].waterVBase = vBase;
+                    water[i].setChanged();
+                    instances.add(water[i]);
+                    waterInstances.add(water[i]);
+                    vBase += (float) f.getPrevSpine().distanceTo(f.getCurrSpine());
+                }
+            }
+
             // skeleton rings
             if (translucent && showSkeleton) {
                 Instancer<WaterslideTubeInstance> ringInstancer =
@@ -376,6 +422,16 @@ public class WaterslideTubeVisual extends AbstractVisual
                 in.delete();
             }
             instances.clear();
+            waterInstances.clear();
+        }
+
+        void updateWaterFlow() {
+            if (waterInstances.isEmpty()) return;
+            float time = AnimationTickHolder.getRenderTime(level) * WATER_FLOW_SPEED;
+            for (WaterslideTubeInstance in : waterInstances) {
+                in.waterFlow = time;
+                in.setChanged();
+            }
         }
 
         void collectCrumblingInstances(Consumer<Instance> consumer) {

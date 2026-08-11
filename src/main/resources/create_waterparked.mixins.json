@@ -29,7 +29,8 @@
     "client.CoasterCurveSelectionOutlineRendererMixin",
     "client.CoasterCurveDyeOutlineClientMixin",
     "client.CoasterTrackPlacementPreviewMixin",
-    "client.LevelRendererAccessor"
+    "client.LevelRendererAccessor",
+    "client.SableEntityOrientationMixin"
   ],
   "injectors": {
     "defaultRequire": 1

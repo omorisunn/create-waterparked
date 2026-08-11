@@ -1,6 +1,7 @@
 package net.omori_sunny.create_waterparked.client
 
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer
+import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRadiusEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslideDyeOutline
@@ -10,7 +11,11 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPrevi
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
+import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
+import net.omori_sunny.create_waterparked.content.sit.SlideSitEntity
 import net.minecraft.client.Minecraft
+import net.minecraft.client.renderer.entity.EntityRenderer
+import net.minecraft.resources.ResourceLocation
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
 import net.neoforged.bus.api.EventPriority
@@ -38,6 +43,9 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(WaterslideHotbarSync::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideSectorEdit::onClientTick)
         NeoForge.EVENT_BUS.addListener(::onClientTick)
+        NeoForge.EVENT_BUS.addListener(SlideClientSession::onClientTickPre)
+        NeoForge.EVENT_BUS.addListener(SlideClientSession::onClientTickPost)
+        NeoForge.EVENT_BUS.addListener(SlideCameraHandler::onComputeCameraAngles)
         NeoForge.EVENT_BUS.addListener(::onRenderLevelStage)
         NeoForge.EVENT_BUS.addListener(::onClientLevelUnload)
 
@@ -57,7 +65,12 @@ object CreateWaterparkedClient {
     }
 
     private fun onRegisterRenderers(event: EntityRenderersEvent.RegisterRenderers) {
-        // level-stage rendering
+        event.registerEntityRenderer(ModEntityTypes.SLIDE_SIT) { ctx ->
+            object : EntityRenderer<SlideSitEntity>(ctx) {
+                override fun getTextureLocation(entity: SlideSitEntity): ResourceLocation =
+                    ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "textures/entity/slide_sit.png")
+            }
+        }
     }
 
     private fun onRenderLevelStage(event: RenderLevelStageEvent) {
@@ -88,6 +101,7 @@ object CreateWaterparkedClient {
     private fun onClientLevelUnload(event: LevelEvent.Unload) {
         if (event.level.isClientSide) {
             WaterslideCurveRenderer.clearClientAnchors()
+            SlideSableOrientation.clearAll()
         }
     }
 }

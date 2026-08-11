@@ -41,5 +41,25 @@ object ModPayloads {
             WaterslideHotbarSelectionSyncPayload.STREAM_CODEC,
             WaterslideHotbarSelectionSyncPayload::handleOnClient
         )
+        registrar.playToClient(
+            SlideTrajectoryPayload.TYPE,
+            SlideTrajectoryPayload.STREAM_CODEC,
+            SlideTrajectoryPayload::handleOnClient
+        )
+        registrar.playToClient(
+            SlideEndPayload.TYPE,
+            SlideEndPayload.STREAM_CODEC,
+            SlideEndPayload::handleOnClient
+        )
+        registrar.playToClient(
+            SlideSyncPayload.TYPE,
+            SlideSyncPayload.STREAM_CODEC,
+            SlideSyncPayload::handleOnClient
+        )
+        registrar.playToServer(
+            SlideCancelPayload.TYPE,
+            SlideCancelPayload.STREAM_CODEC,
+            SlideCancelPayload::handleOnServer
+        )
     }
 }

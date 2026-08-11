@@ -14,5 +14,7 @@
   "create_waterparked.sector.add_ok": "可以添加扇区",
   "create_waterparked.sector.add_fail": "无法在此添加扇区",
   "create_waterparked.sector.added": "扇区已添加",
-  "create_waterparked.sector.delete_last": "无法删除最后一个扇区"
+  "create_waterparked.sector.delete_last": "无法删除最后一个扇区",
+  "create_waterparked.track.sector_boundary_snap_hint": "按住 %s 取消对齐",
+  "create_waterparked.slide.exit_hint": "按 %s 退出滑梯"
 }

@@ -81,6 +81,11 @@ class WaterslideSectorEditPayload(
                     val placed = WaterslideSectorLayout.place(config)
                     val target = WaterslideSectorLayout.sectorAt(placed, angleDegrees) ?: return@enqueueWork
                     config.sectors.removeAll { it.id == target.sector.id }
+// last sector fills the whole circle
+                    if (config.sectors.size == 1) {
+                        val remaining = config.sectors.first()
+                        config.sectors[0] = remaining.copy(type = SectorType.AUTO, widthDegrees = 0f)
+                    }
                 }
 
                 SectorEditAction.MOVE -> {

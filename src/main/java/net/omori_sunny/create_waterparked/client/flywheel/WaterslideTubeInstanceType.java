@@ -30,6 +30,8 @@ public final class WaterslideTubeInstanceType {
                     .vector("currLateral", FloatRepr.FLOAT, 3)
                     .scalar("prevRadius", FloatRepr.FLOAT)
                     .scalar("currRadius", FloatRepr.FLOAT)
+                    .scalar("waterFlow", FloatRepr.FLOAT)
+                    .scalar("waterVBase", FloatRepr.FLOAT)
                     .build()
             )
             .writer((ptr, instance) -> {
@@ -47,6 +49,8 @@ public final class WaterslideTubeInstanceType {
                 ExtraMemoryOps.putVector3f(ptr + 72L, instance.currLateral);
                 MemoryUtil.memPutFloat(ptr + 84L, instance.prevRadius);
                 MemoryUtil.memPutFloat(ptr + 88L, instance.currRadius);
+                MemoryUtil.memPutFloat(ptr + 92L, instance.waterFlow);
+                MemoryUtil.memPutFloat(ptr + 96L, instance.waterVBase);
             })
             .vertexShader(VERTEX_SHADER)
             .cullShader(CULL_SHADER)

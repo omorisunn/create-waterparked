@@ -1,9 +1,12 @@
 package net.omori_sunny.create_waterparked.content.waterslide
 
+import com.simibubi.create.foundation.fluid.SmartFluidTank
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.config.ModConfig
+import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
+import net.omori_sunny.create_waterparked.game.SlideAnchorIndex
 import net.minecraft.core.BlockPos
 import net.minecraft.core.HolderLookup
 import net.minecraft.nbt.CompoundTag
@@ -12,9 +15,15 @@ import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.level.Level
 import net.minecraft.world.level.block.entity.BlockEntityType
 import net.minecraft.world.level.block.state.BlockState
+import net.minecraft.world.level.material.Fluids
 import net.minecraft.world.phys.AABB
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
+import net.neoforged.neoforge.capabilities.Capabilities
+import net.neoforged.neoforge.capabilities.RegisterCapabilitiesEvent
+import net.neoforged.neoforge.fluids.FluidStack
+import net.neoforged.neoforge.fluids.capability.IFluidHandler
+import java.util.function.Consumer
 
 // anchor BE
 class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnchorpointBlockEntity(pos, state) {
@@ -32,6 +41,60 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
 // sector configs
     val sectorConfigs: MutableMap<BlockPos, WaterslideSectorConfig> = mutableMapOf()
 
+// watered curves, keyed by peer
+    val wateredCurves: MutableMap<BlockPos, Boolean> = mutableMapOf()
+
+    private val waterTank: WaterTank = WaterTank(ModConfig.anchorFluidCapacity()) { onWaterChanged() }
+    private val waterHandler: IFluidHandler = WaterOnlyHandler()
+    private var drainAccum = 0.0
+
+    fun isCurveWatered(peer: BlockPos): Boolean = wateredCurves[peer.immutable()] ?: false
+
+    fun setCurveWatered(peer: BlockPos, watered: Boolean) {
+        val key = peer.immutable()
+        if (wateredCurves[key] == watered) return
+        if (watered) wateredCurves[key] = true else wateredCurves.remove(key)
+        setChanged()
+        notifyBlockUpdated()
+    }
+
+    fun hasWater(): Boolean = waterTank.fluidAmount > 0
+
+    fun waterAmount(): Int = waterTank.fluidAmount
+
+    fun refillWater() {
+        if (waterTank.fluidAmount < waterTank.capacity) {
+            val filled = waterTank.fill(
+                FluidStack(Fluids.WATER, waterTank.capacity),
+                IFluidHandler.FluidAction.EXECUTE
+            )
+            if (filled > 0) {
+                net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
+                    "Anchor {} refilled {} mb", blockPos, filled
+                )
+            }
+        }
+    }
+
+    fun drainWater(mb: Int): Int = waterTank.drain(mb, IFluidHandler.FluidAction.EXECUTE).amount
+
+    fun waterDrainAccum(): Double = drainAccum
+
+    fun addDrainAccum(value: Double) {
+        drainAccum += value
+    }
+
+    fun resetDrainAccum() {
+        drainAccum = 0.0
+    }
+
+    private fun onWaterChanged() {
+        if (level != null && !level!!.isClientSide) {
+            setChanged()
+            notifyBlockUpdated()
+        }
+    }
+
     fun sectorConfigFor(peer: BlockPos): WaterslideSectorConfig =
         sectorConfigs.getOrPut(peer.immutable()) { WaterslideSectorConfig.defaultConfig() }
 
@@ -44,6 +107,13 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
 // drop the config when the curve is removed
     fun removeSectorConfig(peer: BlockPos) {
         if (sectorConfigs.remove(peer.immutable()) == null) return
+        removeWateredCurve(peer)
+        setChanged()
+        notifyBlockUpdated()
+    }
+
+    fun removeWateredCurve(peer: BlockPos) {
+        if (wateredCurves.remove(peer.immutable()) == null) return
         setChanged()
         notifyBlockUpdated()
     }
@@ -90,18 +160,22 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
         notifyBlockUpdated()
     }
 
-    @OnlyIn(Dist.CLIENT)
     override fun onLoad() {
         super.onLoad()
         if (level?.isClientSide == true) {
             WaterslideCurveRenderer.registerClientAnchor(this)
+        } else {
+            SlideAnchorIndex.register(level!!, blockPos)
         }
     }
 
-    @OnlyIn(Dist.CLIENT)
     override fun onChunkUnloaded() {
         super.onChunkUnloaded()
-        WaterslideCurveRenderer.unregisterClientAnchor(this)
+        if (level?.isClientSide == true) {
+            WaterslideCurveRenderer.unregisterClientAnchor(this)
+        } else {
+            SlideAnchorIndex.unregister(level!!, blockPos)
+        }
     }
 
 // render bounds
@@ -149,6 +223,16 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
         }
 // drop configs without a live curve
         sectorConfigs.keys.retainAll(anchorPeerCurvesView.keys)
+        wateredCurves.clear()
+        for (entry in tag.getList("WateredCurves", 10)) {
+            if (entry is CompoundTag && entry.contains("Peer", 4) && entry.contains("Watered", 1)) {
+                wateredCurves[BlockPos.of(entry.getLong("Peer"))] = entry.getBoolean("Watered")
+            }
+        }
+        wateredCurves.keys.retainAll(anchorPeerCurvesView.keys)
+        if (tag.contains("WaterTank", 10)) {
+            waterTank.readFromNBT(registries, tag.getCompound("WaterTank"))
+        }
 // refresh visuals after curve data arrives
         if (level?.isClientSide == true) {
             WaterslideTubeVisual.refreshAnchor(blockPos)
@@ -168,10 +252,27 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
             list.add(entry)
         }
         tag.put("SectorConfigs", list)
+        val wateredList = ListTag()
+        for ((peer, watered) in wateredCurves) {
+            val entry = CompoundTag()
+            entry.putLong("Peer", peer.asLong())
+            entry.putBoolean("Watered", watered)
+            wateredList.add(entry)
+        }
+        tag.put("WateredCurves", wateredList)
+        tag.put("WaterTank", waterTank.writeToNBT(registries, CompoundTag()))
         super.write(tag, registries, clientPacket)
     }
 
     companion object {
+        @JvmStatic
+        fun registerCapabilities(event: RegisterCapabilitiesEvent) {
+            event.registerBlockEntity(
+                Capabilities.FluidHandler.BLOCK,
+                ModBlockEntities.WATERSLIDE_ANCHOR_BE
+            ) { be, _ -> be.waterHandler }
+        }
+
 // sync to both ends
         @JvmStatic
         fun commitSectorConfig(level: ServerLevel, curve: com.simibubi.create.content.trains.track.BezierConnection, config: WaterslideSectorConfig) {
@@ -201,5 +302,26 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
         fun tick(level: Level, pos: BlockPos, state: BlockState, be: WaterslideAnchorBlockEntity) {
             CoasterAnchorpointBlockEntity.serverTick(level, pos, state, be)
         }
+    }
+
+    private class WaterTank(capacity: Int, callback: Consumer<FluidStack>) : SmartFluidTank(capacity, callback) {
+        override fun isFluidValid(stack: FluidStack): Boolean = stack.`is`(Fluids.WATER)
+    }
+
+    private inner class WaterOnlyHandler : IFluidHandler {
+        override fun getTanks(): Int = 1
+
+        override fun getFluidInTank(tank: Int): FluidStack = waterTank.fluid
+
+        override fun getTankCapacity(tank: Int): Int = waterTank.capacity
+
+        override fun isFluidValid(tank: Int, stack: FluidStack): Boolean = waterTank.isFluidValid(stack)
+
+        override fun fill(resource: FluidStack, action: IFluidHandler.FluidAction): Int =
+            waterTank.fill(resource, action)
+
+        override fun drain(resource: FluidStack, action: IFluidHandler.FluidAction): FluidStack = FluidStack.EMPTY
+
+        override fun drain(maxDrain: Int, action: IFluidHandler.FluidAction): FluidStack = FluidStack.EMPTY
     }
 }
