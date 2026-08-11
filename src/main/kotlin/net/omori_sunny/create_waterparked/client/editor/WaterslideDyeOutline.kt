@@ -9,6 +9,7 @@ import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.MultiBufferSource
 import net.minecraft.world.level.Level
 import net.minecraft.util.Mth
+import net.minecraft.world.item.AxeItem
 import net.minecraft.world.item.DyeItem
 import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
@@ -32,17 +33,21 @@ object WaterslideDyeOutline {
     ) {
         val player = mc.player ?: return
         val level = mc.level ?: return
-        val dye = (player.mainHandItem.item as? DyeItem) ?: (player.offhandItem.item as? DyeItem) ?: return
+        val dye = (player.mainHandItem.item as? DyeItem) ?: (player.offhandItem.item as? DyeItem)
+        val axeDelete = player.mainHandItem.item is AxeItem && player.isShiftKeyDown
+        if (dye == null && !axeDelete) return
         val hit = WaterslideSectorEdit.sectorUnderCursor(mc) ?: return
-        val blockId = hit.blockId ?: return
-        val newBlock = WaterslideDyeRules.dyedBlockFor(blockId, dye.dyeColor) ?: return
+        if (dye != null) {
+            val blockId = hit.blockId ?: return
+            if (WaterslideDyeRules.dyedBlockFor(blockId, dye.dyeColor) == null) return
+        }
 
         val bc = hit.curve
         val r0 = (level.getBlockEntity(bc.bePositions.getFirst()) as? net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity)
             ?.radius ?: net.omori_sunny.create_waterparked.config.ModConfig.defaultSlideRadius()
         val r1 = (level.getBlockEntity(bc.bePositions.getSecond()) as? net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity)
             ?.radius ?: net.omori_sunny.create_waterparked.config.ModConfig.defaultSlideRadius()
-        val rgb = dye.dyeColor.getTextureDiffuseColor()
+        val rgb = dye?.dyeColor?.getTextureDiffuseColor() ?: 0xFF3030
         val r = ((rgb shr 16) and 255) / 255f
         val g = ((rgb shr 8) and 255) / 255f
         val b = (rgb and 255) / 255f

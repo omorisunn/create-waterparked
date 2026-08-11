@@ -77,6 +77,7 @@ class WaterslideSectorEditPayload(
                 }
 
                 SectorEditAction.DELETE -> {
+                    if (config.sectors.size <= 1) return@enqueueWork
                     val placed = WaterslideSectorLayout.place(config)
                     val target = WaterslideSectorLayout.sectorAt(placed, angleDegrees) ?: return@enqueueWork
                     config.sectors.removeAll { it.id == target.sector.id }

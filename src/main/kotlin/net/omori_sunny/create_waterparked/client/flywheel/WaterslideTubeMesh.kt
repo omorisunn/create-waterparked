@@ -305,7 +305,10 @@ object WaterslideTubeMesh {
     private fun meshOf(verts: List<V>, descriptor: String): Mesh {
         if (verts.isEmpty()) {
 // degenerate vertex
+            val block = MemoryBlock.mallocTracked(36L)
             val empty = FullVertexView()
+            empty.ptr(block.ptr())
+            empty.nativeMemoryOwner(block)
             empty.vertexCount(1)
             empty.x(0, 0f)
             empty.y(0, 0f)

@@ -4,6 +4,7 @@ import com.simibubi.create.content.trains.track.BezierConnection;
 import dev.silvergold.simulatedcoasters.client.track.CoasterCurveDyeOutlineClient;
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.DyeItem;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -29,7 +30,9 @@ public abstract class CoasterCurveDyeOutlineClientMixin {
         if (mc.player == null) return;
         boolean holdingDye = mc.player.getMainHandItem().getItem() instanceof DyeItem ||
             mc.player.getOffhandItem().getItem() instanceof DyeItem;
-        if (holdingDye) {
+        boolean holdingAxe = mc.player.getMainHandItem().getItem() instanceof AxeItem ||
+            mc.player.getOffhandItem().getItem() instanceof AxeItem;
+        if (holdingDye || holdingAxe) {
             cir.setReturnValue(null);
         }
     }

@@ -40,8 +40,11 @@ import net.minecraft.resources.ResourceLocation
 import net.minecraft.util.Mth
 import net.minecraft.world.InteractionResult
 import net.minecraft.world.phys.AABB
+import net.minecraft.world.phys.BlockHitResult
+import net.minecraft.world.item.AxeItem
 import net.minecraft.world.item.BlockItem
 import net.minecraft.world.item.DyeItem
+import net.minecraft.world.item.Items
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
@@ -63,7 +66,10 @@ object WaterslideSectorEdit {
     private const val CONTROL_RING_SCALE = 1.35f
     private const val WALL_SEGMENTS = 24
     private const val KEY_PENDING = "waterslide_sector_pending"
+    private const val KEY_TARGET_OK = "waterslide_sector_target_ok"
+    private const val KEY_TARGET_BAD = "waterslide_sector_target_bad"
     private val previewConfigs = mutableMapOf<Pair<Long, Long>, WaterslideSectorConfig>()
+    private val animatedAngles = mutableMapOf<Pair<Pair<Long, Long>, Int>, Float>()
     private var dragging = false
     private var draggingBoundary = false
     private var dragCurveKey: Pair<Long, Long>? = null
@@ -73,6 +79,8 @@ object WaterslideSectorEdit {
     private var currentDragAngle = 0f
     private var currentBoundaryAngle = 0f
     private var pendingBlockAnchor: BlockPos? = null
+    private var lastTargetState = 0
+    private var lastTargetPos: BlockPos? = null
 
     fun previewConfigFor(a: BlockPos, b: BlockPos): WaterslideSectorConfig? =
         previewConfigs[curveKey(a, b)]
@@ -101,7 +109,12 @@ object WaterslideSectorEdit {
 
         // Two-step block add.
         if (mainBlockId != null) {
-            handleBlockAdd(event, player, mainBlockId)
+            handleAdd(event, player, mainBlockId)
+            return
+        }
+// stick adds an empty sector
+        if (player.mainHandItem.item === Items.STICK) {
+            handleAdd(event, player, null)
             return
         }
 
@@ -125,16 +138,17 @@ object WaterslideSectorEdit {
         event.cancellationResult = InteractionResult.SUCCESS
     }
 
-    private fun handleBlockAdd(
+    private fun handleAdd(
         event: PlayerInteractEvent.RightClickBlock,
         player: net.minecraft.world.entity.player.Player,
-        blockId: net.minecraft.resources.ResourceLocation
+        blockId: net.minecraft.resources.ResourceLocation?
     ) {
         val level = event.level
         val pos = event.pos
         val pending = pendingBlockAnchor
+        val action = if (blockId != null) SectorEditAction.ADD_BLOCK else SectorEditAction.ADD_OPEN
         CreateWaterparked.LOGGER.debug(
-            "WaterslideSectorEdit: blockAdd at {} pending={} block={}",
+            "WaterslideSectorEdit: sectorAdd at {} pending={} block={}",
             pos, pending, blockId
         )
 
@@ -186,10 +200,15 @@ object WaterslideSectorEdit {
                 return
             }
 // insert at 0 degrees
-            optimisticAdd(level, curve, SectorEditAction.ADD_BLOCK, 0f, blockId)
-            sendSector(level, curve, SectorEditAction.ADD_BLOCK, 0f, blockId)
+            optimisticAdd(level, curve, action, 0f, blockId)
+            sendSector(level, curve, action, 0f, blockId)
             spawnParticles(level, Vec3.atCenterOf(pending), 8)
             spawnParticles(level, Vec3.atCenterOf(pos), 8)
+            player.displayClientMessage(
+                Component.translatable("create_waterparked.sector.added")
+                    .withStyle(ChatFormatting.GREEN),
+                true
+            )
             clearPending(level)
             event.isCanceled = true
             event.cancellationResult = InteractionResult.SUCCESS
@@ -208,9 +227,14 @@ object WaterslideSectorEdit {
             event.cancellationResult = InteractionResult.SUCCESS
             return
         }
-        optimisticAdd(level, hit.curve, SectorEditAction.ADD_BLOCK, hit.angle, blockId)
-        sendSector(level, hit.curve, SectorEditAction.ADD_BLOCK, hit.angle, blockId)
+        optimisticAdd(level, hit.curve, action, hit.angle, blockId)
+        sendSector(level, hit.curve, action, hit.angle, blockId)
         spawnParticles(level, hitVec, 10)
+        player.displayClientMessage(
+            Component.translatable("create_waterparked.sector.added")
+                .withStyle(ChatFormatting.GREEN),
+            true
+        )
         clearPending(level)
         event.isCanceled = true
         event.cancellationResult = InteractionResult.SUCCESS
@@ -333,6 +357,10 @@ object WaterslideSectorEdit {
     private fun clearPending(level: Level?) {
         pendingBlockAnchor = null
         Outliner.getInstance().remove(KEY_PENDING)
+        Outliner.getInstance().remove(KEY_TARGET_OK)
+        Outliner.getInstance().remove(KEY_TARGET_BAD)
+        lastTargetState = 0
+        lastTargetPos = null
     }
 
     private fun spawnParticles(level: Level, pos: Vec3, count: Int) {
@@ -355,7 +383,7 @@ object WaterslideSectorEdit {
         val player = mc.player ?: return clearPending(null)
         val level = mc.level ?: return clearPending(null)
         val pending = pendingBlockAnchor ?: return
-        if (player.mainHandItem.item !is BlockItem) {
+        if (!isSectorAddTool(player.mainHandItem)) {
             clearPending(level)
             return
         }
@@ -369,6 +397,57 @@ object WaterslideSectorEdit {
             return
         }
         showPendingBox(level, pending)
+        updateTargetPreview(mc, level, pending)
+    }
+
+    private fun isSectorAddTool(stack: net.minecraft.world.item.ItemStack): Boolean =
+        stack.item is BlockItem || stack.item === Items.STICK
+
+// second anchor add preview
+    private fun updateTargetPreview(mc: Minecraft, level: Level, pending: BlockPos) {
+        val target = (mc.hitResult as? BlockHitResult)?.blockPos
+        val valid = target != null &&
+            target != pending &&
+            level.getBlockState(target).block is CoasterAnchorpointBlock &&
+            findCurveByAnchors(level, pending, target) != null &&
+            (configForCurve(level, curveKey(pending, target))?.sectors?.size ?: 0) < ModConfig.maxSectors()
+        val state = when {
+            target == null || target == pending -> 0
+            valid -> 1
+            else -> 2
+        }
+        Outliner.getInstance().remove(KEY_TARGET_OK)
+        Outliner.getInstance().remove(KEY_TARGET_BAD)
+        if (state == 0) {
+            lastTargetState = 0
+            lastTargetPos = null
+            return
+        }
+        showTargetBox(
+            level, target!!,
+            if (state == 1) KEY_TARGET_OK else KEY_TARGET_BAD,
+            if (state == 1) 0xFFFFFF else 0xFF4444
+        )
+        if (lastTargetState == state && lastTargetPos == target) return
+        lastTargetState = state
+        lastTargetPos = target
+        val player = mc.player ?: return
+        player.displayClientMessage(
+            Component.translatable(
+                if (state == 1) "create_waterparked.sector.add_ok"
+                else "create_waterparked.sector.add_fail"
+            ).withStyle(if (state == 1) ChatFormatting.WHITE else ChatFormatting.RED),
+            true
+        )
+    }
+
+    private fun showTargetBox(level: Level, pos: BlockPos, key: String, color: Int) {
+        val state = level.getBlockState(pos)
+        val shape = state.getShape(level, pos)
+        val box = if (shape.isEmpty) AABB(pos) else shape.bounds().move(pos)
+        Outliner.getInstance().showAABB(key, box.inflate(0.08))
+            .colored(color)
+            .lineWidth(0.08f)
     }
 
     private data class WallHit(val curve: BezierConnection, val t: Float, val angle: Float)
@@ -445,9 +524,43 @@ object WaterslideSectorEdit {
     fun onUseItemKey(event: InputEvent.InteractionKeyMappingTriggered) {
         if (!event.isUseItem) return
         val mc = Minecraft.getInstance()
+        val player = mc.player ?: return
+// axe sneak deletes the sector under the cursor
+        if (player.mainHandItem.item is AxeItem && player.isShiftKeyDown) {
+            if (trySendAxeDelete(mc)) {
+                event.setCanceled(true)
+                event.setSwingHand(true)
+            }
+            return
+        }
         if (!trySendDyeApply(mc)) return
         event.setCanceled(true)
         event.setSwingHand(true)
+    }
+
+    private fun trySendAxeDelete(mc: Minecraft): Boolean {
+        val hit = sectorUnderCursor(mc) ?: return false
+        val level = mc.level ?: return false
+        val key = curveKey(hit.curve.bePositions.getFirst(), hit.curve.bePositions.getSecond())
+        val config = configForCurve(level, key)
+        if (config != null && config.sectors.size <= 1) {
+            mc.player?.displayClientMessage(
+                Component.translatable("create_waterparked.sector.delete_last")
+                    .withStyle(ChatFormatting.RED),
+                true
+            )
+            return false
+        }
+        PacketDistributor.sendToServer(
+            WaterslideSectorEditPayload(
+                hit.curve.bePositions.getFirst(),
+                hit.curve.bePositions.getSecond(),
+                SectorEditAction.DELETE,
+                hit.angleDegrees
+            )
+        )
+        CreateWaterparked.LOGGER.debug("WaterslideSectorEdit: axe delete sector {}", hit.sectorId)
+        return true
     }
 
 // CCS-style dye resolution
@@ -522,6 +635,7 @@ object WaterslideSectorEdit {
         val anchor = BezierHandleEditMode.getActiveAnchor() ?: return clear()
         val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return clear()
         if (WaterslideRadiusEdit.isDragging() || BezierHandleDragManager.isDraggingHandle()) return
+        tickPointAnimation(level, be)
 
         val useDown = mc.options.keyUse.isDown
         if (dragging || draggingBoundary) {
@@ -546,6 +660,9 @@ object WaterslideSectorEdit {
                         sectorId = if (draggingBoundary) dragBoundarySectorId else dragSectorId
                     )
                 )
+                if (dragCurveKey != null && dragSectorId >= 0) {
+                    animatedAngles[dragCurveKey!! to dragSectorId] = currentDragAngle
+                }
                 previewConfigs.remove(key)
                 dragging = false
                 draggingBoundary = false
@@ -569,6 +686,25 @@ object WaterslideSectorEdit {
                 dragging = true
                 dragSectorId = pick.sectorId
                 currentDragAngle = p?.centerAngle ?: 0f
+            }
+        }
+    }
+
+// tick the control point easing
+    private fun tickPointAnimation(level: Level, be: WaterslideAnchorBlockEntity) {
+        for ((peer, raw) in be.anchorPeerCurvesView) {
+            val primary = if (raw.isPrimary) raw else raw.secondary()
+            val key = curveKey(be.blockPos, peer)
+            val config = previewConfigFor(be.blockPos, peer) ?: configForCurve(level, key) ?: continue
+            val placed = WaterslideSectorLayout.place(config)
+            for (p in placed) {
+                val pointKey = key to p.sector.id
+                if (dragging && dragCurveKey == key && dragSectorId == p.sector.id) continue
+                val target = p.centerAngle
+                val current = animatedAngles.getOrPut(pointKey) { target }
+                val eased = easeAngle(current, target)
+                animatedAngles[pointKey] =
+                    if (abs(WaterslideSectorLayout.normalize(target - eased)) < 0.05f) target else eased
             }
         }
     }
@@ -672,7 +808,14 @@ object WaterslideSectorEdit {
             val ringRadius = be.radius * CONTROL_RING_SCALE
             val key = curveKey(anchor, peer)
             for (p in placed) {
-                val rad = Math.toRadians(p.centerAngle.toDouble())
+                val pointKey = key to p.sector.id
+                val target = p.centerAngle
+                val display = if (dragging && dragCurveKey == key && dragSectorId == p.sector.id) {
+                    currentDragAngle
+                } else {
+                    animatedAngles[pointKey] ?: target
+                }
+                val rad = Math.toRadians(display.toDouble())
                 val pos = center
                     .add(lateral.scale(Math.cos(rad) * ringRadius))
                     .add(up.scale(Math.sin(rad) * ringRadius))
@@ -874,6 +1017,7 @@ object WaterslideSectorEdit {
 
     private fun clear() {
         previewConfigs.clear()
+        animatedAngles.clear()
         dragging = false
         draggingBoundary = false
         dragCurveKey = null
