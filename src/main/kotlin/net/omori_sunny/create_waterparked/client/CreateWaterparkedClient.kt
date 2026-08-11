@@ -11,7 +11,6 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.minecraft.client.Minecraft
-import org.joml.Matrix4f
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
 import net.neoforged.bus.api.EventPriority
@@ -74,7 +73,7 @@ object CreateWaterparkedClient {
                     val camera = mc.gameRenderer.mainCamera
                     WaterslideDyeOutline.render(
                         mc, event.poseStack, buffers,
-                        camera.position, Matrix4f().set(camera.rotation())
+                        camera.position, event.modelViewMatrix
                     )
                     buffers.endBatch(WaterslideEditorRenderTypes.COLORED_QUADS)
                 }

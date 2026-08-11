@@ -3,17 +3,13 @@ package net.omori_sunny.create_waterparked.client.editor
 import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
 import com.simibubi.create.AllItems
-import com.simibubi.create.content.trains.track.TrackBlockOutline
 import com.simibubi.create.content.trains.track.BezierConnection
-import dev.silvergold.simulatedcoasters.client.track.AnchorPeerCurveHit
-import dev.silvergold.simulatedcoasters.client.track.AnchorPeerCurveOutlineSupport
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager
 import dev.silvergold.simulatedcoasters.client.track.CoasterAnchorClientSpace
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleOverlayRenderTypes
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode
 import dev.silvergold.simulatedcoasters.client.track.EndpointHandleTextures
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleTangentTextures
-import dev.silvergold.simulatedcoasters.client.track.TrackOutlineBezierAccess
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlock
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
@@ -466,82 +462,54 @@ object WaterslideSectorEdit {
             )
             return false
         }
-        val curve = resolveHoveredPrimary(level)
-        if (curve == null) {
-            CreateWaterparked.LOGGER.debug("dye: no hovered curve (hitActive={} trackOutline={})",
-                AnchorPeerCurveHit.isActive(), TrackBlockOutline.result != null)
+        val hit = sectorUnderCursor(mc)
+        if (hit == null) {
+            CreateWaterparked.LOGGER.debug("dye: no slide sector under cursor")
             return false
         }
-        if (!AnchorPeerCurveOutlineSupport.hasSaneOutlineBounds(curve)) {
-            CreateWaterparked.LOGGER.debug("dye: insane outline bounds")
-            return false
-        }
-        val hitVec = resolveHoveredWorldHit(mc)
-        if (hitVec == null) {
-            CreateWaterparked.LOGGER.debug("dye: no world hit")
-            return false
-        }
-        val wall = resolveWallHit(level, hitVec)
-        if (wall == null) {
-            CreateWaterparked.LOGGER.debug("dye: no wall hit at {}", hitVec)
-            return false
-        }
-        val key = curveKey(wall.curve.bePositions.getFirst(), wall.curve.bePositions.getSecond())
-        val config = configForCurve(level, key)
-        if (config == null) {
-            CreateWaterparked.LOGGER.debug("dye: no sector config")
-            return false
-        }
-        val placed = WaterslideSectorLayout.place(config)
-        val p = WaterslideSectorLayout.sectorAt(placed, wall.angle)
-        if (p == null) {
-            CreateWaterparked.LOGGER.debug("dye: no sector at angle {}", wall.angle)
-            return false
-        }
-        val blockId = p.sector.blockId
+        val blockId = hit.blockId
         if (blockId == null) {
-            CreateWaterparked.LOGGER.debug("dye: sector {} is open", p.sector.id)
+            CreateWaterparked.LOGGER.debug("dye: sector {} is open", hit.sectorId)
             return false
         }
-        val newBlock = net.omori_sunny.create_waterparked.game.WaterslideSectorBlockEdit.dyedBlockFor(blockId, dye.dyeColor)
+        val newBlock = WaterslideDyeRules.dyedBlockFor(blockId, dye.dyeColor)
         if (newBlock == null) {
             CreateWaterparked.LOGGER.debug("dye: no dyed variant for {}", blockId)
             return false
         }
         PacketDistributor.sendToServer(
             WaterslideSectorBlockEditPayload(
-                wall.curve.bePositions.getFirst(),
-                wall.curve.bePositions.getSecond(),
-                p.sector.id,
+                hit.curve.bePositions.getFirst(),
+                hit.curve.bePositions.getSecond(),
+                hit.sectorId,
                 newBlock
             )
         )
-        CreateWaterparked.LOGGER.debug("dye: sector {} {} -> {}", p.sector.id, blockId, newBlock)
+        CreateWaterparked.LOGGER.debug("dye: sector {} {} -> {}", hit.sectorId, blockId, newBlock)
         return true
     }
 
     private fun heldDye(player: net.minecraft.world.entity.player.Player): DyeItem? =
         (player.mainHandItem.item as? DyeItem) ?: (player.offhandItem.item as? DyeItem)
 
-    private fun resolveHoveredPrimary(level: Level): BezierConnection? {
-        val curve = if (AnchorPeerCurveHit.isActive()) {
-            AnchorPeerCurveHit.curve()
-        } else {
-            val sel = TrackBlockOutline.result
-            if (sel != null) TrackOutlineBezierAccess.primaryBezierForSelection(sel) else null
-        } ?: return null
-        return if (curve.isPrimary) curve else curve.secondary()
-    }
-
-    private fun resolveHoveredWorldHit(mc: Minecraft): Vec3? {
-        if (AnchorPeerCurveHit.isActive()) {
-            return mc.hitResult?.location ?: AnchorPeerCurveHit.vec()
-        }
-        val sel = TrackBlockOutline.result ?: return null
-        return sel.vec
-    }
-
     data class LiveAnchorFrame(val center: Vec3, val lateral: Vec3, val up: Vec3)
+
+// opening frame shared by ring and control points
+    private fun anchorOpeningFrame(level: Level, anchor: BlockPos): LiveAnchorFrame? {
+        liveAnchorFrame(level, anchor)?.let { return it }
+        val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return null
+        for ((_, raw) in be.anchorPeerCurvesView) {
+            val primary = if (raw.isPrimary) raw else raw.secondary()
+            if (!WaterslideTrackMaterials.isWaterslide(primary)) continue
+            val t = if (primary.bePositions.getFirst() == anchor) 0f else 1f
+            return LiveAnchorFrame(
+                primary.getPosition(t.toDouble()),
+                CoasterBezierRailFrames.lateralAt(primary, t, level),
+                CoasterBezierRailFrames.faceUpAt(primary, t, level)
+            )
+        }
+        return null
+    }
 
     // Control point dragging.
 
@@ -627,8 +595,9 @@ object WaterslideSectorEdit {
 
         poseStack.pushPose()
 
-        val center = CoasterAnchorpointBlockEntity.worldCenter(level, anchor)
-        val frame = anchorFrame(level, be)
+        val live = anchorOpeningFrame(level, anchor)
+        val center = live?.center ?: CoasterAnchorpointBlockEntity.worldCenter(level, anchor)
+        val frame = live?.let { CircleFrame(it.lateral, it.up) } ?: anchorFrame(level, be)
         val radius = be.radius * CONTROL_RING_SCALE
         val strips = bufferSource.getBuffer(WaterslideEditorRenderTypes.COLORED_QUADS)
         drawCircle(poseStack, strips, cameraPos, cameraRotation, center, frame, radius, 0.15f, 0.85f, 1.0f, 1.0f)
@@ -696,7 +665,7 @@ object WaterslideSectorEdit {
             val config = previewConfigFor(anchor, peer) ?: configForCurve(level, curveKey(anchor, peer)) ?: continue
             val placed = WaterslideSectorLayout.place(config)
             val t = if (primary.bePositions.getFirst() == anchor) 0f else 1f
-            val live = liveAnchorFrame(level, anchor)
+            val live = anchorOpeningFrame(level, anchor)
             val center = live?.center ?: CoasterAnchorpointBlockEntity.worldCenter(level, anchor)
             val lateral = live?.lateral ?: CoasterBezierRailFrames.lateralAt(primary, t, level)
             val up = live?.up ?: CoasterBezierRailFrames.faceUpAt(primary, t, level)

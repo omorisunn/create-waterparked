@@ -1,10 +1,13 @@
 package net.omori_sunny.create_waterparked.client.editor
 
 import com.mojang.blaze3d.vertex.PoseStack
+import com.simibubi.create.content.trains.track.BezierConnection
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
-import net.omori_sunny.create_waterparked.game.WaterslideSectorBlockEdit
+import dev.silvergold.simulatedcoasters.track.CoasterOpenEndExtension
+import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.MultiBufferSource
+import net.minecraft.world.level.Level
 import net.minecraft.util.Mth
 import net.minecraft.world.item.DyeItem
 import net.minecraft.world.phys.Vec3
@@ -32,7 +35,7 @@ object WaterslideDyeOutline {
         val dye = (player.mainHandItem.item as? DyeItem) ?: (player.offhandItem.item as? DyeItem) ?: return
         val hit = WaterslideSectorEdit.sectorUnderCursor(mc) ?: return
         val blockId = hit.blockId ?: return
-        val newBlock = WaterslideSectorBlockEdit.dyedBlockFor(blockId, dye.dyeColor) ?: return
+        val newBlock = WaterslideDyeRules.dyedBlockFor(blockId, dye.dyeColor) ?: return
 
         val bc = hit.curve
         val r0 = (level.getBlockEntity(bc.bePositions.getFirst()) as? net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity)
@@ -50,6 +53,7 @@ object WaterslideDyeOutline {
             if (i == 0) 0f else if (i == count) 1f else bc.getSegmentT(i)
         }
         val centers = Array(count + 1) { bc.getPosition(ts[it].toDouble()) }
+        val tangents = Array(count + 1) { CoasterBezierRailFrames.unitTangentAt(bc, ts[it]) }
         val lats = arrayOfNulls<Vec3>(count + 1)
         val ups = arrayOfNulls<Vec3>(count + 1)
         var prevLat: Vec3? = null
@@ -69,15 +73,45 @@ object WaterslideDyeOutline {
         }
         val radii = FloatArray(count + 1) { Mth.lerp(ts[it], r0, r1) }
 
+// include the open-end extensions
+        val ext0 = openEndExtension(level, bc, atFirst = true)
+        val ext1 = openEndExtension(level, bc, atFirst = false)
+        val pointCount = count + 1 + (if (ext0 > 0.01f) 1 else 0) + (if (ext1 > 0.01f) 1 else 0)
+        val c = arrayOfNulls<Vec3>(pointCount)
+        val la = arrayOfNulls<Vec3>(pointCount)
+        val u = arrayOfNulls<Vec3>(pointCount)
+        val ra = FloatArray(pointCount)
+        var idx = 0
+        if (ext0 > 0.01f) {
+            c[idx] = centers[0].subtract(tangents[0].scale(ext0.toDouble()))
+            la[idx] = lats[0]!!
+            u[idx] = ups[0]!!
+            ra[idx] = radii[0]
+            idx++
+        }
+        for (i in 0..count) {
+            c[idx] = centers[i]
+            la[idx] = lats[i]!!
+            u[idx] = ups[i]!!
+            ra[idx] = radii[i]
+            idx++
+        }
+        if (ext1 > 0.01f) {
+            c[idx] = centers[count].add(tangents[count].scale(ext1.toDouble()))
+            la[idx] = lats[count]!!
+            u[idx] = ups[count]!!
+            ra[idx] = radii[count]
+        }
+
         val consumer = bufferSource.getBuffer(WaterslideEditorRenderTypes.COLORED_QUADS)
         val start = Math.toRadians(hit.startAngleDegrees.toDouble())
         val end = Math.toRadians(hit.endAngleDegrees.toDouble())
 
 // longitudinal edges
         for (angle in doubleArrayOf(start, end)) {
-            var prev = ringPoint(centers[0], lats[0]!!, ups[0]!!, radii[0], angle)
-            for (i in 1..count) {
-                val curr = ringPoint(centers[i], lats[i]!!, ups[i]!!, radii[i], angle)
+            var prev = ringPoint(c[0]!!, la[0]!!, u[0]!!, ra[0], angle)
+            for (i in 1 until pointCount) {
+                val curr = ringPoint(c[i]!!, la[i]!!, u[i]!!, ra[i], angle)
                 WaterslideEditorRenderTypes.billboardStrip(
                     poseStack, consumer, cameraPos, cameraRotation, prev, curr, 0.05f, r, g, b, 0.9f
                 )
@@ -87,12 +121,20 @@ object WaterslideDyeOutline {
 // end arcs
         drawArc(
             poseStack, consumer, cameraPos, cameraRotation,
-            centers[0], lats[0]!!, ups[0]!!, radii[0], start, end, r, g, b
+            c[0]!!, la[0]!!, u[0]!!, ra[0], start, end, r, g, b
         )
         drawArc(
             poseStack, consumer, cameraPos, cameraRotation,
-            centers[count], lats[count]!!, ups[count]!!, radii[count], start, end, r, g, b
+            c[pointCount - 1]!!, la[pointCount - 1]!!, u[pointCount - 1]!!,
+            ra[pointCount - 1], start, end, r, g, b
         )
+    }
+
+    private fun openEndExtension(level: Level, bc: BezierConnection, atFirst: Boolean): Float {
+        val anchor = if (atFirst) bc.bePositions.getFirst() else bc.bePositions.getSecond()
+        val be = level.getBlockEntity(anchor) as? CoasterAnchorpointBlockEntity ?: return 0f
+        if (be.legCount() != 1) return 0f
+        return CoasterOpenEndExtension.extensionBlocks(level, anchor)
     }
 
     private fun drawArc(

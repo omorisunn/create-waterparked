@@ -1,0 +1,23 @@
+{
+  "blocks": {
+    "minecraft:glass": {
+      "target": "minecraft:%s_stained_glass"
+    },
+    "minecraft:glass_pane": {
+      "target": "minecraft:%s_stained_glass_pane"
+    },
+    "minecraft:terracotta": {
+      "target": "minecraft:%s_terracotta"
+    },
+    "create:framed_glass": {
+      "dyeable": false
+    },
+    "mymod:magic_glass": {
+      "mapping": {
+        "white": "mymod:white_magic_glass",
+        "yellow": "mymod:yellow_magic_glass",
+        "red": "mymod:red_magic_glass"
+      }
+    }
+  }
+}

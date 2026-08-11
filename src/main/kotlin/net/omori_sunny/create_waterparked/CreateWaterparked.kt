@@ -8,6 +8,7 @@ import net.omori_sunny.create_waterparked.content.registry.ModBlocks
 import net.omori_sunny.create_waterparked.content.registry.ModCreativeTabs
 import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
 import net.omori_sunny.create_waterparked.content.registry.ModItems
+import net.omori_sunny.create_waterparked.datagen.CreateWaterparkedDataGen
 import net.omori_sunny.create_waterparked.game.physics.PlayerSlideController
 import net.omori_sunny.create_waterparked.network.ModPayloads
 import net.neoforged.bus.api.SubscribeEvent
@@ -37,6 +38,7 @@ object CreateWaterparked {
 
         MOD_BUS.addListener(ModPayloads::register)
         MOD_BUS.addListener(::onCommonSetup)
+        MOD_BUS.addListener(CreateWaterparkedDataGen::gatherData)
 
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onServerTick)
 
