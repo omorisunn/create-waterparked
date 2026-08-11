@@ -14,6 +14,7 @@ Build real Waterparks with fully customizable slides!
 - Waterpark style items & blocks
 
 ## Build
+You need to create a libs folder and put Create: Coasters Simulated's mod jar into it.
 ```shell
 cd create-waterparked
 ./gradlew build
