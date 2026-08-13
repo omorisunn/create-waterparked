@@ -98,7 +98,6 @@ public class WaterslideTubeVisual extends AbstractVisual
         sb.append(WaterFlowSimulation.INSTANCE.version()).append('|');
         sb.append(ModClientConfig.INSTANCE.polygonScale()).append('|');
         sb.append(ModClientConfig.INSTANCE.wallThickness()).append('|');
-        sb.append(ModClientConfig.INSTANCE.waterCullSegmentWalls()).append('|');
         sb.append(be.getRadius()).append('|');
         for (Map.Entry<BlockPos, WaterslideSectorConfig> e : be.getSectorConfigs().entrySet()) {
             sb.append(e.getKey().asLong()).append('=');
@@ -505,7 +504,6 @@ public class WaterslideTubeVisual extends AbstractVisual
             if (water == null || !water.getExists()) return;
             List<ServerWaterSimulation.WaterSegment> segments = water.getSegments();
             if (segments.isEmpty()) return;
-            boolean forward = water.getFlowSign() < 0f;
             float legLen = 0f;
             for (WaterslideTubeMesh.TubeSegmentFrame f : frames) {
                 legLen += WaterslideTubeMesh.arcLength(f);
@@ -516,22 +514,24 @@ public class WaterslideTubeVisual extends AbstractVisual
             float rInFrac = Math.max(0.1f, (radius - WALL_THICKNESS) / radius);
             for (ServerWaterSimulation.WaterSegment seg : segments) {
                 float speed = seg.getSpeed();
+                // each segment flows along its own sampled direction
+                boolean segForward = speed >= 0f;
                 // fixed depth like the thrown water sheet
                 float depth = 0.25f;
                 float rSurfFrac = Math.max(0.05f, rInFrac - depth / radius);
-                List<Float> verts = WaterslideTubeMesh.INSTANCE.bandVertices(rInFrac, rSurfFrac, !forward);
+                List<Float> verts = WaterslideTubeMesh.INSTANCE.bandVertices(rInFrac, rSurfFrac, !segForward);
                 Model waterModel = WaterslideTubeMesh.INSTANCE.waterModelFor(
-                    verts, verts, radius, ModClientConfig.INSTANCE.waterCullSegmentWalls()
+                    verts, verts, radius
                 );
                 Instancer<WaterslideTubeInstance> waterInstancer = instancerProvider().instancer(
                     WaterslideTubeInstanceType.INSTANCE, waterModel
                 );
                 WaterslideTubeInstance w = waterInstancer.createInstance();
                 WaterslideTubeMesh.TubeSegmentFrame f =
-                    frameAtArc(forward ? seg.getArc() : legLen - seg.getArc());
+                    frameAtArc(segForward ? seg.getArc() : legLen - seg.getArc());
                 Vec3 ps, cs, pt, ct, pl, cl;
                 float pr, cr;
-                if (forward) {
+                if (segForward) {
                     ps = f.getPrevSpine(); cs = f.getCurrSpine();
                     pt = f.getPrevTangent(); ct = f.getCurrTangent();
                     pl = f.getPrevLateral(); cl = f.getCurrLateral();
@@ -548,7 +548,8 @@ public class WaterslideTubeVisual extends AbstractVisual
                     .color(0.3f, 0.6f, 1f, 0.75f);
                 w.wallThickness = wallThickness;
                 w.mirror = mirror;
-                w.arcBase = forward ? seg.getArc() : legLen - seg.getArc();
+                // arc base along the physical axis from the upstream end
+                w.arcBase = segForward ? seg.getArc() : legLen - seg.getArc();
                 // frames are ordered along the flow, so the texture always scrolls
                 // toward the downstream end (currSpine)
                 w.flowSign = -1f;
@@ -591,9 +592,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             if (segs == null) return;
             // band model on the tube angular grid for the thrown water
             List<Float> ring = WaterslideTubeMesh.INSTANCE.bandVertices(0.85f, 0.6f, false);
-            Model streamModel = WaterslideTubeMesh.INSTANCE.waterModelFor(
-                ring, ring, 1f, ModClientConfig.INSTANCE.waterCullSegmentWalls()
-            );
+            Model streamModel = WaterslideTubeMesh.INSTANCE.waterModelFor(ring, ring, 1f);
             Instancer<WaterslideTubeInstance> streamInstancer = instancerProvider().instancer(
                 WaterslideTubeInstanceType.INSTANCE,
                 streamModel

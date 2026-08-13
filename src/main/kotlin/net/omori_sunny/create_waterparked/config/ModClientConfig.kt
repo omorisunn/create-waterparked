@@ -60,11 +60,6 @@ object ModClientConfig {
         .comment("Show the server water simulation trajectories (debug).")
         .define("waterSimDebug", false)
 
-    // cull the closing walls between water band sub-segments
-    val WATER_CULL_SEGMENT_WALLS: ModConfigSpec.BooleanValue = BUILDER
-        .comment("Cull the closing walls between water band sub-segments for a seamless band.")
-        .define("waterCullSegmentWalls", true)
-
     val SPEC: ModConfigSpec = BUILDER.build()
 
     fun showSkeletonWhenTranslucent(): Boolean = SHOW_SKELETON_WHEN_TRANSLUCENT.get()
@@ -86,8 +81,6 @@ object ModClientConfig {
     fun waterEnvelopeSpacing(): Int = WATER_ENVELOPE_SPACING.get().coerceIn(1, 4)
 
     fun waterSimDebug(): Boolean = WATER_SIM_DEBUG.get()
-
-    fun waterCullSegmentWalls(): Boolean = WATER_CULL_SEGMENT_WALLS.get()
 
     fun register() {
         ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.CLIENT, SPEC)

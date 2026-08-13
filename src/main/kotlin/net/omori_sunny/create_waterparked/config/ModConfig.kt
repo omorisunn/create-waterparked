@@ -5,6 +5,8 @@ import net.neoforged.fml.config.ModConfig
 import net.neoforged.neoforge.common.ModConfigSpec
 
 object ModConfig {
+
+    // ---- common (both sides) ----
     private val BUILDER = ModConfigSpec.Builder()
 
     val DEFAULT_SLIDE_RADIUS: ModConfigSpec.DoubleValue = BUILDER
@@ -43,34 +45,6 @@ object ModConfig {
         .comment("Border size in pixels used for 9-slice tiling of block textures on sectors.")
         .defineInRange("sectorBorderPx", 2, 0, 8)
 
-    val SLIDE_WATER_FRICTION: ModConfigSpec.DoubleValue = BUILDER
-        .comment("Friction multiplier inside water-filled slide pipes.")
-        .defineInRange("slideWaterFriction", 0.03, 0.0, 1.0)
-
-    val WATER_SIM_PARTICLES: ModConfigSpec.IntValue = BUILDER
-        .comment("Particles sampled per water source anchor for the server water simulation.")
-        .defineInRange("waterSimParticleCount", 64, 8, 256)
-
-    val WATER_SIM_MAX_BLOCKS: ModConfigSpec.DoubleValue = BUILDER
-        .comment("Maximum particle path length in the server water simulation.")
-        .defineInRange("waterSimMaxBlocks", 512.0, 64.0, 2048.0)
-
-    val WATER_SIM_COOLDOWN_TICKS: ModConfigSpec.IntValue = BUILDER
-        .comment("Minimum ticks between server water simulation recalculations.")
-        .defineInRange("waterSimCooldownTicks", 100, 20, 600)
-
-    val WATER_SEGMENT_LENGTH: ModConfigSpec.DoubleValue = BUILDER
-        .comment("Length of one watered slide sub-segment, in blocks.")
-        .defineInRange("waterSegmentLength", 0.5, 0.25, 4.0)
-
-    val WATER_DRAIN_RATE_MB: ModConfigSpec.DoubleValue = BUILDER
-        .comment("Water consumed per second while a slide is watered, in millibuckets.")
-        .defineInRange("waterDrainRateMbPerSecond", 2.0, 0.0, 1000.0)
-
-    val ANCHOR_FLUID_CAPACITY: ModConfigSpec.IntValue = BUILDER
-        .comment("Water capacity of a slide anchor, in millibuckets.")
-        .defineInRange("anchorFluidCapacity", 1000, 1, 10000)
-
     val SLIDE_MAX_ENTRY_SPEED: ModConfigSpec.DoubleValue = BUILDER
         .comment("Maximum entry speed for slide trajectory computation, in blocks/second.")
         .defineInRange("slideMaxEntrySpeedBlocksPerSecond", 30.0, 1.0, 100.0)
@@ -78,10 +52,6 @@ object ModConfig {
     val SLIDE_SAMPLE_SPACING: ModConfigSpec.DoubleValue = BUILDER
         .comment("Trajectory sample spacing along the slide spine, in blocks.")
         .defineInRange("slideTrajectorySampleSpacing", 0.5, 0.1, 4.0)
-
-    val SLIDE_MAX_PATH_BLOCKS: ModConfigSpec.DoubleValue = BUILDER
-        .comment("Maximum slide path length for one trajectory, in blocks.")
-        .defineInRange("slideMaxPathBlocks", 512.0, 16.0, 8192.0)
 
     val SLIDE_MAX_TRAJECTORY_SAMPLES: ModConfigSpec.IntValue = BUILDER
         .comment("Maximum number of trajectory samples sent to the client.")
@@ -109,6 +79,53 @@ object ModConfig {
 
     fun sectorBorderPx(): Int = SECTOR_BORDER_PX.get().coerceIn(0, 16)
 
+    fun slideMaxEntrySpeed(): Double = SLIDE_MAX_ENTRY_SPEED.get().coerceIn(1.0, 100.0)
+
+    fun slideTrajectorySampleSpacing(): Double = SLIDE_SAMPLE_SPACING.get().coerceIn(0.1, 4.0)
+
+    fun slideMaxTrajectorySamples(): Int = SLIDE_MAX_TRAJECTORY_SAMPLES.get().coerceIn(64, 32768)
+
+    // ---- server only ----
+    private val SERVER_BUILDER = ModConfigSpec.Builder()
+
+    val SLIDE_WATER_FRICTION: ModConfigSpec.DoubleValue = SERVER_BUILDER
+        .comment("Friction multiplier inside water-filled slide pipes.")
+        .defineInRange("slideWaterFriction", 0.03, 0.0, 1.0)
+
+    val WATER_SIM_PARTICLES: ModConfigSpec.IntValue = SERVER_BUILDER
+        .comment("Particles sampled per water source anchor for the server water simulation.")
+        .defineInRange("waterSimParticleCount", 64, 8, 256)
+
+    val WATER_SIM_MAX_BLOCKS: ModConfigSpec.DoubleValue = SERVER_BUILDER
+        .comment("Maximum particle path length in the server water simulation.")
+        .defineInRange("waterSimMaxBlocks", 512.0, 64.0, 2048.0)
+
+    val WATER_SIM_COOLDOWN_TICKS: ModConfigSpec.IntValue = SERVER_BUILDER
+        .comment("Minimum ticks between server water simulation recalculations.")
+        .defineInRange("waterSimCooldownTicks", 100, 20, 600)
+
+    val WATER_SEGMENT_LENGTH: ModConfigSpec.DoubleValue = SERVER_BUILDER
+        .comment("Length of one watered slide sub-segment, in blocks.")
+        .defineInRange("waterSegmentLength", 0.5, 0.25, 4.0)
+
+    val WATER_DRAIN_RATE_MB: ModConfigSpec.DoubleValue = SERVER_BUILDER
+        .comment("Water consumed per second while a slide is watered, in millibuckets.")
+        .defineInRange("waterDrainRateMbPerSecond", 2.0, 0.0, 1000.0)
+
+    val ANCHOR_FLUID_CAPACITY: ModConfigSpec.IntValue = SERVER_BUILDER
+        .comment("Water capacity of a slide anchor, in millibuckets.")
+        .defineInRange("anchorFluidCapacity", 1000, 1, 10000)
+
+    val SLIDE_MAX_TRAJECTORY_BLOCKS: ModConfigSpec.DoubleValue = SERVER_BUILDER
+        .comment("Maximum total trajectory length for one slide ride, in blocks.")
+        .defineInRange("slideMaxTrajectoryBlocks", 1000.0, 50.0, 10000.0)
+
+    val SLIDE_CANCEL_COOLDOWN_TICKS: ModConfigSpec.IntValue = SERVER_BUILDER
+        .comment("Cooldown in ticks before a player can start a new slide after cancelling with Shift.")
+        .defineInRange("slideCancelCooldownTicks", 20, 0, 200)
+
+    val SERVER_SPEC: ModConfigSpec = SERVER_BUILDER.build()
+
     fun slideWaterFriction(): Double = SLIDE_WATER_FRICTION.get().coerceIn(0.0, 1.0)
 
     fun waterSimParticleCount(): Int = WATER_SIM_PARTICLES.get().coerceIn(8, 256)
@@ -123,16 +140,13 @@ object ModConfig {
 
     fun anchorFluidCapacity(): Int = ANCHOR_FLUID_CAPACITY.get().coerceIn(1, 10000)
 
-    fun slideMaxEntrySpeed(): Double = SLIDE_MAX_ENTRY_SPEED.get().coerceIn(1.0, 100.0)
+    fun slideMaxTrajectoryBlocks(): Double = SLIDE_MAX_TRAJECTORY_BLOCKS.get().coerceIn(50.0, 10000.0)
 
-    fun slideTrajectorySampleSpacing(): Double = SLIDE_SAMPLE_SPACING.get().coerceIn(0.1, 4.0)
-
-    fun slideMaxPathBlocks(): Double = SLIDE_MAX_PATH_BLOCKS.get().coerceIn(16.0, 8192.0)
-
-    fun slideMaxTrajectorySamples(): Int = SLIDE_MAX_TRAJECTORY_SAMPLES.get().coerceIn(64, 32768)
+    fun slideCancelCooldownTicks(): Int = SLIDE_CANCEL_COOLDOWN_TICKS.get().coerceIn(0, 200)
 
     @Suppress("DEPRECATION")
     fun register() {
         ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.COMMON, SPEC)
+        ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.SERVER, SERVER_SPEC)
     }
 }

@@ -20,6 +20,7 @@ import net.minecraft.server.level.ServerLevel
 import net.minecraft.util.Mth
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.Vec3
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.sin
@@ -33,8 +34,10 @@ object PhysicsSlideTrajectoryBuilder {
     // in-tube cap; the free fall keeps going until a solid block or a slide
     private const val TUBE_MAX_TIME = 120.0
     private const val MAX_TIME = 300.0
-    private const val MAX_SAMPLES = 4096
     private const val MIN_WALL_DIST = 0.05
+    // cooldown (in seconds, 5 ticks) against immediately re-entering the tube
+    // the player just left through its mouth
+    private const val SELF_REENTRY_COOLDOWN = 0.25
 
     private data class TubeFrame(
         val center: Vec3,
@@ -48,8 +51,8 @@ object PhysicsSlideTrajectoryBuilder {
 
     private class Tube {
         val frames = ArrayList<TubeFrame>()
+        val curves = HashSet<BezierConnection>()
         var cursor = 0
-        var endIsOpen = false
 
         fun hit(pos: Vec3): TubeHit = tubeHit(this, pos)
     }
@@ -69,7 +72,20 @@ object PhysicsSlideTrajectoryBuilder {
 
     private data class SegClosest(val t: Double, val distSq: Double)
 
-    private data class ReentrySegment(val a: Vec3, val b: Vec3, val radius: Double)
+    private data class ReentrySegment(val a: Vec3, val b: Vec3, val radius: Double, val curve: BezierConnection)
+
+    private data class ReentryStart(
+        val curve: BezierConnection,
+        val towardSecond: Boolean,
+        val startT: Float?,
+        val pos: Vec3,
+        val vel: Vec3,
+        val center: Vec3,
+        val tangent: Vec3,
+        val lateral: Vec3,
+        val up: Vec3,
+        val radius: Float
+    )
 
     fun build(
         level: ServerLevel,
@@ -81,10 +97,9 @@ object PhysicsSlideTrajectoryBuilder {
         poseWidth: Double,
         poseHeight: Double
     ): SlideTrajectory? {
-        val entryWatered = isCurveWatered(
-            level, entryCurve.bePositions.getFirst(), entryCurve.bePositions.getSecond()
-        )
-        val tube = buildTube(level, entryCurve, towardSecond, startT) ?: return null
+        val maxSamples = ModConfig.slideMaxTrajectorySamples()
+        val maxLength = ModConfig.slideMaxTrajectoryBlocks()
+        var tube = buildTube(level, entryCurve, towardSecond, startT) ?: return null
         if (tube.frames.size < 2) return null
         tube.cursor = nearestIndex(tube.frames, startPos)
 
@@ -92,16 +107,14 @@ object PhysicsSlideTrajectoryBuilder {
         var vel = startVel
         val samples = ArrayList<SlideSample>(256)
         var time = 0.0
+        var totalLength = 0.0
         var lastSampleTime = 0.0
-        var lastTraceTime = -1.0
-        var lastProgress = 0.0
-        var lastProgressTime = 0.0
-        var endApproachTime = Double.MAX_VALUE
-        var leftTube = false
-        var landedOnSlide = false
-        var hitGround = false
-        var slideCheckCounter = 0
-        var endReason = if (tube.endIsOpen) SlideEndReason.EXITED else SlideEndReason.STOPPED
+        var limitHit = false
+        var inTubeState = true
+        var tubeCenter = tube.frames.first().center
+        var tubeUp = tube.frames.first().up
+        var tubeRadius = tube.frames.first().radius
+
         var hit = tube.hit(pos)
         fun clampBody(p: Vec3, h: TubeHit): Vec3 {
             val inner = max(0.1, h.radius - SLIDE_WALL_THICKNESS)
@@ -119,158 +132,217 @@ object PhysicsSlideTrajectoryBuilder {
             0.0, pos, hit.center, safeTangent(vel, hit.tangent), hit.up, hit.radius, vel.length()
         )
 
-        while (time < TUBE_MAX_TIME && samples.size < MAX_SAMPLES) {
-            vel = vel.add(0.0, -GRAVITY * DT, 0.0)
-            val newPos = pos.add(vel.scale(DT))
-            hit = tube.hit(newPos)
+        outer@ while (true) {
+            // ================= in-tube segment =================
+            val segStart = time
+            var leftTube = false
+            var lastTraceTime = -1.0
+            var lastProgress = 0.0
+            var lastProgressTime = 0.0
+            var endApproachTime = Double.MAX_VALUE
+            var prevPos = pos
+            while (time - segStart < TUBE_MAX_TIME && samples.size < maxSamples && !limitHit) {
+                vel = vel.add(0.0, -GRAVITY * DT, 0.0)
+                val newPos = pos.add(vel.scale(DT))
+                hit = tube.hit(newPos)
 
-            val radial = newPos.subtract(hit.center)
-            val axisDist = radial.length()
-            val inner = max(0.1, hit.radius - SLIDE_WALL_THICKNESS)
-            val wallDist = max(MIN_WALL_DIST, inner - poseWidth / 2.0)
+                val radial = newPos.subtract(hit.center)
+                val axisDist = radial.length()
+                val inner = max(0.1, hit.radius - SLIDE_WALL_THICKNESS)
+                val wallDist = max(MIN_WALL_DIST, inner - poseWidth / 2.0)
 
-            if (axisDist > wallDist) {
-                val angle = angleDeg(radial, hit.lateral, hit.up)
-                val sector = sectorAt(hit.config, angle)
-                if (sector == null || sector.sector.material == SectorMaterial.OPEN || hit.atEnd) {
-                    endReason = SlideEndReason.EXITED
-                    if (hit.atEnd) vel = hit.tangent.scale(vel.length())
-                    leftTube = true
+                if (axisDist > wallDist) {
+                    val angle = angleDeg(radial, hit.lateral, hit.up)
+                    val sector = sectorAt(hit.config, angle)
+                    if (sector == null || sector.sector.material == SectorMaterial.OPEN || hit.atEnd) {
+                        if (hit.atEnd) vel = hit.tangent.scale(vel.length())
+                        leftTube = true
+                        break
+                    }
+                    val dir = radial.normalize()
+                    val radialVel = vel.dot(dir)
+                    if (radialVel > 0.0) {
+                        // reflect the outward velocity off the wall, keep the full speed
+                        val speed = vel.length()
+                        vel = vel.subtract(dir.scale(radialVel))
+                        val after = vel.length()
+                        if (after > 1.0E-9) vel = vel.scale(speed / after)
+                    }
+                    pos = hit.center.add(dir.scale(wallDist))
+                    // watered tubes apply water friction on every wall contact
+                    if (hit.watered) {
+                        vel = vel.scale((1.0 - ModConfig.slideWaterFriction()).coerceAtLeast(0.0))
+                    }
+                } else {
+                    pos = newPos
+                }
+
+                // keep the head inside the tube so the camera never leaves the wall
+                pos = clampBody(pos, hit)
+                totalLength += pos.distanceTo(prevPos)
+                prevPos = pos
+                if (totalLength > maxLength) {
+                    limitHit = true
                     break
                 }
-                val dir = radial.normalize()
-                val radialVel = vel.dot(dir)
-                if (radialVel > 0.0) {
-                    // reflect the outward velocity off the wall, keep the full speed
-                    val speed = vel.length()
-                    vel = vel.subtract(dir.scale(radialVel))
-                    val after = vel.length()
-                    if (after > 1.0E-9) vel = vel.scale(speed / after)
-                }
-                pos = hit.center.add(dir.scale(wallDist))
-                // watered tubes apply water friction on every wall contact
-                if (hit.watered) {
-                    vel = vel.scale((1.0 - ModConfig.slideWaterFriction()).coerceAtLeast(0.0))
-                }
-            } else {
-                pos = newPos
-            }
 
-            // keep the head inside the tube so the camera never leaves the wall
-            pos = clampBody(pos, hit)
-
-            if (hit.atEnd) {
-                endReason = SlideEndReason.EXITED
-                vel = hit.tangent.scale(vel.length())
-                leftTube = true
-                break
-            }
-
-            time += DT
-            val progress = hit.idx + hit.t
-            if (progress > lastProgress + 0.05) {
-                lastProgress = progress
-                lastProgressTime = time
-            } else if (time - lastProgressTime >= 2.0 && time > 1.0) {
-                CreateWaterparked.LOGGER.info(
-                    "SlideTrace stalled t={} pos={} vel={} speed={} idx={}",
-                    time, pos, vel, vel.length(), hit.idx
-                )
-                endReason = SlideEndReason.STOPPED
-                if (hit.idx >= tube.frames.size - 3) {
-                    val last = tube.frames.last()
-                    vel = last.tangent.scale(vel.length())
-                }
-                leftTube = true
-                break
-            }
-            if (time - lastTraceTime >= 1.0) {
-                lastTraceTime = time
-                CreateWaterparked.LOGGER.info(
-                    "SlideTrace t={} pos={} vel={} speed={} idx={} atEnd={} frames={}",
-                    time, pos, vel, vel.length(), hit.idx, hit.atEnd, tube.frames.size
-                )
-            }
-            if (hit.idx >= tube.frames.size - 3) {
-                if (endApproachTime == Double.MAX_VALUE) endApproachTime = time
-                if (time - endApproachTime >= 3.0) {
-                    CreateWaterparked.LOGGER.info(
-                        "SlideTrace end-timeout t={} pos={} vel={} idx={}",
-                        time, pos, vel, hit.idx
-                    )
-                    endReason = SlideEndReason.STOPPED
+                if (hit.atEnd) {
                     vel = hit.tangent.scale(vel.length())
                     leftTube = true
                     break
                 }
-            } else {
-                endApproachTime = Double.MAX_VALUE
-            }
-            if (time - lastSampleTime >= SAMPLE_INTERVAL - 1.0E-9) {
-                val th = tube.hit(pos)
-                samples += SlideSample(
-                    time, pos, th.center, safeTangent(vel, th.tangent), th.up, th.radius, vel.length()
-                )
-                lastSampleTime = time
-            }
-        }
 
-        val lastTubeCenter = hit.center
-        val lastUp = hit.up
-        val lastRadius = hit.radius
-        if (leftTube) {
-            val reentry = reentrySegments(level, tube)
-            val grid = ReentryGrid()
-            for (s in reentry) grid.add(s)
-            // sparse samples during the throw so the cap rarely triggers
-            val fallSampleInterval = SAMPLE_INTERVAL * 4
-            while (time < MAX_TIME && samples.size < MAX_SAMPLES) {
-                vel = vel.add(0.0, -GRAVITY * DT, 0.0)
-                pos = pos.add(vel.scale(DT))
                 time += DT
-                if (++slideCheckCounter % 2 == 0 && grid.hit(pos)) {
-                    landedOnSlide = true
+                val progress = hit.idx + hit.t
+                if (progress > lastProgress + 0.05) {
+                    lastProgress = progress
+                    lastProgressTime = time
+                } else if (time - lastProgressTime >= 2.0 && time > 1.0) {
+                    CreateWaterparked.LOGGER.info(
+                        "SlideTrace stalled t={} pos={} vel={} speed={} idx={}",
+                        time, pos, vel, vel.length(), hit.idx
+                    )
+                    if (hit.idx >= tube.frames.size - 3) {
+                        val last = tube.frames.last()
+                        vel = last.tangent.scale(vel.length())
+                    }
+                    leftTube = true
                     break
                 }
-                if (hitsGround(level, pos, poseHeight)) {
-                    val surfaceY = groundSurfaceY(level, pos, poseHeight)
-                    if (surfaceY != null) pos = Vec3(pos.x, surfaceY, pos.z)
-                    hitGround = true
-                    break
+                if (time - lastTraceTime >= 1.0) {
+                    lastTraceTime = time
+                    CreateWaterparked.LOGGER.info(
+                        "SlideTrace t={} pos={} vel={} speed={} idx={} atEnd={} frames={}",
+                        time, pos, vel, vel.length(), hit.idx, hit.atEnd, tube.frames.size
+                    )
                 }
-                if (pos.y < level.minBuildHeight - 10) {
-                    // fell out of the world: end like a normal block contact
-                    hitGround = true
-                    break
+                if (hit.idx >= tube.frames.size - 3) {
+                    if (endApproachTime == Double.MAX_VALUE) endApproachTime = time
+                    if (time - endApproachTime >= 3.0) {
+                        CreateWaterparked.LOGGER.info(
+                            "SlideTrace end-timeout t={} pos={} vel={} idx={}",
+                            time, pos, vel, hit.idx
+                        )
+                        vel = hit.tangent.scale(vel.length())
+                        leftTube = true
+                        break
+                    }
+                } else {
+                    endApproachTime = Double.MAX_VALUE
                 }
-                if (time - lastSampleTime >= fallSampleInterval - 1.0E-9) {
+                if (time - lastSampleTime >= SAMPLE_INTERVAL - 1.0E-9) {
+                    val th = tube.hit(pos)
                     samples += SlideSample(
-                        time, pos, lastTubeCenter, safeTangent(vel, lastUp),
-                        lastUp, lastRadius, vel.length(), false
+                        time, pos, th.center, safeTangent(vel, th.tangent), th.up, th.radius, vel.length()
                     )
                     lastSampleTime = time
                 }
             }
+            if (samples.size >= maxSamples) break
+
+            tubeCenter = hit.center
+            tubeUp = hit.up
+            tubeRadius = hit.radius
+            inTubeState = false
+
+            if (!leftTube) {
+                // stalled inside the tube (or the length limit cut us off): push
+                // out through the wall and fall until a real block or another slide
+                val radial = pos.subtract(hit.center)
+                val dir = if (radial.lengthSqr() < 1.0E-9) hit.lateral else radial.normalize()
+                pos = hit.center.add(dir.scale(hit.radius + 0.5))
+                vel = hit.tangent.scale(max(vel.length(), 1.0))
+            }
+
+            // short cooldown against re-entering the pipe we just left, but only
+            // when leaving through the mouth; the player must actually fly off
+            // the tube axis before the same tube can catch them again
+            val exitAtMouth = leftTube && hit.atEnd
+            val selfCurves = if (exitAtMouth) tube.curves.toSet() else null
+            val noSelfUntil = if (selfCurves != null) time + SELF_REENTRY_COOLDOWN
+            else Double.NEGATIVE_INFINITY
+
+            // ================= free fall segment =================
+            val fallStart = time
+            val grid = ReentryGrid()
+            for (s in allReentrySegments(level)) grid.add(s)
+            val fallSampleInterval = SAMPLE_INTERVAL * 4
+            var check = 0
+            // a reentry into the pipe we just left is only accepted after the
+            // player has fully left every slide grid, so a slow exit cannot
+            // bounce straight back into the mouth they flew out of; other
+            // slides catch the player immediately
+            var wasClear = false
+            while (time - fallStart < MAX_TIME && samples.size < maxSamples) {
+                vel = vel.add(0.0, -GRAVITY * DT, 0.0)
+                pos = pos.add(vel.scale(DT))
+                totalLength += vel.length() * DT
+                if (totalLength > maxLength) {
+                    limitHit = true
+                    break
+                }
+                time += DT
+                // landing wins over reentry so a pipe mouth sitting on the
+                // ground cannot pull the player back after they touched down
+                if (hitsGround(level, pos, poseHeight)) {
+                    val surfaceY = groundSurfaceY(level, pos, poseHeight)
+                    if (surfaceY != null) pos = Vec3(pos.x, surfaceY, pos.z)
+                    break
+                }
+                if (pos.y < level.minBuildHeight - 10) {
+                    // fell out of the world: end like a normal block contact
+                    break
+                }
+                if (++check % 2 == 0) {
+                    val seg = grid.hit(pos)
+                    if (seg != null) {
+                        val isSelf = selfCurves != null && seg.curve in selfCurves
+                        val selfBlocked = isSelf && (time < noSelfUntil || !wasClear)
+                        if (!selfBlocked) {
+                            val start = reentryStart(level, seg, pos, vel, poseWidth)
+                            if (start != null) {
+                                samples += SlideSample(
+                                    time, start.pos, start.center, safeTangent(start.vel, start.tangent),
+                                    start.up, start.radius, start.vel.length(), true
+                                )
+                                val nextTube = buildTube(level, start.curve, start.towardSecond, start.startT)
+                                if (nextTube == null || nextTube.frames.size < 2) break
+                                nextTube.cursor = nearestIndex(nextTube.frames, start.pos)
+                                tube = nextTube
+                                pos = start.pos
+                                vel = start.vel
+                                inTubeState = true
+                                continue@outer
+                            }
+                        }
+                    } else {
+                        wasClear = true
+                    }
+                }
+                if (time - lastSampleTime >= fallSampleInterval - 1.0E-9) {
+                    samples += SlideSample(
+                        time, pos, tubeCenter, safeTangent(vel, tubeUp),
+                        tubeUp, tubeRadius, vel.length(), false
+                    )
+                    lastSampleTime = time
+                }
+            }
+            break
         }
 
         if (samples.size < 2) return null
         val last = samples.last()
         if (last.time < time - 1.0E-9) {
             samples += SlideSample(
-                time, pos, lastTubeCenter, safeTangent(vel, lastUp),
-                lastUp, lastRadius, vel.length(), !leftTube
+                time, pos, tubeCenter, safeTangent(vel, tubeUp),
+                tubeUp, tubeRadius, vel.length(), inTubeState
             )
         }
         CreateWaterparked.LOGGER.info(
-            "SlideTrace done reason={} endIsOpen={} landed={} watered={} samples={} exitPos={} exitVel={}",
-            endReason, tube.endIsOpen, landedOnSlide, entryWatered, samples.size, pos, vel
+            "SlideTrace done samples={} length={} exitPos={} exitVel={} limitHit={}",
+            samples.size, totalLength, pos, vel, limitHit
         )
-        if (leftTube && !hitGround && !landedOnSlide) {
-            endReason = SlideEndReason.BLOCKED
-        }
-        // full trajectory: open-end extension is part of the tube frames, so the
-        // free fall starts at the extension lip and runs until a normal block
-        return SlideTrajectory(samples, endReason, tube.endIsOpen, vel, landedOnSlide)
+        return SlideTrajectory(samples, SlideEndReason.EXITED, false, vel, false)
     }
 
     private fun buildTube(
@@ -289,6 +361,7 @@ object PhysicsSlideTrajectoryBuilder {
         while (guard++ < 64) {
             val a = bc.bePositions.getFirst()
             val b = bc.bePositions.getSecond()
+            tube.curves.add(bc)
             val r0 = SlideCurveGeometry.radiusAt(level, a)
             val r1 = SlideCurveGeometry.radiusAt(level, b)
             val base = cachedFrames(level, bc, r0, r1)
@@ -318,10 +391,7 @@ object PhysicsSlideTrajectoryBuilder {
 
             val exitPos = if (atFirst) b else a
             val exitBe = level.getBlockEntity(exitPos) as? WaterslideAnchorBlockEntity ?: break
-            if (exitBe.legCount() <= 1) {
-                tube.endIsOpen = true
-                break
-            }
+            if (exitBe.legCount() <= 1) break
 
             val next = exitBe.anchorPeerCurvesView.values
                 .asSequence()
@@ -474,17 +544,6 @@ object PhysicsSlideTrajectoryBuilder {
         return null
     }
 
-    private fun reentrySegments(level: ServerLevel, currentTube: Tube): List<ReentrySegment> {
-        val excluded = currentTube.frames.takeLast(4)
-        val all = allReentrySegments(level)
-        val out = ArrayList<ReentrySegment>(all.size)
-        for (s in all) {
-            if (excluded.any { it.center.distanceToSqr(s.a) < 1.0E-6 }) continue
-            out += s
-        }
-        return out
-    }
-
     private val reentryCache = HashMap<ResourceKey<Level>, Pair<String, List<ReentrySegment>>>()
 
     private fun allReentrySegments(level: ServerLevel): List<ReentrySegment> {
@@ -506,7 +565,8 @@ object PhysicsSlideTrajectoryBuilder {
                     val fb = frames[i + 1]
                     out += ReentrySegment(
                         fa.center, fb.center,
-                        max(fa.radius, fb.radius).toDouble() + 0.25
+                        max(fa.radius, fb.radius).toDouble() + 0.25,
+                        bc
                     )
                 }
             }
@@ -563,6 +623,69 @@ object PhysicsSlideTrajectoryBuilder {
         return frames
     }
 
+    // Turn a free-fall contact with another slide tube into an entry state:
+    // locate the curve, pick the slide direction from the fall velocity, and
+    // project the player back inside the tube.
+    private fun reentryStart(
+        level: ServerLevel,
+        seg: ReentrySegment,
+        pos: Vec3,
+        vel: Vec3,
+        poseWidth: Double
+    ): ReentryStart? {
+        val bc = seg.curve
+        val a = bc.bePositions.getFirst()
+        val b = bc.bePositions.getSecond()
+        val frames = cachedFrames(
+            level, bc, SlideCurveGeometry.radiusAt(level, a), SlideCurveGeometry.radiusAt(level, b)
+        )
+        if (frames.size < 2) return null
+        var bestI = 0
+        var bestT = 0.0
+        var bestD = Double.MAX_VALUE
+        for (i in 0 until frames.size - 1) {
+            val fa = frames[i]
+            val fb = frames[i + 1]
+            val ab = fb.center.subtract(fa.center)
+            val lenSq = ab.lengthSqr()
+            val t = if (lenSq < 1.0E-12) 0.0
+            else ((pos.subtract(fa.center)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
+            val d = pos.distanceToSqr(fa.center.add(ab.scale(t)))
+            if (d < bestD) {
+                bestD = d
+                bestI = i
+                bestT = t
+            }
+        }
+        val fa = frames[bestI]
+        val fb = frames[bestI + 1]
+        val startT = fa.t + (fb.t - fa.t) * bestT.toFloat()
+        val tan = fa.tangent.lerp(fb.tangent, bestT).normalize()
+        val lat = fa.lateral.lerp(fb.lateral, bestT).normalize()
+        val upB = if (fa.up.dot(fb.up) < 0.0) fb.up.scale(-1.0) else fb.up
+        val up = fa.up.lerp(upB, bestT).normalize()
+        val radius = fa.radius + (fb.radius - fa.radius) * bestT.toFloat()
+        val proj = vel.dot(tan)
+        val towardSecond = when {
+            abs(proj) > 0.5 -> proj >= 0
+            tan.y < -0.02 -> true
+            tan.y > 0.02 -> false
+            else -> b.y <= a.y
+        }
+        val entryTan = if (towardSecond) tan else tan.scale(-1.0)
+        val along = vel.dot(entryTan)
+        val center = fa.center.lerp(fb.center, bestT)
+        val inner = max(0.1, radius - SLIDE_WALL_THICKNESS)
+        val target = max(MIN_WALL_DIST, inner - poseWidth / 2.0)
+        val radial = pos.subtract(center)
+        val entryPos = if (radial.lengthSqr() < 1.0E-12) center.add(up.scale(target))
+        else center.add(radial.normalize().scale(target))
+        val entryVel = entryTan.scale(max(along, 0.5))
+        return ReentryStart(
+            bc, towardSecond, startT, entryPos, entryVel, center, entryTan, lat, up, radius
+        )
+    }
+
     private class ReentryGrid {
         private val buckets = HashMap<Long, MutableList<ReentrySegment>>()
 
@@ -583,10 +706,12 @@ object PhysicsSlideTrajectoryBuilder {
             }
         }
 
-        fun hit(pos: Vec3): Boolean {
+        fun hit(pos: Vec3): ReentrySegment? {
             val cx = Mth.floor(pos.x / GRID)
             val cy = Mth.floor(pos.y / GRID)
             val cz = Mth.floor(pos.z / GRID)
+            var best: ReentrySegment? = null
+            var bestDist = Double.MAX_VALUE
             for (x in cx - 1..cx + 1) {
                 for (y in cy - 1..cy + 1) {
                     for (z in cz - 1..cz + 1) {
@@ -597,12 +722,16 @@ object PhysicsSlideTrajectoryBuilder {
                             if (lenSq < 1.0E-12) continue
                             val t = ((pos.subtract(s.a)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
                             val closest = s.a.lerp(s.b, t)
-                            if (pos.distanceToSqr(closest) < s.radius * s.radius) return true
+                            val d = pos.distanceToSqr(closest)
+                            if (d < s.radius * s.radius && d < bestDist) {
+                                bestDist = d
+                                best = s
+                            }
                         }
                     }
                 }
             }
-            return false
+            return best
         }
 
         companion object {

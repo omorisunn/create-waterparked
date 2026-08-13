@@ -829,11 +829,11 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             consumer: VertexConsumer
         ) {
             val pose = poseStack.last()
-            val fwd = water.flowSign < 0f
             val light = LightTexture.FULL_BRIGHT
             val flowScale = ModClientConfig.waterFlowScale()
             val time = AnimationTickHolder.getRenderTime(level)
-            val segLen = ModConfig.waterSegmentLength()
+            // fixed fallback length; the server segment length is a server config
+            val segLen = 0.5f
             val frameArc = FloatArray(centers.size)
             for (i in 1 until centers.size) {
                 frameArc[i] = frameArc[i - 1] + centers[i - 1].distanceTo(centers[i]).toFloat()
@@ -872,9 +872,11 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             for (a in sorted.asReversed()) ring += a
             val half = ring.size / 2
             for (seg in water.segments) {
+                // each segment flows along its own sampled direction
+                val segForward = seg.speed >= 0f
                 // fixed depth like the thrown water sheet
                 val depth = 0.25f
-                val arc0 = (if (fwd) seg.arc else totalLen - seg.arc).coerceIn(0f, totalLen)
+                val arc0 = (if (segForward) seg.arc else totalLen - seg.arc).coerceIn(0f, totalLen)
                 val arc1 = (arc0 + segLen).coerceAtMost(totalLen)
                 val fi0 = frameAt(arc0)
                 val fi1 = frameAt(arc1)
@@ -916,16 +918,12 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                         0.75f, if (k >= half) WATER_SURFACE_TINT else WATER_TINT
                     )
                 }
-                // open band strips: bottom arc and top arc; keep end walls when not culled
+                // band strips: bottom arc and top arc, no closing end walls
                 for (k in 0 until half - 1) {
                     drawRingQuad(k, k + 1)
                 }
                 for (k in half until ring.size - 1) {
                     drawRingQuad(k, k + 1)
-                }
-                if (!ModClientConfig.waterCullSegmentWalls()) {
-                    drawRingQuad(half - 1, half)
-                    drawRingQuad(ring.size - 1, 0)
                 }
             }
         }

@@ -466,18 +466,16 @@ object WaterslideTubeMesh {
     fun waterModelFor(
         vertsA: List<Float>,
         vertsB: List<Float>,
-        radius: Float,
-        cullWalls: Boolean
+        radius: Float
     ): Model {
         val key = buildString {
-            append(if (cullWalls) 'c' else 'w').append('|')
             append((radius * 8f).roundToInt()).append('|')
             for (f in vertsA) append((f * 20f).roundToInt()).append(',')
             append('|')
             for (f in vertsB) append((f * 20f).roundToInt()).append(',')
         }
         return waterModelCache.getOrPut(key) {
-            buildWaterModel(vertsA, vertsB, radius, cullWalls)
+            buildWaterModel(vertsA, vertsB, radius)
         }
     }
 
@@ -489,12 +487,10 @@ object WaterslideTubeMesh {
     private fun buildWaterModel(
         vertsA: List<Float>,
         vertsB: List<Float>,
-        radius: Float,
-        cullWalls: Boolean
+        radius: Float
     ): Model {
         val nA = vertsA.size / 2
         val nB = vertsB.size / 2
-        val n = min(nA, nB)
         val waterVerts = ArrayList<V>()
         val waterSprite = Minecraft.getInstance().getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
             .apply(ResourceLocation.withDefaultNamespace("block/water_still"))
@@ -516,35 +512,36 @@ object WaterslideTubeMesh {
             )
         }
 
-        for (i in 0 until n) {
-            addVertex(vertsA[i * 2], vertsA[i * 2 + 1], 0f, i.toFloat() / n * tiles)
+        // two axial bands only: the bottom arc ring (water bed) and the top arc
+        // ring (water surface), each spanning both cross-sections; the sloped
+        // walls connecting the two rings are intentionally not built
+        val baseA = 0
+        for (i in 0 until nA) {
+            addVertex(vertsA[i * 2], vertsA[i * 2 + 1], 0f, i.toFloat() / nA * tiles)
         }
-        for (i in 0 until n) {
-            addVertex(vertsB[i * 2], vertsB[i * 2 + 1], 0.5f, i.toFloat() / n * tiles)
+        for (i in 0 until nA) {
+            addVertex(vertsA[i * 2], vertsA[i * 2 + 1], 0.5f, i.toFloat() / nA * tiles)
         }
-        // band strips: bottom arc and top arc; cullWalls drops the closing end walls
-        val m = n / 2
-        for (i in 0 until m - 1) {
-            waterVerts += waterVerts[i]
-            waterVerts += waterVerts[n + i]
-            waterVerts += waterVerts[n + i + 1]
-            waterVerts += waterVerts[i + 1]
+        val baseB = nA * 2
+        for (i in 0 until nB) {
+            addVertex(vertsB[i * 2], vertsB[i * 2 + 1], 0f, i.toFloat() / nB * tiles)
         }
-        for (i in m until n - 1) {
-            waterVerts += waterVerts[i]
-            waterVerts += waterVerts[n + i]
-            waterVerts += waterVerts[n + i + 1]
-            waterVerts += waterVerts[i + 1]
+        for (i in 0 until nB) {
+            addVertex(vertsB[i * 2], vertsB[i * 2 + 1], 0.5f, i.toFloat() / nB * tiles)
         }
-        if (!cullWalls) {
-            // closing end walls between the bottom and top arcs
-            for (i in intArrayOf(m - 1, n - 1)) {
-                val j = (i + 1) % n
-                waterVerts += waterVerts[i]
-                waterVerts += waterVerts[n + i]
-                waterVerts += waterVerts[n + j]
-                waterVerts += waterVerts[j]
-            }
+        // bottom band: water bed arc, z = 0 -> 0.5
+        for (i in 0 until nA - 1) {
+            waterVerts += waterVerts[baseA + i]
+            waterVerts += waterVerts[baseA + nA + i]
+            waterVerts += waterVerts[baseA + nA + i + 1]
+            waterVerts += waterVerts[baseA + i + 1]
+        }
+        // top band: water surface arc, z = 0 -> 0.5
+        for (i in 0 until nB - 1) {
+            waterVerts += waterVerts[baseB + i]
+            waterVerts += waterVerts[baseB + nB + i]
+            waterVerts += waterVerts[baseB + nB + i + 1]
+            waterVerts += waterVerts[baseB + i + 1]
         }
         return SingleMeshModel(meshOf(waterVerts, "waterslide_tube_water"), STREAM_TRANSLUCENT_MATERIAL)
     }

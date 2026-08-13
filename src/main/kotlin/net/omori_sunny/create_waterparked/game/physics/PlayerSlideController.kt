@@ -154,16 +154,8 @@ object PlayerSlideController {
         }
         val level = player.serverLevel()
         val at = session.trajectory.sampleAt(session.elapsed)
-        val first = session.trajectory.samples.first()
-        val lastSample = session.trajectory.samples.last()
-        val useEntry = at.sample.position.distanceToSqr(first.position) <=
-            at.sample.position.distanceToSqr(lastSample.position)
-        val target = if (useEntry) session.trajectory.samples.first()
-        else session.trajectory.samples.last()
-        val outward = if (useEntry) target.tangent.scale(-1.0) else target.tangent
-        val worldPos = toWorldPos(level, session, target.position)
-            .add(toWorldNormal(level, session, outward).scale(1.5))
-        val worldVel = toWorldVel(level, session, target.position, outward.scale(at.sample.speed))
+        val worldPos = toWorldPos(level, session, at.sample.position)
+        val worldVel = toWorldVel(level, session, at.sample.position, at.sample.tangent.scale(at.sample.speed))
         CreateWaterparked.LOGGER.info(
             "Slide cancel {} pos {} vel {}",
             session.id, worldPos, worldVel
@@ -174,6 +166,7 @@ object PlayerSlideController {
         player.setDeltaMovement(worldVel)
         restoreEntity(player)
         sessions.remove(player.uuid)
+        entryCooldown[player.uuid] = level.gameTime + ModConfig.slideCancelCooldownTicks()
         SlidePackets.sendTo(player, SlideEndPayload(
             session.id, SlideEndReason.EXITED.ordinal.toByte(),
             worldPos.x.toFloat(), worldPos.y.toFloat(), worldPos.z.toFloat(),
@@ -239,10 +232,9 @@ object PlayerSlideController {
             subLevel?.uniqueId, swimming, sit, level.gameTime
         )
         CreateWaterparked.LOGGER.info(
-            "Slide start {} entity {} dir {} pos {} vel {} samples={} last={} endOpen={} reason={}",
+            "Slide start {} entity {} dir {} pos {} vel {} samples={} last={} reason={}",
             session.id, entity.uuid, entry.towardSecond, startPos, startVel,
-            trajectory.samples.size, trajectory.exitPosition, trajectory.endIsOpenEnd,
-            trajectory.endReason
+            trajectory.samples.size, trajectory.exitPosition, trajectory.endReason
         )
         sessions[entity.uuid] = session
         if (entity is LivingEntity) entity.setNoGravity(true)
@@ -323,52 +315,6 @@ object PlayerSlideController {
             }
         }
         return best?.entry
-    }
-
-    // Snap a free-fall contact point into the nearest tube interior.
-    private fun projectIntoTube(level: ServerLevel, entity: Entity): Vec3? {
-        val p = entity.position()
-        val margin = entityDimensions(entity).width / 2.0
-        var bestPos: Vec3? = null
-        var bestDist = Double.MAX_VALUE
-        for (anchorPos in SlideAnchorIndex.all(level).toList()) {
-            val be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
-                ?: continue
-            for (raw in be.anchorPeerCurvesView.values) {
-                val bc = if (raw.isPrimary) raw else raw.secondary()
-                if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
-                val a = bc.bePositions.getFirst()
-                val b = bc.bePositions.getSecond()
-                val cf = curveFrames(
-                    level, bc,
-                    SlideCurveGeometry.radiusAt(level, a),
-                    SlideCurveGeometry.radiusAt(level, b)
-                ) ?: continue
-                if (!cf.bounds.contains(p)) continue
-                for (i in 0 until cf.frames.size - 1) {
-                    val fa = cf.frames[i]
-                    val fb = cf.frames[i + 1]
-                    val ab = fb.center.subtract(fa.center)
-                    val lenSq = ab.lengthSqr()
-                    val f = if (lenSq < 1.0E-9) 0.0
-                    else ((p.subtract(fa.center)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
-                    val closest = fa.center.add(ab.scale(f))
-                    val radial = p.subtract(closest)
-                    val axisDist = radial.length()
-                    val radius = (fa.radius + (fb.radius - fa.radius) * f.toFloat()).toDouble()
-                    if (axisDist > radius + 0.25) continue
-                    val target = (radius - SLIDE_WALL_THICKNESS - margin).coerceAtLeast(0.05)
-                    val dir = if (axisDist < 1.0E-9) Vec3(0.0, 1.0, 0.0) else radial.normalize()
-                    val proj = closest.add(dir.scale(if (axisDist < target) axisDist else target))
-                    val d = p.distanceToSqr(closest)
-                    if (d < bestDist) {
-                        bestDist = d
-                        bestPos = proj
-                    }
-                }
-            }
-        }
-        return bestPos
     }
 
     // cached per-curve tube envelope; no max-radius guess
@@ -471,11 +417,7 @@ object PlayerSlideController {
         }
         session.elapsed += 1.0 / 20.0
         if (session.elapsed >= session.trajectory.duration) {
-            if (session.trajectory.landedOnSlide) {
-                reenterSlide(level, session)
-            } else {
-                endSession(level, session, session.trajectory.endReason)
-            }
+            endSession(level, session, SlideEndReason.EXITED)
             return
         }
 
@@ -504,59 +446,6 @@ object PlayerSlideController {
         }
     }
 
-    private fun reenterSlide(level: ServerLevel, session: Session) {
-        val entity = session.entity
-        val player = session.player
-        val at = session.trajectory.sampleAt(session.trajectory.duration)
-        val worldPos = toWorldPos(level, session, at.sample.position)
-        val worldVel = toWorldVel(level, session, at.sample.position, session.trajectory.exitVelocity)
-        entity.setPos(worldPos)
-        entity.setDeltaMovement(worldVel)
-        val proj = projectIntoTube(level, entity) ?: worldPos
-        entity.setPos(proj)
-        val entry = findSlideEntry(level, entity, requireSolid = false)
-        if (entry == null) {
-            endSession(level, session, session.trajectory.endReason)
-            return
-        }
-        val startPosWorld = entity.position()
-        // align the entry velocity with the tube so the rider does not bounce around
-        val entryTanWorld = entryTangentWorld(level, entry)
-        val along = worldVel.scale(20.0).dot(entryTanWorld)
-        var startVelWorld = entryTanWorld.scale(along.coerceAtLeast(0.0))
-        val maxSpeed = ModConfig.slideMaxEntrySpeed()
-        if (startVelWorld.lengthSqr() > maxSpeed * maxSpeed) {
-            startVelWorld = startVelWorld.normalize().scale(maxSpeed)
-        }
-        val subLevel = Sable.HELPER.getContaining(level, entry.anchorPos) as? ServerSubLevel
-        val startPos = if (subLevel != null) toLocalPos(subLevel, startPosWorld) else startPosWorld
-        val startVel = if (subLevel != null) toLocalVel(subLevel, startVelWorld) else startVelWorld
-        val dims = entityDimensions(entity)
-        val newTrajectory = PhysicsSlideTrajectoryBuilder.build(
-            level, entry.curve, entry.towardSecond, entry.startT,
-            startPos, startVel, dims.width.toDouble(), dims.height.toDouble()
-        )
-        if (newTrajectory == null) {
-            endSession(level, session, session.trajectory.endReason)
-            return
-        }
-        session.trajectory = newTrajectory
-        session.subLevelId = subLevel?.uniqueId
-        session.startTick = level.gameTime
-        session.elapsed = 0.0
-        session.lastSyncTick = 0L
-        CreateWaterparked.LOGGER.info(
-            "Slide reenter {} pos {} vel {}",
-            session.id, startPosWorld, worldVel
-        )
-        if (player != null) {
-            SlidePackets.sendTo(player, SlideTrajectoryPayload(
-                session.id, session.startTick, session.swimmingPose, session.subLevelId,
-                newTrajectory.samples.map { SlideSampleWire.from(it) }
-            ))
-        }
-    }
-
     private fun endSession(level: ServerLevel, session: Session, reason: SlideEndReason) {
         val entity = session.entity
         val player = session.player
@@ -574,9 +463,6 @@ object PlayerSlideController {
         entity.setDeltaMovement(worldVel)
         restoreEntity(entity)
         sessions.remove(entity.uuid)
-        if (reason == SlideEndReason.EXITED && session.trajectory.endIsOpenEnd) {
-            entryCooldown[entity.uuid] = level.gameTime + 1
-        }
         if (player != null) {
             SlidePackets.sendTo(player, SlideEndPayload(
                 session.id, reason.ordinal.toByte(),
