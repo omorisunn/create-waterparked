@@ -30,6 +30,9 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
 
+    - name: Run as Admin
+      run: chmod +x gradlew
+
     - name: "resolve and download Create: Coasters Simulated jar"
       env:
         CCS_VERSION: ${{ env.CCS_VERSION }}
