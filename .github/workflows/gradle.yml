@@ -5,6 +5,12 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      ccs_version:
+        description: "Create: Coasters Simulated version"
+        required: false
+        default: "0.1.4"
 
 env:
   CCS_VERSION: 0.1.4
