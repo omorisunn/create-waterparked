@@ -9,6 +9,7 @@ import net.omori_sunny.create_waterparked.content.registry.ModCreativeTabs
 import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
 import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
 import net.omori_sunny.create_waterparked.content.registry.ModItems
+import net.omori_sunny.create_waterparked.content.registry.ModSounds
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 import net.omori_sunny.create_waterparked.datagen.CreateWaterparkedDataGen
 import net.omori_sunny.create_waterparked.game.physics.PlayerSlideController
@@ -37,6 +38,7 @@ object CreateWaterparked {
         ModItems.REGISTRY.register(MOD_BUS)
         ModEntityTypes.REGISTRY.register(MOD_BUS)
         ModDataComponents.REGISTRY.register(MOD_BUS)
+        ModSounds.REGISTRY.register(MOD_BUS)
         ModCreativeTabs.REGISTRY.register(MOD_BUS)
 
         MOD_BUS.addListener(ModPayloads::register)
@@ -46,6 +48,7 @@ object CreateWaterparked {
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onServerTick)
         MOD_BUS.addListener(WaterslideAnchorBlockEntity::registerCapabilities)
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onPlayerLoggedOut)
+        NeoForge.EVENT_BUS.addListener(PlayerSlideController::onPlayerLoggedIn)
 
         ModConfig.register()
 

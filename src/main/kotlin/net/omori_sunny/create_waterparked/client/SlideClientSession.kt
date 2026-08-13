@@ -113,9 +113,12 @@ object SlideClientSession {
         val axial = rel.dot(worldTanNow)
         val radial = rel.subtract(worldTanNow.scale(axial))
         val radialDist = radial.length()
-        val pos = if (atNow.sample.inTube && radialDist > maxDist && radialDist > 1.0E-9)
-            tubeCenter.add(radial.scale(maxDist / radialDist)).add(worldTanNow.scale(axial))
-        else rawPos
+        val pos = if (atNow.sample.inTube && radialDist > maxDist && radialDist > 1.0E-9) {
+            val clamped = tubeCenter.add(radial.scale(maxDist / radialDist))
+                .add(worldTanNow.scale(axial))
+            val prevPos = session.lastAppliedPos
+            if (prevPos == null) clamped else prevPos.lerp(clamped, 0.25)
+        } else rawPos
         val rawYaw = yawOf(worldTanNow)
         val trackYaw = if (session.lastTrackYaw == null) rawYaw
         else session.lastTrackYaw!! + Mth.wrapDegrees(rawYaw - session.lastTrackYaw!!)

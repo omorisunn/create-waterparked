@@ -45,11 +45,27 @@ object ModConfig {
 
     val SLIDE_WATER_FRICTION: ModConfigSpec.DoubleValue = BUILDER
         .comment("Friction multiplier inside water-filled slide pipes.")
-        .defineInRange("slideWaterFriction", 0.01, 0.0, 1.0)
+        .defineInRange("slideWaterFriction", 0.03, 0.0, 1.0)
+
+    val WATER_SIM_PARTICLES: ModConfigSpec.IntValue = BUILDER
+        .comment("Particles sampled per water source anchor for the server water simulation.")
+        .defineInRange("waterSimParticleCount", 64, 8, 256)
+
+    val WATER_SIM_MAX_BLOCKS: ModConfigSpec.DoubleValue = BUILDER
+        .comment("Maximum particle path length in the server water simulation.")
+        .defineInRange("waterSimMaxBlocks", 512.0, 64.0, 2048.0)
+
+    val WATER_SIM_COOLDOWN_TICKS: ModConfigSpec.IntValue = BUILDER
+        .comment("Minimum ticks between server water simulation recalculations.")
+        .defineInRange("waterSimCooldownTicks", 100, 20, 600)
+
+    val WATER_SEGMENT_LENGTH: ModConfigSpec.DoubleValue = BUILDER
+        .comment("Length of one watered slide sub-segment, in blocks.")
+        .defineInRange("waterSegmentLength", 0.5, 0.25, 4.0)
 
     val WATER_DRAIN_RATE_MB: ModConfigSpec.DoubleValue = BUILDER
         .comment("Water consumed per second while a slide is watered, in millibuckets.")
-        .defineInRange("waterDrainRateMbPerSecond", 10.0, 0.0, 1000.0)
+        .defineInRange("waterDrainRateMbPerSecond", 2.0, 0.0, 1000.0)
 
     val ANCHOR_FLUID_CAPACITY: ModConfigSpec.IntValue = BUILDER
         .comment("Water capacity of a slide anchor, in millibuckets.")
@@ -94,6 +110,14 @@ object ModConfig {
     fun sectorBorderPx(): Int = SECTOR_BORDER_PX.get().coerceIn(0, 16)
 
     fun slideWaterFriction(): Double = SLIDE_WATER_FRICTION.get().coerceIn(0.0, 1.0)
+
+    fun waterSimParticleCount(): Int = WATER_SIM_PARTICLES.get().coerceIn(8, 256)
+
+    fun waterSimMaxBlocks(): Double = WATER_SIM_MAX_BLOCKS.get().coerceIn(64.0, 2048.0)
+
+    fun waterSimCooldownTicks(): Int = WATER_SIM_COOLDOWN_TICKS.get().coerceIn(20, 600)
+
+    fun waterSegmentLength(): Float = WATER_SEGMENT_LENGTH.get().toFloat().coerceIn(0.25f, 4.0f)
 
     fun waterDrainRateMbPerSecond(): Double = WATER_DRAIN_RATE_MB.get().coerceIn(0.0, 1000.0)
 

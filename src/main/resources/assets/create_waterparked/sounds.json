@@ -1,0 +1,10 @@
+{
+  "waterslide_water_flow": {
+    "sounds": [
+      {
+        "name": "create_waterparked:waterslide_water_flow",
+        "stream": true
+      }
+    ]
+  }
+}

@@ -38,27 +38,43 @@ object SlideCurveGeometry {
         (level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity)?.radius
             ?: ModConfig.defaultSlideRadius()
 
+    // stable cross-section frame, world-up aligned, continuous across tracks
+    fun stableFrame(tangent: Vec3): Pair<Vec3, Vec3> {
+        var ref = Vec3(0.0, 1.0, 0.0)
+        if (abs(tangent.y) > 0.999) ref = Vec3(1.0, 0.0, 0.0)
+        var faceUp = ref.subtract(tangent.scale(ref.dot(tangent)))
+        if (faceUp.lengthSqr() < 1.0E-12) {
+            ref = Vec3(0.0, 0.0, 1.0)
+            faceUp = ref.subtract(tangent.scale(ref.dot(tangent)))
+        }
+        faceUp = faceUp.normalize()
+        val lat = faceUp.cross(tangent).normalize()
+        val up = tangent.cross(lat).normalize()
+        return lat to up
+    }
+
     // Frames from first endpoint to second, including open-end extensions.
     fun sampleFrames(
         level: Level,
         bc: BezierConnection,
         r0: Float,
         r1: Float,
-        spacing: Double = 0.5
+        spacing: Double = 0.5,
+        includeExtensions: Boolean = true
     ): List<Frame> {
         val count = bc.getSegmentCount().coerceAtLeast(1)
         val ts = FloatArray(count + 1) { i ->
             if (i == 0) 0f else if (i == count) 1f else bc.getSegmentT(i)
         }
         val coarse = ArrayList<Frame>(count + 3)
-        val ext0 = openEndExtension(level, bc, atFirst = true)
+        val ext0 = if (includeExtensions) openEndExtension(level, bc, atFirst = true) else 0f
         if (ext0 > 0.01f) {
             val first = frameAt(level, bc, 0f, r0, r1)
             coarse += Frame(0f, first.center.subtract(first.tangent.scale(ext0.toDouble())),
                 first.tangent, first.lateral, first.up, r0)
         }
         for (t in ts) coarse += frameAt(level, bc, t, r0, r1)
-        val ext1 = openEndExtension(level, bc, atFirst = false)
+        val ext1 = if (includeExtensions) openEndExtension(level, bc, atFirst = false) else 0f
         if (ext1 > 0.01f) {
             val last = frameAt(level, bc, 1f, r0, r1)
             coarse += Frame(1f, last.center.add(last.tangent.scale(ext1.toDouble())),
@@ -105,30 +121,7 @@ object SlideCurveGeometry {
         var tangent = CoasterBezierRailFrames.unitTangentAt(bc, t)
         if (tangent.lengthSqr() < 1.0E-12) tangent = Vec3(0.0, 1.0, 0.0)
         tangent = tangent.normalize()
-        var lat = CoasterBezierRailFrames.lateralAt(bc, t, tangent, level)
-        var up = tangent.cross(lat)
-        val valid = lat.lengthSqr() > 1.0E-12 &&
-            up.lengthSqr() > 1.0E-12 &&
-            !lat.x.isNaN() && !lat.y.isNaN() && !lat.z.isNaN() &&
-            !up.x.isNaN() && !up.y.isNaN() && !up.z.isNaN()
-        if (!valid) {
-            var fallbackUp = Vec3(0.0, 1.0, 0.0)
-            if (abs(tangent.y) > 0.999) fallbackUp = Vec3(1.0, 0.0, 0.0)
-            fallbackUp = fallbackUp.subtract(tangent.scale(fallbackUp.dot(tangent)))
-            if (fallbackUp.lengthSqr() < 1.0E-12) {
-                fallbackUp = Vec3(0.0, 0.0, 1.0).subtract(tangent.scale(tangent.z))
-            }
-            fallbackUp = fallbackUp.normalize()
-            lat = fallbackUp.cross(tangent)
-            if (lat.lengthSqr() < 1.0E-12) {
-                lat = Vec3(0.0, 0.0, 1.0).cross(tangent)
-            }
-            lat = lat.normalize()
-            up = tangent.cross(lat).normalize()
-        } else {
-            lat = lat.normalize()
-            up = up.normalize()
-        }
+        val (lat, up) = stableFrame(tangent)
         return Frame(t, center, tangent, lat, up, Mth.lerp(t, r0, r1))
     }
 

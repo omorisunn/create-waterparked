@@ -56,10 +56,25 @@ object ModPayloads {
             SlideSyncPayload.STREAM_CODEC,
             SlideSyncPayload::handleOnClient
         )
+        registrar.playToClient(
+            WaterslideWaterSyncPayload.TYPE,
+            WaterslideWaterSyncPayload.STREAM_CODEC,
+            WaterslideWaterSyncPayload::handleOnClient
+        )
         registrar.playToServer(
             SlideCancelPayload.TYPE,
             SlideCancelPayload.STREAM_CODEC,
             SlideCancelPayload::handleOnServer
+        )
+        registrar.playToServer(
+            WaterslideDebugRequestPayload.TYPE,
+            WaterslideDebugRequestPayload.STREAM_CODEC,
+            WaterslideDebugRequestPayload::handleOnServer
+        )
+        registrar.playToClient(
+            WaterslideDebugTrajectoryPayload.TYPE,
+            WaterslideDebugTrajectoryPayload.STREAM_CODEC,
+            WaterslideDebugTrajectoryPayload::handleOnClient
         )
     }
 }

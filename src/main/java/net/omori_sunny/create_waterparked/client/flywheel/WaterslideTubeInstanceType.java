@@ -30,8 +30,17 @@ public final class WaterslideTubeInstanceType {
                     .vector("currLateral", FloatRepr.FLOAT, 3)
                     .scalar("prevRadius", FloatRepr.FLOAT)
                     .scalar("currRadius", FloatRepr.FLOAT)
-                    .scalar("waterFlow", FloatRepr.FLOAT)
-                    .scalar("waterVBase", FloatRepr.FLOAT)
+                    .scalar("wallThickness", FloatRepr.FLOAT)
+                    .scalar("flowStart", FloatRepr.FLOAT)
+                    .scalar("flowEnd", FloatRepr.FLOAT)
+                    .scalar("phaseStart", FloatRepr.FLOAT)
+                    .scalar("phaseEnd", FloatRepr.FLOAT)
+                    .scalar("arcBase", FloatRepr.FLOAT)
+                    .scalar("flowSign", FloatRepr.FLOAT)
+                    .scalar("mirror", FloatRepr.FLOAT)
+                    .scalar("flowUpstream", FloatRepr.FLOAT)
+                    .scalar("phaseUpstream", FloatRepr.FLOAT)
+                    .scalar("downstreamMix", FloatRepr.FLOAT)
                     .build()
             )
             .writer((ptr, instance) -> {
@@ -49,8 +58,17 @@ public final class WaterslideTubeInstanceType {
                 ExtraMemoryOps.putVector3f(ptr + 72L, instance.currLateral);
                 MemoryUtil.memPutFloat(ptr + 84L, instance.prevRadius);
                 MemoryUtil.memPutFloat(ptr + 88L, instance.currRadius);
-                MemoryUtil.memPutFloat(ptr + 92L, instance.waterFlow);
-                MemoryUtil.memPutFloat(ptr + 96L, instance.waterVBase);
+                MemoryUtil.memPutFloat(ptr + 92L, instance.wallThickness);
+                MemoryUtil.memPutFloat(ptr + 96L, instance.flowStart);
+                MemoryUtil.memPutFloat(ptr + 100L, instance.flowEnd);
+                MemoryUtil.memPutFloat(ptr + 104L, instance.phaseStart);
+                MemoryUtil.memPutFloat(ptr + 108L, instance.phaseEnd);
+                MemoryUtil.memPutFloat(ptr + 112L, instance.arcBase);
+                MemoryUtil.memPutFloat(ptr + 116L, instance.flowSign);
+                MemoryUtil.memPutFloat(ptr + 120L, instance.mirror);
+                MemoryUtil.memPutFloat(ptr + 124L, instance.flowUpstream);
+                MemoryUtil.memPutFloat(ptr + 128L, instance.phaseUpstream);
+                MemoryUtil.memPutFloat(ptr + 132L, instance.downstreamMix);
             })
             .vertexShader(VERTEX_SHADER)
             .cullShader(CULL_SHADER)

@@ -10,9 +10,12 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPreview
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
+import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
+import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
 import net.omori_sunny.create_waterparked.content.sit.SlideSitEntity
+import net.omori_sunny.create_waterparked.network.WaterslideDebugRequestPayload
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.entity.EntityRenderer
 import net.minecraft.resources.ResourceLocation
@@ -28,6 +31,7 @@ import net.neoforged.neoforge.client.gui.ConfigurationScreen
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory
 import net.neoforged.neoforge.common.NeoForge
 import net.neoforged.neoforge.event.level.LevelEvent
+import net.neoforged.neoforge.network.PacketDistributor
 import thedarkcolour.kotlinforforge.neoforge.forge.MOD_BUS
 
 // client init
@@ -94,14 +98,26 @@ object CreateWaterparkedClient {
         }
     }
 
+    private var lastDebugState: Boolean? = null
+
     private fun onClientTick(event: ClientTickEvent.Post) {
         WaterslideTubeVisual.tickVisibility()
+        WaterSlideSoundManager.tick()
+        val mc = Minecraft.getInstance()
+        val debug = ModClientConfig.waterSimDebug()
+        if (mc.connection != null && lastDebugState != debug) {
+            lastDebugState = debug
+            PacketDistributor.sendToServer(WaterslideDebugRequestPayload(debug))
+            if (!debug) WaterFlowSimulation.clearDebugTrajectories()
+        }
     }
 
     private fun onClientLevelUnload(event: LevelEvent.Unload) {
         if (event.level.isClientSide) {
             WaterslideCurveRenderer.clearClientAnchors()
             SlideSableOrientation.clearAll()
+            WaterFlowSimulation.clear()
+            WaterSlideSoundManager.stopAll()
         }
     }
 }

@@ -1,27 +1,53 @@
 // Unit circle cross-section, z = length (0..0.5).
 // Per-vertex packed data: texCoord, color (sector/tex/border), overlay/light (sprite rect).
-// 9-slice UV is rebuilt from per-instance radius/chord.
+// UV is passed as unwrapped physical pixels; the fragment shader tiles them.
 
-const float WALL_THICKNESS = 0.1;
-const float WATER_DEPTH = 0.12;
-const float WATER_BAND_RADIANS = 2.094395102;
+out vec4 flw_tubeSprite;
+out vec3 flw_tubeTex;
+out vec4 flw_tubeFlags;
+out vec2 flw_tubeExtra;
+
+const float BASE_WALL = 0.1;
+// keep in sync with WaterFlowSimulation.WATER_V_CYCLES_PER_BLOCK
+const float WATER_V_CYCLES_PER_BLOCK = 1.0;
+
+// arc length from 0 to v along the segment bezier
+float arcLenTo(float v, vec3 c0, vec3 c1, vec3 c2, vec3 c3) {
+    float sum = 0.0;
+    for (int i = 0; i < 8; i++) {
+        float t0 = v * float(i) / 8.0;
+        float t1 = v * float(i + 1) / 8.0;
+        float m0 = 1.0 - t0;
+        float m1 = 1.0 - t1;
+        vec3 d0 = 3.0 * m0 * m0 * (c1 - c0) + 6.0 * m0 * t0 * (c2 - c1) + 3.0 * t0 * t0 * (c3 - c2);
+        vec3 d1 = 3.0 * m1 * m1 * (c1 - c0) + 6.0 * m1 * t1 * (c2 - c1) + 3.0 * t1 * t1 * (c3 - c2);
+        sum += (length(d0) + length(d1)) * 0.5 * (t1 - t0);
+    }
+    return sum;
+}
 
 void flw_instanceVertex(in FlwInstance i) {
     vec3 lp = flw_vertexPos.xyz;
     vec3 ln = flw_vertexNormal;
+    if (i.mirror < 0.0) {
+        lp.x = -lp.x;
+        ln.x = -ln.x;
+    }
 
     vec2 rawLight = flw_vertexLight * 256.0;
     float spriteV0 = rawLight.x / 65535.0;
     float spriteV1 = rawLight.y / 65535.0;
     ivec2 ov = flw_vertexOverlay;
     float spriteU0 = float(ov.x) / 32767.0;
-    float spriteU1 = float(ov.y) / 32767.0;
+    float spriteU1 = float(ov.y & 0x7FFF) / 32767.0;
+    bool isSideWall = ov.y < 0;
     float sectorRadians = flw_vertexColor.r * 6.28318530718;
     float texW = max(flw_vertexColor.g * 64.0, 1.0);
     float texH = max(flw_vertexColor.b * 64.0, 1.0);
-    float border = flw_vertexColor.a * 16.0;
     float isWater = flw_vertexColor.g < 0.1 ? 1.0 : 0.0;
-    float waterType = round(flw_vertexColor.g * 64.0);
+    float borderPx = flw_vertexColor.a * 16.0;
+    flw_tubeSprite = vec4(spriteU0, spriteU1, spriteV0, spriteV1);
+    flw_tubeTex = vec3(texW, texH, borderPx);
 
     float t = clamp(lp.z * 2.0, 0.0, 1.0);
 
@@ -62,16 +88,22 @@ void flw_instanceVertex(in FlwInstance i) {
 
     float radius = max(mix(i.prevRadius, i.currRadius, t), 0.001);
     float isCap = abs(ln.z) > 0.5 ? 1.0 : 0.0;
+    flw_tubeFlags = vec4(isWater, 0.0, isCap, 0.0);
     vec3 worldPos;
     if (isWater > 0.5) {
-        float rIn = max(radius - WALL_THICKNESS, 0.001);
-        float rSurf = max(rIn - WATER_DEPTH, 0.001);
-        float radial = waterType > 1.5 ? mix(rIn, rSurf, flw_vertexTexCoord.x)
-            : (waterType > 0.5 ? rSurf : rIn);
-        worldPos = spine + lp.x * lateral * radial + lp.y * faceUp * radial;
+        // water envelope vertices carry their own cross-section coordinates
+        worldPos = spine + lp.x * lateral * radius + lp.y * faceUp * radius;
     } else {
-        float inner = dot(lp.xy, ln.xy) < 0.0 ? 1.0 : 0.0;
-        float radial = max(radius - WALL_THICKNESS * inner, 0.001);
+        float radial;
+        if (isSideWall) {
+            radial = mix(radius + (i.wallThickness - BASE_WALL), radius - BASE_WALL, flw_vertexTexCoord.x);
+        } else {
+            float inner = length(lp.xy) < 0.95 ? 1.0
+                : (dot(lp.xy, ln.xy) < 0.0 ? 1.0 : 0.0);
+            radial = inner > 0.5
+                ? max(radius - BASE_WALL, 0.001)
+                : max(radius + (i.wallThickness - BASE_WALL), 0.001);
+        }
         worldPos = spine + lp.x * lateral * radial + lp.y * faceUp * radial;
     }
     flw_vertexPos = vec4(worldPos, 1.0);
@@ -88,42 +120,32 @@ void flw_instanceVertex(in FlwInstance i) {
     flw_vertexLight = vec2(i.light) / 256.0;
 
     if (isWater > 0.5) {
-        float flowSign = chord.y < 0.0 ? 1.0 : -1.0;
         float uf = flw_vertexTexCoord.x;
         float vf = flw_vertexTexCoord.y;
-        // U stays within one 16px tile across the band
-        float uTex = uf;
-        float vTex = i.waterVBase + vf * chordLen + i.waterFlow * flowSign;
-        flw_vertexTexCoord = vec2(
-            spriteU0 + uTex * (spriteU1 - spriteU0),
-            spriteV0 + mod(vTex, 1.0) * (spriteV1 - spriteV0)
-        );
+        // one texture tile per block along the flow
+        float phase = mix(i.phaseStart, i.phaseEnd, t);
+        float base = (i.arcBase + arcLenTo(vf, c0, c1, c2, c3)) * WATER_V_CYCLES_PER_BLOCK;
+        float vDown = base + phase * i.flowSign;
+        flw_vertexTexCoord = vec2(uf, vDown);
+        flw_tubeExtra = vec2(vDown, i.downstreamMix);
     } else {
-        // 9-slice mapping in sprite pixel space, then into the block atlas.
-        float targetW = max(sectorRadians * radius * 16.0, 1.0);
-        float targetH = max(mix(chordLen, 0.1, isCap) * 16.0, 1.0);
+        // tile the whole material, center and border repeat
+        float targetW;
+        if (isSideWall) {
+            targetW = max(i.wallThickness * 16.0, 1.0);
+        } else {
+            float inner = length(lp.xy) < 0.95 ? 1.0
+                : (dot(lp.xy, ln.xy) < 0.0 ? 1.0 : 0.0);
+            float texRadius = inner > 0.5
+                ? radius - BASE_WALL
+                : radius + (i.wallThickness - BASE_WALL);
+            targetW = max(sectorRadians * texRadius * 16.0, 1.0);
+        }
         float px = flw_vertexTexCoord.x * targetW;
-        float py = flw_vertexTexCoord.y * targetH;
-        float cx = max(texW - 2.0 * border, 1.0);
-        float cy = max(texH - 2.0 * border, 1.0);
-        float right = max(targetW - border, border);
-        float top = max(targetH - border, border);
-        float uf;
-        if (px < border) {
-            uf = px / texW;
-        } else if (px >= right) {
-            uf = (texW - (targetW - px)) / texW;
-        } else {
-            uf = (border + mod(px - border, cx)) / texW;
-        }
-        float vf;
-        if (py < border) {
-            vf = py / texH;
-        } else if (py >= top) {
-            vf = (texH - (targetH - py)) / texH;
-        } else {
-            vf = (border + mod(py - border, cy)) / texH;
-        }
-        flw_vertexTexCoord = vec2(spriteU0 + uf * (spriteU1 - spriteU0), spriteV0 + vf * (spriteV1 - spriteV0));
+        // undistorted V: real arc length along the curve, caps use wall thickness
+        float py = isCap > 0.5
+            ? flw_vertexTexCoord.y * i.wallThickness * 16.0
+            : arcLenTo(flw_vertexTexCoord.y, c0, c1, c2, c3) * 16.0;
+        flw_vertexTexCoord = vec2(px, py);
     }
 }

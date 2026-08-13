@@ -34,13 +34,13 @@ object SlideSableOrientation {
     }
 
     @JvmStatic
-    fun get(entity: Entity, partialTicks: Float): Quaterniondc? {
-        if (entityId != entity.uuid) return null
+    fun get(entity: Entity?, partialTicks: Float): Quaterniondc? {
+        if (entity == null || entityId != entity.uuid) return null
         return Quaterniond().rotationAxis(
             Math.toRadians(roll.toDouble()), axis.x, axis.y, axis.z
         )
     }
 
     @JvmStatic
-    fun has(entity: Entity): Boolean = entityId == entity.uuid
+    fun has(entity: Entity?): Boolean = entity != null && entityId == entity.uuid
 }

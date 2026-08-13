@@ -17,6 +17,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLay
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.game.SlideAnchorIndex
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation
 import net.omori_sunny.create_waterparked.game.water.SlideWaterManager
 import net.omori_sunny.create_waterparked.network.SlideEndPayload
 import net.omori_sunny.create_waterparked.network.SlidePackets
@@ -24,12 +25,15 @@ import net.omori_sunny.create_waterparked.network.SlideSampleWire
 import net.omori_sunny.create_waterparked.network.SlideSyncPayload
 import net.omori_sunny.create_waterparked.network.SlideTrajectoryPayload
 import net.minecraft.core.BlockPos
+import net.minecraft.resources.ResourceKey
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
+import net.minecraft.util.Mth
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.EntityDimensions
 import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.entity.Pose
+import net.minecraft.world.level.Level
 import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
 import net.neoforged.neoforge.event.entity.player.PlayerEvent
@@ -37,7 +41,6 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent
 import org.joml.Vector3d
 import java.util.UUID
 import kotlin.math.atan2
-import kotlin.math.max
 import kotlin.math.sqrt
 
 // Server-side slide sessions.
@@ -74,8 +77,15 @@ object PlayerSlideController {
 
     private data class SegmentHit(val entry: SlideEntry, val distSq: Double)
 
+    private data class CurveFrames(
+        val sig: String,
+        val frames: List<SlideCurveGeometry.Frame>,
+        val bounds: AABB
+    )
+
     private val sessions = mutableMapOf<UUID, Session>()
     private val lastPos = mutableMapOf<UUID, Vec3>()
+    private val curveFramesCache = HashMap<Pair<Long, Long>, CurveFrames>()
     private val entryCooldown = mutableMapOf<UUID, Long>()
     private var nextSessionId = 1L
 
@@ -94,6 +104,7 @@ object PlayerSlideController {
                 if (be != null) SlideWaterManager.tickServer(level, be)
                 else SlideAnchorIndex.unregister(level, anchorPos)
             }
+            ServerWaterSimulation.tickServer(level)
             for (session in sessions.values.toList()) {
                 if (session.entity.level() != level) continue
                 tickSession(level, session)
@@ -105,7 +116,7 @@ object PlayerSlideController {
                 if (entity is SlideSitEntity) continue
                 val prev = lastPos.put(entity.uuid, entity.position())
                 if (!sessions.containsKey(entity.uuid) && prev != null) {
-                    tryStartSlide(level, entity, prev)
+                    tryStartSlide(level, entity)
                 }
             }
         }
@@ -116,6 +127,14 @@ object PlayerSlideController {
         sessions.remove(event.entity.uuid)?.sit?.discard()
         lastPos.remove(event.entity.uuid)
         entryCooldown.remove(event.entity.uuid)
+    }
+
+    @JvmStatic
+    fun onPlayerLoggedIn(event: PlayerEvent.PlayerLoggedInEvent) {
+        // resync the water field for late joiners
+        val level = event.entity.level()
+        ServerWaterSimulation.resync(level)
+        if (level is ServerLevel) ServerWaterSimulation.resendTo(level)
     }
 
     @JvmStatic
@@ -162,7 +181,7 @@ object PlayerSlideController {
         ))
     }
 
-    private fun tryStartSlide(level: ServerLevel, entity: Entity, prevPos: Vec3) {
+    private fun tryStartSlide(level: ServerLevel, entity: Entity) {
         val player = entity as? ServerPlayer
         if (player != null && player.isShiftKeyDown) return
         val cd = entryCooldown[entity.uuid]
@@ -178,15 +197,25 @@ object PlayerSlideController {
             entity.refreshDimensions()
         }
 
+        // keep the standing body height when switching to the sitting pose
+        if (!swimming && entity is LivingEntity) {
+            val lift = (entity.getDimensions(Pose.STANDING).height -
+                entity.getDimensions(Pose.SITTING).height).coerceAtLeast(0f)
+            if (lift > 0.001f) {
+                entity.setPos(entity.position().add(0.0, lift.toDouble(), 0.0))
+            }
+        }
+
         val dims = entityDimensions(entity)
-        val moved = entity.position().subtract(prevPos)
-        val velWorld = if (moved.lengthSqr() <= 2.25) moved.scale(20.0)
-        else entity.deltaMovement.scale(20.0)
+        // real per-tick velocity, blocks/tick -> blocks/sec
+        val velWorld = entity.deltaMovement.scale(20.0)
         val entryTanWorld = entryTangentWorld(level, entry)
         val along = velWorld.dot(entryTanWorld)
         if (along < -0.5) return
-        val axial = entryTanWorld.scale(along.coerceAtLeast(0.0))
-        var startVelWorld = axial.add(entryTanWorld.scale(ModConfig.entranceBoost() * 20.0))
+        // keep only the tangential component plus the configured entrance boost;
+        // dropping the radial part avoids an instant speed burst on entry
+        var startVelWorld = entryTanWorld.scale(along.coerceAtLeast(0.0))
+            .add(entryTanWorld.scale(ModConfig.entranceBoost() * 20.0))
         val maxSpeed = ModConfig.slideMaxEntrySpeed()
         if (startVelWorld.lengthSqr() > maxSpeed * maxSpeed) {
             startVelWorld = startVelWorld.normalize().scale(maxSpeed)
@@ -266,6 +295,7 @@ object PlayerSlideController {
         requireSolid: Boolean = true
     ): SlideEntry? {
         val p = entity.position()
+        val margin = entityDimensions(entity).width / 2.0
         var best: SegmentHit? = null
         for (anchorPos in SlideAnchorIndex.all(level).toList()) {
             val be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
@@ -276,22 +306,109 @@ object PlayerSlideController {
             for (raw in be.anchorPeerCurvesView.values) {
                 val bc = if (raw.isPrimary) raw else raw.secondary()
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
-                if (!bc.getBounds().inflate(2.0).contains(p)) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
                 val r1 = SlideCurveGeometry.radiusAt(level, b)
-                val frames = SlideCurveGeometry.sampleFrames(level, bc, r0, r1)
-                if (frames.size < 2) continue
+                val cf = curveFrames(level, bc, r0, r1) ?: continue
+                if (!cf.bounds.contains(p)) continue
                 val config = SlideCurveGeometry.sectorConfig(level, a, b)
                     ?: WaterslideSectorConfig.defaultConfig()
-                for (i in 0 until frames.size - 1) {
-                    val hit = testSegment(p, bc, frames[i], frames[i + 1], config, requireSolid) ?: continue
+                for (i in 0 until cf.frames.size - 1) {
+                    val hit = testSegment(
+                        p, bc, cf.frames[i], cf.frames[i + 1], config, requireSolid, margin
+                    ) ?: continue
                     if (best == null || hit.distSq < best.distSq) best = hit
                 }
             }
         }
         return best?.entry
+    }
+
+    // Snap a free-fall contact point into the nearest tube interior.
+    private fun projectIntoTube(level: ServerLevel, entity: Entity): Vec3? {
+        val p = entity.position()
+        val margin = entityDimensions(entity).width / 2.0
+        var bestPos: Vec3? = null
+        var bestDist = Double.MAX_VALUE
+        for (anchorPos in SlideAnchorIndex.all(level).toList()) {
+            val be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
+                ?: continue
+            for (raw in be.anchorPeerCurvesView.values) {
+                val bc = if (raw.isPrimary) raw else raw.secondary()
+                if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
+                val a = bc.bePositions.getFirst()
+                val b = bc.bePositions.getSecond()
+                val cf = curveFrames(
+                    level, bc,
+                    SlideCurveGeometry.radiusAt(level, a),
+                    SlideCurveGeometry.radiusAt(level, b)
+                ) ?: continue
+                if (!cf.bounds.contains(p)) continue
+                for (i in 0 until cf.frames.size - 1) {
+                    val fa = cf.frames[i]
+                    val fb = cf.frames[i + 1]
+                    val ab = fb.center.subtract(fa.center)
+                    val lenSq = ab.lengthSqr()
+                    val f = if (lenSq < 1.0E-9) 0.0
+                    else ((p.subtract(fa.center)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
+                    val closest = fa.center.add(ab.scale(f))
+                    val radial = p.subtract(closest)
+                    val axisDist = radial.length()
+                    val radius = (fa.radius + (fb.radius - fa.radius) * f.toFloat()).toDouble()
+                    if (axisDist > radius + 0.25) continue
+                    val target = (radius - SLIDE_WALL_THICKNESS - margin).coerceAtLeast(0.05)
+                    val dir = if (axisDist < 1.0E-9) Vec3(0.0, 1.0, 0.0) else radial.normalize()
+                    val proj = closest.add(dir.scale(if (axisDist < target) axisDist else target))
+                    val d = p.distanceToSqr(closest)
+                    if (d < bestDist) {
+                        bestDist = d
+                        bestPos = proj
+                    }
+                }
+            }
+        }
+        return bestPos
+    }
+
+    // cached per-curve tube envelope; no max-radius guess
+    private fun curveFrames(
+        level: ServerLevel,
+        bc: BezierConnection,
+        r0: Float,
+        r1: Float
+    ): CurveFrames? {
+        val a = bc.bePositions.getFirst()
+        val b = bc.bePositions.getSecond()
+        val key = if (a.asLong() <= b.asLong()) a.asLong() to b.asLong()
+        else b.asLong() to a.asLong()
+        val h0 = bc.starts.getFirst()
+        val h1 = bc.starts.getSecond()
+        val sig = "$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()}"
+        curveFramesCache[key]?.let { if (it.sig == sig) return it }
+
+        // entry only inside the real tube, never on the open-end extension
+        val frames = SlideCurveGeometry.sampleFrames(level, bc, r0, r1, includeExtensions = false)
+        if (frames.size < 2) return null
+        var minX = Double.MAX_VALUE
+        var minY = Double.MAX_VALUE
+        var minZ = Double.MAX_VALUE
+        var maxX = -Double.MAX_VALUE
+        var maxY = -Double.MAX_VALUE
+        var maxZ = -Double.MAX_VALUE
+        for (f in frames) {
+            val r = f.radius.toDouble() + 1.0
+            minX = minOf(minX, f.center.x - r)
+            minY = minOf(minY, f.center.y - r)
+            minZ = minOf(minZ, f.center.z - r)
+            maxX = maxOf(maxX, f.center.x + r)
+            maxY = maxOf(maxY, f.center.y + r)
+            maxZ = maxOf(maxZ, f.center.z + r)
+        }
+        val cf = CurveFrames(sig, frames, AABB(minX, minY, minZ, maxX, maxY, maxZ))
+        if (curveFramesCache.size > 1024) curveFramesCache.clear()
+        curveFramesCache[key] = cf
+        return cf
     }
 
     private fun testSegment(
@@ -300,7 +417,8 @@ object PlayerSlideController {
         fa: SlideCurveGeometry.Frame,
         fb: SlideCurveGeometry.Frame,
         config: WaterslideSectorConfig,
-        requireSolid: Boolean
+        requireSolid: Boolean,
+        margin: Double
     ): SegmentHit? {
         val ab = fb.center.subtract(fa.center)
         val lenSq = ab.lengthSqr()
@@ -310,7 +428,7 @@ object PlayerSlideController {
         val radial = p.subtract(closest)
         val axisDist = radial.length()
         val radius = (fa.radius + (fb.radius - fa.radius) * f.toFloat()).toDouble()
-        if (axisDist > radius - 0.25) return null
+        if (axisDist > radius - SLIDE_WALL_THICKNESS - margin) return null
 
         val tan = fa.tangent.lerp(fb.tangent, f).normalize()
         val lat = fa.lateral.lerp(fb.lateral, f).normalize()
@@ -394,18 +512,24 @@ object PlayerSlideController {
         val worldVel = toWorldVel(level, session, at.sample.position, session.trajectory.exitVelocity)
         entity.setPos(worldPos)
         entity.setDeltaMovement(worldVel)
+        val proj = projectIntoTube(level, entity) ?: worldPos
+        entity.setPos(proj)
         val entry = findSlideEntry(level, entity, requireSolid = false)
         if (entry == null) {
             endSession(level, session, session.trajectory.endReason)
             return
         }
-        var startVelWorld = worldVel.scale(20.0)
+        val startPosWorld = entity.position()
+        // align the entry velocity with the tube so the rider does not bounce around
+        val entryTanWorld = entryTangentWorld(level, entry)
+        val along = worldVel.scale(20.0).dot(entryTanWorld)
+        var startVelWorld = entryTanWorld.scale(along.coerceAtLeast(0.0))
         val maxSpeed = ModConfig.slideMaxEntrySpeed()
         if (startVelWorld.lengthSqr() > maxSpeed * maxSpeed) {
             startVelWorld = startVelWorld.normalize().scale(maxSpeed)
         }
         val subLevel = Sable.HELPER.getContaining(level, entry.anchorPos) as? ServerSubLevel
-        val startPos = if (subLevel != null) toLocalPos(subLevel, entity.position()) else entity.position()
+        val startPos = if (subLevel != null) toLocalPos(subLevel, startPosWorld) else startPosWorld
         val startVel = if (subLevel != null) toLocalVel(subLevel, startVelWorld) else startVelWorld
         val dims = entityDimensions(entity)
         val newTrajectory = PhysicsSlideTrajectoryBuilder.build(
@@ -423,7 +547,7 @@ object PlayerSlideController {
         session.lastSyncTick = 0L
         CreateWaterparked.LOGGER.info(
             "Slide reenter {} pos {} vel {}",
-            session.id, worldPos, worldVel
+            session.id, startPosWorld, worldVel
         )
         if (player != null) {
             SlidePackets.sendTo(player, SlideTrajectoryPayload(
@@ -450,8 +574,8 @@ object PlayerSlideController {
         entity.setDeltaMovement(worldVel)
         restoreEntity(entity)
         sessions.remove(entity.uuid)
-        if (reason == SlideEndReason.EXITED) {
-            entryCooldown[entity.uuid] = level.gameTime + 10
+        if (reason == SlideEndReason.EXITED && session.trajectory.endIsOpenEnd) {
+            entryCooldown[entity.uuid] = level.gameTime + 1
         }
         if (player != null) {
             SlidePackets.sendTo(player, SlideEndPayload(
@@ -500,7 +624,12 @@ object PlayerSlideController {
         return JOMLConversion.toMojang(out).scale(1.0 / 20.0)
     }
 
+    private val boundsCache = mutableMapOf<ResourceKey<Level>, Pair<Int, AABB?>>()
+
     private fun slideBounds(level: ServerLevel): AABB? {
+        val key = boundsKey(level)
+        val cached = boundsCache[level.dimension()]
+        if (cached != null && cached.first == key) return cached.second
         var minX = Double.MAX_VALUE
         var minY = Double.MAX_VALUE
         var minZ = Double.MAX_VALUE
@@ -508,17 +637,18 @@ object PlayerSlideController {
         var maxY = -Double.MAX_VALUE
         var maxZ = -Double.MAX_VALUE
         var found = false
+        val seen = mutableSetOf<Pair<Long, Long>>()
         for (pos in SlideAnchorIndex.all(level)) {
-            found = true
-            minX = minOf(minX, pos.x - 8.0)
-            minY = minOf(minY, pos.y - 8.0)
-            minZ = minOf(minZ, pos.z - 8.0)
-            maxX = maxOf(maxX, pos.x + 8.0)
-            maxY = maxOf(maxY, pos.y + 8.0)
-            maxZ = maxOf(maxZ, pos.z + 8.0)
             val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
+            found = true
             for (raw in be.anchorPeerCurvesView.values) {
                 val bc = if (raw.isPrimary) raw else raw.secondary()
+                if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
+                val a = bc.bePositions.getFirst()
+                val b = bc.bePositions.getSecond()
+                val key = if (a.asLong() <= b.asLong()) a.asLong() to b.asLong()
+                else b.asLong() to a.asLong()
+                if (!seen.add(key)) continue
                 val bounds = bc.getBounds()
                 minX = minOf(minX, bounds.minX)
                 minY = minOf(minY, bounds.minY)
@@ -526,10 +656,45 @@ object PlayerSlideController {
                 maxX = maxOf(maxX, bounds.maxX)
                 maxY = maxOf(maxY, bounds.maxY)
                 maxZ = maxOf(maxZ, bounds.maxZ)
+                val r0 = SlideCurveGeometry.radiusAt(level, a)
+                val r1 = SlideCurveGeometry.radiusAt(level, b)
+                for (f in SlideCurveGeometry.sampleFrames(level, bc, r0, r1)) {
+                    val r = f.radius.toDouble() + 1.0
+                    minX = minOf(minX, f.center.x - r)
+                    minY = minOf(minY, f.center.y - r)
+                    minZ = minOf(minZ, f.center.z - r)
+                    maxX = maxOf(maxX, f.center.x + r)
+                    maxY = maxOf(maxY, f.center.y + r)
+                    maxZ = maxOf(maxZ, f.center.z + r)
+                }
             }
         }
-        if (!found) return null
-        return AABB(minX, minY, minZ, maxX, maxY, maxZ).inflate(24.0)
+        val result = if (found) AABB(minX, minY, minZ, maxX, maxY, maxZ) else null
+        boundsCache[level.dimension()] = key to result
+        return result
+    }
+
+    // structural fingerprint: only rebuild the box when the slide graph changes
+    private fun boundsKey(level: ServerLevel): Int {
+        var key = 0
+        for (pos in SlideAnchorIndex.all(level)) {
+            key = key * 31 + pos.hashCode()
+            val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
+            for (raw in be.anchorPeerCurvesView.values) {
+                val bc = if (raw.isPrimary) raw else raw.secondary()
+                if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
+                val a = bc.bePositions.getFirst()
+                val b = bc.bePositions.getSecond()
+                val bounds = bc.getBounds()
+                key = key * 31 + Mth.floor(bounds.minX) + Mth.floor(bounds.minY) * 7 +
+                    Mth.floor(bounds.minZ) * 13 + Mth.floor(bounds.maxX) * 17 +
+                    Mth.floor(bounds.maxY) * 23 + Mth.floor(bounds.maxZ) * 29
+                key = key * 31 + a.hashCode() + b.hashCode() * 37
+                key = key * 31 + (SlideCurveGeometry.radiusAt(level, a) * 4f).toInt() +
+                    (SlideCurveGeometry.radiusAt(level, b) * 4f).toInt() * 41
+            }
+        }
+        return key
     }
 
     private fun entityDimensions(entity: Entity): EntityDimensions =

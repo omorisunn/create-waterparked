@@ -12,11 +12,12 @@ import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode
 import dev.silvergold.simulatedcoasters.client.track.EndpointHandleTextures
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleTangentTextures
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
-import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlock
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
 import net.createmod.catnip.outliner.Outliner
 import net.omori_sunny.create_waterparked.CreateWaterparked
+import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
+import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial
 import net.omori_sunny.create_waterparked.content.waterslide.SectorType
@@ -80,6 +81,7 @@ object WaterslideSectorEdit {
     // Eased drag angle.
     private var currentDragAngle = 0f
     private var currentBoundaryAngle = 0f
+    private var lastChainRefreshAngle = -1f
     private var pendingBlockAnchor: BlockPos? = null
     private var lastTargetState = 0
     private var lastTargetPos: BlockPos? = null
@@ -101,7 +103,7 @@ object WaterslideSectorEdit {
         if (!event.level.isClientSide) {
 // block vanilla placement
             if (mainBlockId != null && !player.isShiftKeyDown &&
-                event.level.getBlockState(event.pos).block is CoasterAnchorpointBlock
+                event.level.getBlockState(event.pos).block is WaterslideAnchorBlock
             ) {
                 event.isCanceled = true
                 event.cancellationResult = InteractionResult.SUCCESS
@@ -162,7 +164,7 @@ object WaterslideSectorEdit {
 
         if (pending == null) {
             // First click selects the anchor.
-            if (level.getBlockState(pos).block !is CoasterAnchorpointBlock) {
+            if (level.getBlockState(pos).block !is WaterslideAnchorBlock) {
                 CreateWaterparked.LOGGER.debug(
                     "WaterslideSectorEdit: first click not an anchor at {} state={}",
                     pos, level.getBlockState(pos)
@@ -178,7 +180,7 @@ object WaterslideSectorEdit {
         }
 
         // Second click targets the other anchor.
-        if (level.getBlockState(pos).block is CoasterAnchorpointBlock) {
+        if (level.getBlockState(pos).block is WaterslideAnchorBlock) {
             if (pos == pending) {
                 clearPending(level)
                 event.isCanceled = true
@@ -390,7 +392,7 @@ object WaterslideSectorEdit {
             return
         }
         val be = level.getBlockEntity(pending)
-        if (be !is CoasterAnchorpointBlockEntity || be.isRemoved) {
+        if (be !is WaterslideAnchorBlockEntity || be.isRemoved) {
             CreateWaterparked.LOGGER.debug(
                 "WaterslideSectorEdit: pending cleared, BE at {} is {}",
                 pending, be
@@ -410,7 +412,7 @@ object WaterslideSectorEdit {
         val target = (mc.hitResult as? BlockHitResult)?.blockPos
         val valid = target != null &&
             target != pending &&
-            level.getBlockState(target).block is CoasterAnchorpointBlock &&
+            level.getBlockState(target).block is WaterslideAnchorBlock &&
             findCurveByAnchors(level, pending, target) != null &&
             (configForCurve(level, curveKey(pending, target))?.sectors?.size ?: 0) < ModConfig.maxSectors()
         val state = when {
@@ -701,6 +703,7 @@ object WaterslideSectorEdit {
                 dragSectorId = pick.sectorId
                 currentDragAngle = p?.centerAngle ?: 0f
             }
+            lastChainRefreshAngle = -1f
         }
     }
 

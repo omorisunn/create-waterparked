@@ -2,25 +2,30 @@ package net.omori_sunny.create_waterparked.client.flywheel
 
 import com.simibubi.create.content.trains.track.BezierConnection
 import dev.engine_room.flywheel.api.material.Material
+import dev.engine_room.flywheel.api.material.MaterialShaders
 import dev.engine_room.flywheel.api.material.Transparency
 import dev.engine_room.flywheel.api.material.WriteMask
 import dev.engine_room.flywheel.api.model.Model
 import dev.engine_room.flywheel.api.model.Mesh
 import dev.engine_room.flywheel.lib.material.Materials
 import dev.engine_room.flywheel.lib.material.SimpleMaterial
+import dev.engine_room.flywheel.lib.material.SimpleMaterialShaders
 import dev.engine_room.flywheel.lib.memory.MemoryBlock
 import dev.engine_room.flywheel.lib.model.SimpleQuadMesh
 import dev.engine_room.flywheel.lib.model.SingleMeshModel
+import dev.engine_room.flywheel.lib.util.ResourceUtil
 import dev.engine_room.flywheel.lib.vertex.FullVertexView
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
 import dev.silvergold.simulatedcoasters.track.CoasterOpenEndExtension
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
 import net.omori_sunny.create_waterparked.CreateWaterparked
+import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.waterslide.PlacedSector
 import net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
+import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.texture.TextureAtlas
 import net.minecraft.client.renderer.texture.TextureAtlasSprite
@@ -35,24 +40,59 @@ import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 // shared unit-circle mesh
 object WaterslideTubeMesh {
 
-    private const val WALL_THICKNESS = 0.1f
-    private const val TILE_SUBDIVISION_PX = 8f
-    private const val PIXELS_PER_BLOCK = 16f
-    private const val WATER_DEPTH = 0.12f
-    private const val WATER_BAND_START = 210f
-    private const val WATER_BAND_END = 330f
+    private const val LENGTH_SUBDIVISIONS = 4
+    private const val MAX_FRAME_BLOCKS = 0.5f
 
     private val modelCache = HashMap<String, TubeModels>()
+    private val waterModelCache = HashMap<String, Model>()
+
+// per-fragment UV reconstruction
+    private val TUBE_SHADERS: MaterialShaders = SimpleMaterialShaders(
+        ResourceUtil.rl("material/default.vert"),
+        ResourceLocation.fromNamespaceAndPath("create_waterparked", "material/waterslide_tube.frag")
+    )
+
+// wall is double-sided for mirrored junctions and side walls
+    private val TUBE_CUTOUT_MATERIAL: Material =
+        SimpleMaterial.builderOf(Materials.CUTOUT_MIPPED_BLOCK)
+            .shaders(TUBE_SHADERS)
+            .backfaceCulling(false)
+            .build()
+
+    private val TUBE_CAP_CUTOUT_MATERIAL: Material =
+        SimpleMaterial.builderOf(Materials.CUTOUT_MIPPED_BLOCK)
+            .shaders(TUBE_SHADERS)
+            .build()
 
     private val TUBE_TRANSLUCENT_MATERIAL: Material =
         SimpleMaterial.builder()
             .transparency(Transparency.TRANSLUCENT)
+            .shaders(TUBE_SHADERS)
+            .backfaceCulling(false)
+            .writeMask(WriteMask.COLOR)
+            .build()
+
+// water is single-sided; cull backfaces between instances
+    val WATER_TRANSLUCENT_MATERIAL: Material =
+        SimpleMaterial.builder()
+            .transparency(Transparency.TRANSLUCENT)
+            .shaders(TUBE_SHADERS)
             .backfaceCulling(true)
+            .writeMask(WriteMask.COLOR)
+            .build()
+
+// thrown water is visible from both sides
+    val STREAM_TRANSLUCENT_MATERIAL: Material =
+        SimpleMaterial.builder()
+            .transparency(Transparency.TRANSLUCENT)
+            .shaders(TUBE_SHADERS)
+            .backfaceCulling(false)
             .writeMask(WriteMask.COLOR)
             .build()
 
@@ -60,6 +100,7 @@ object WaterslideTubeMesh {
     private val RING_TRANSLUCENT_MATERIAL: Material =
         SimpleMaterial.builder()
             .transparency(Transparency.TRANSLUCENT)
+            .shaders(TUBE_SHADERS)
             .backfaceCulling(false)
             .writeMask(WriteMask.COLOR)
             .build()
@@ -80,8 +121,7 @@ object WaterslideTubeMesh {
         val wallTranslucent: Model,
         val startCapTranslucent: Model,
         val endCapTranslucent: Model,
-        val ringTranslucent: Model,
-        val water: Model
+        val ringTranslucent: Model
     )
 
     data class TubeSegmentFrame(
@@ -97,9 +137,53 @@ object WaterslideTubeMesh {
 
 // model cache
     @JvmStatic
-    fun modelsFor(level: Level, config: WaterslideSectorConfig, maxRadius: Float): TubeModels {
-        val key = signature(config, maxRadius)
-        return modelCache.getOrPut(key) { build(level, config, maxRadius) }
+    fun modelsFor(level: Level, config: WaterslideSectorConfig): TubeModels {
+        val key = signature(config)
+        return modelCache.getOrPut(key) { build(level, config) }
+    }
+
+    @JvmStatic
+    fun clearModels() {
+        modelCache.clear()
+        waterModelCache.clear()
+    }
+
+    @JvmStatic
+    fun crossSections(): Int =
+        max(2, (16 * ModClientConfig.polygonScale()).roundToInt())
+
+    // arc length of the cubic the vertex shader reconstructs
+    @JvmStatic
+    fun arcLength(frame: TubeSegmentFrame): Float {
+        return bezierArcLength(
+            frame.prevSpine, frame.currSpine,
+            frame.prevTangent, frame.currTangent
+        )
+    }
+
+    @JvmStatic
+    fun bezierArcLength(c0: Vec3, c1: Vec3, t0: Vec3, t1: Vec3): Float {
+        val chord = c1.subtract(c0)
+        val h = chord.length() / 3.0
+        val p0 = c0
+        val p1 = c0.add(t0.scale(h))
+        val p2 = c1.subtract(t1.scale(h))
+        val p3 = c1
+        var sum = 0.0
+        for (i in 0 until 8) {
+            val a = i / 8.0
+            val b = (i + 1) / 8.0
+            sum += (bezierSpeed(p0, p1, p2, p3, a) + bezierSpeed(p0, p1, p2, p3, b)) * 0.5 * (b - a)
+        }
+        return sum.toFloat()
+    }
+
+    private fun bezierSpeed(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: Double): Double {
+        val omt = 1.0 - t
+        return p1.subtract(p0).scale(3.0 * omt * omt)
+            .add(p2.subtract(p1).scale(6.0 * omt * t))
+            .add(p3.subtract(p2).scale(3.0 * t * t))
+            .length()
     }
 
 // frames (with extensions)
@@ -130,30 +214,7 @@ object WaterslideTubeMesh {
             }
             tangent = tangent.normalize()
 
-            var lat = CoasterBezierRailFrames.lateralAt(bc, ts[i], tangent, level)
-            var up = tangent.cross(lat)
-            val valid = lat.lengthSqr() > 1.0E-12 &&
-                up.lengthSqr() > 1.0E-12 &&
-                !lat.x.isNaN() && !lat.y.isNaN() && !lat.z.isNaN() &&
-                !up.x.isNaN() && !up.y.isNaN() && !up.z.isNaN()
-            if (!valid) {
-                var fallbackUp = Vec3(0.0, 1.0, 0.0)
-                if (abs(tangent.y) > 0.999) fallbackUp = Vec3(1.0, 0.0, 0.0)
-                fallbackUp = fallbackUp.subtract(tangent.scale(fallbackUp.dot(tangent)))
-                if (fallbackUp.lengthSqr() < 1.0E-12) {
-                    fallbackUp = Vec3(0.0, 0.0, 1.0).subtract(tangent.scale(tangent.z))
-                }
-                fallbackUp = fallbackUp.normalize()
-                lat = fallbackUp.cross(tangent)
-                if (lat.lengthSqr() < 1.0E-12) {
-                    lat = Vec3(0.0, 0.0, 1.0).cross(tangent)
-                }
-                lat = lat.normalize()
-                up = tangent.cross(lat).normalize()
-            } else {
-                lat = lat.normalize()
-                up = up.normalize()
-            }
+            var (lat, up) = SlideCurveGeometry.stableFrame(tangent)
             if (prevLat != null && lat.dot(prevLat) < 0.0) {
                 lat = lat.scale(-1.0)
                 up = up.scale(-1.0)
@@ -169,11 +230,16 @@ object WaterslideTubeMesh {
         val frames = ArrayList<TubeSegmentFrame>()
         if (ext0 > 0.01f) {
             val tan = tangents[0]!!
-            frames += TubeSegmentFrame(
-                centers[0].subtract(tan.scale(ext0.toDouble())).subtract(origin),
-                centers[0].subtract(origin),
-                tan, tan, lats[0]!!, lats[0]!!, r0, r0
-            )
+            val steps = max(1, ceil((ext0 / MAX_FRAME_BLOCKS).toDouble()).toInt())
+            for (i in 0 until steps) {
+                val f0 = i.toFloat() / steps
+                val f1 = (i + 1).toFloat() / steps
+                frames += TubeSegmentFrame(
+                    centers[0].subtract(tan.scale((ext0 * (1 - f0)).toDouble())).subtract(origin),
+                    centers[0].subtract(tan.scale((ext0 * (1 - f1)).toDouble())).subtract(origin),
+                    tan, tan, lats[0]!!, lats[0]!!, r0, r0
+                )
+            }
         }
         for (i in 0 until count) {
             frames += TubeSegmentFrame(
@@ -186,11 +252,16 @@ object WaterslideTubeMesh {
         }
         if (ext1 > 0.01f) {
             val tan = tangents[count]!!
-            frames += TubeSegmentFrame(
-                centers[count].subtract(origin),
-                centers[count].add(tan.scale(ext1.toDouble())).subtract(origin),
-                tan, tan, lats[count]!!, lats[count]!!, r1, r1
-            )
+            val steps = max(1, ceil((ext1 / MAX_FRAME_BLOCKS).toDouble()).toInt())
+            for (i in 0 until steps) {
+                val f0 = i.toFloat() / steps
+                val f1 = (i + 1).toFloat() / steps
+                frames += TubeSegmentFrame(
+                    centers[count].add(tan.scale((ext1 * f0).toDouble())).subtract(origin),
+                    centers[count].add(tan.scale((ext1 * f1).toDouble())).subtract(origin),
+                    tan, tan, lats[count]!!, lats[count]!!, r1, r1
+                )
+            }
         }
         return frames
     }
@@ -202,9 +273,9 @@ object WaterslideTubeMesh {
         return CoasterOpenEndExtension.extensionBlocks(level, anchor)
     }
 
-    private fun signature(config: WaterslideSectorConfig, maxRadius: Float): String =
+    private fun signature(config: WaterslideSectorConfig): String =
         buildString {
-            append(maxRadius)
+            append(ModClientConfig.polygonScale())
             append('|').append(config.startAngle)
             for (s in config.sectors) {
                 append('|').append(s.id)
@@ -215,23 +286,16 @@ object WaterslideTubeMesh {
             }
         }
 
-    private fun build(level: Level, config: WaterslideSectorConfig, maxRadius: Float): TubeModels {
+    private fun build(level: Level, config: WaterslideSectorConfig): TubeModels {
         val placed = WaterslideSectorLayout.place(config)
-        val crossN = max(
-            8,
-            ceil((2.0 * Math.PI * maxRadius * PIXELS_PER_BLOCK / TILE_SUBDIVISION_PX)).toInt()
-        )
+        // low-poly cross-section, density from client config
+        val crossN = crossSections()
+        val degStep = 360f / crossN
+        val gridAnchor = 90f
 
         val wallVerts = ArrayList<V>()
         val startCapVerts = ArrayList<V>()
         val endCapVerts = ArrayList<V>()
-        val waterVerts = ArrayList<V>()
-        val waterSprite = Minecraft.getInstance().getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
-            .apply(ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "block/water_slide_water"))
-        val wu0 = waterSprite.u0
-        val wu1 = waterSprite.u1
-        val wv0 = waterSprite.v0
-        val wv1 = waterSprite.v1
 
         fun add(
             dst: MutableList<V>,
@@ -239,14 +303,17 @@ object WaterslideTubeMesh {
             nx: Float, ny: Float, nz: Float,
             u: Float, v: Float,
             sectorRadians: Float, texW: Float, texH: Float, border: Float,
-            spriteU0: Float, spriteU1: Float, spriteV0: Float, spriteV1: Float
+            spriteU0: Float, spriteU1: Float, spriteV0: Float, spriteV1: Float,
+            sideWall: Boolean = false
         ) {
+            val ovY = Math.round(spriteU1 * 32767f)
             dst += V(
                 x, y, z,
                 sectorRadians / (2.0 * Math.PI).toFloat(),
                 texW / 64f, texH / 64f, border / 16f,
                 u, v,
-                (Math.round(spriteU0 * 32767f) shl 16) or Math.round(spriteU1 * 32767f),
+                (Math.round(spriteU0 * 32767f) shl 16) or
+                    if (sideWall) (ovY and 0x7FFF) or 0x8000 else ovY,
                 (Math.round(spriteV0 * 65535f) shl 16) or Math.round(spriteV1 * 65535f),
                 nx, ny, nz
             )
@@ -256,44 +323,36 @@ object WaterslideTubeMesh {
             dst: MutableList<V>,
             angleDeg: Float,
             dir: Float,
-            inner: Float,
             sectorRadians: Float, texW: Float, texH: Float, border: Float,
             su0: Float, su1: Float, sv0: Float, sv1: Float
         ) {
             val a = Math.toRadians(angleDeg.toDouble())
             val c = cos(a).toFloat()
             val s = sin(a).toFloat()
-            val dx = -s * dir
-            val dy = c * dir
-            if (dir > 0f) {
-                add(dst, c, s, 0f, dx, dy, 0f, 0f, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(dst, c * inner, s * inner, 0f, dx, dy, 0f, 1f, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(dst, c * inner, s * inner, 0.5f, dx, dy, 0f, 1f, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(dst, c, s, 0.5f, dx, dy, 0f, 0f, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-            } else {
-                add(dst, c, s, 0f, dx, dy, 0f, 0f, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(dst, c, s, 0.5f, dx, dy, 0f, 0f, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(dst, c * inner, s * inner, 0.5f, dx, dy, 0f, 1f, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(dst, c * inner, s * inner, 0f, dx, dy, 0f, 1f, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+            val nx = c
+            val ny = s
+            // real radial span; the plain wall branch maps radius 1.0 to the outer
+            // wall and radius < 0.95 to the inner wall
+            val innerR = 0.92f
+            // u span approximates the wall thickness on the radial axis
+            val sideRadians = 0.2f / 16f
+            for (k in 0 until LENGTH_SUBDIVISIONS) {
+                val z0 = k / (2f * LENGTH_SUBDIVISIONS)
+                val z1 = (k + 1) / (2f * LENGTH_SUBDIVISIONS)
+                val v0 = k / LENGTH_SUBDIVISIONS.toFloat()
+                val v1 = (k + 1) / LENGTH_SUBDIVISIONS.toFloat()
+                if (dir > 0f) {
+                    add(dst, c, s, z0, nx, ny, 0f, 0f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z0, nx, ny, 0f, 1f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z1, nx, ny, 0f, 1f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c, s, z1, nx, ny, 0f, 0f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                } else {
+                    add(dst, c, s, z0, nx, ny, 0f, 0f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c, s, z1, nx, ny, 0f, 0f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z1, nx, ny, 0f, 1f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z0, nx, ny, 0f, 1f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                }
             }
-        }
-
-        fun addWater(
-            dst: MutableList<V>,
-            x: Float, y: Float, z: Float,
-            nx: Float, ny: Float, nz: Float,
-            u: Float, v: Float,
-            type: Int,
-            su0: Float, su1: Float, sv0: Float, sv1: Float
-        ) {
-            dst += V(
-                x, y, z,
-                0f, type / 64f, 0f, 0f,
-                u, v,
-                (Math.round(su0 * 32767f) shl 16) or Math.round(su1 * 32767f),
-                (Math.round(sv0 * 65535f) shl 16) or Math.round(sv1 * 65535f),
-                nx, ny, nz
-            )
         }
 
         for (p in placed) {
@@ -304,135 +363,240 @@ object WaterslideTubeMesh {
             val texH = sprite.contents().height().toFloat()
             val border = ModConfig.sectorBorderPx().toFloat()
             val sectorDegrees = p.endAngle - p.startAngle
+            if (sectorDegrees <= 0.001f) continue
             val sectorRadians = Math.toRadians(sectorDegrees.toDouble()).toFloat()
-            val steps = max(1, ceil(sectorDegrees / 360f * crossN).toInt())
             val su0 = sprite.u0
             val su1 = sprite.u1
             val sv0 = sprite.v0
             val sv1 = sprite.v1
 
-            for (j in 0 until steps) {
-                val f0 = j.toFloat() / steps
-                val f1 = (j + 1).toFloat() / steps
-                val a0 = Math.toRadians((p.startAngle + sectorDegrees * f0).toDouble())
-                val a1 = Math.toRadians((p.startAngle + sectorDegrees * f1).toDouble())
-                val c0 = cos(a0).toFloat()
-                val s0 = sin(a0).toFloat()
-                val c1 = cos(a1).toFloat()
-                val s1 = sin(a1).toFloat()
+            // global fixed grid, up-axis anchored, identical across tracks
+            val startNorm = WaterslideSectorLayout.normalize(p.startAngle)
+            val intervals = if (startNorm + sectorDegrees <= 360f)
+                listOf(startNorm to startNorm + sectorDegrees)
+            else
+                listOf(startNorm to 360f, 0f to startNorm + sectorDegrees - 360f)
 
-                // Outer wall
-                add(wallVerts, c0, s0, 0f, c0, s0, 0f, f0, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(wallVerts, c1, s1, 0f, c1, s1, 0f, f1, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(wallVerts, c1, s1, 0.5f, c1, s1, 0f, f1, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(wallVerts, c0, s0, 0.5f, c0, s0, 0f, f0, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+            for ((lo, hi) in intervals) {
+                val wrap = if (lo == startNorm) 0f else 360f
+                for (j in 0 until crossN) {
+                    val raw0 = gridAnchor + j * degStep
+                    val raw1 = gridAnchor + (j + 1) * degStep
+                    val cells = if (raw1 <= 360f) listOf(raw0 to raw1)
+                    else if (raw0 >= 360f) listOf(raw0 - 360f to raw1 - 360f)
+                    else listOf(raw0 to 360f, 0f to raw1 - 360f)
+                    for ((cg0, cg1) in cells) {
+                        val s = max(cg0, lo)
+                        val e = min(cg1, hi)
+                        if (e <= s) continue
+                        val f0 = (s + wrap - startNorm) / sectorDegrees
+                        val f1 = (e + wrap - startNorm) / sectorDegrees
+                        val a0 = Math.toRadians(s.toDouble())
+                        val a1 = Math.toRadians(e.toDouble())
+                        val c0 = cos(a0).toFloat()
+                        val s0 = sin(a0).toFloat()
+                        val c1 = cos(a1).toFloat()
+                        val s1 = sin(a1).toFloat()
+                        val midA = a0 + (a1 - a0) / 2.0
+                        val cm = cos(midA).toFloat()
+                        val sm = sin(midA).toFloat()
 
-                // Inner wall
-                add(wallVerts, c0, s0, 0f, -c0, -s0, 0f, f0, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(wallVerts, c0, s0, 0.5f, -c0, -s0, 0f, f0, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(wallVerts, c1, s1, 0.5f, -c1, -s1, 0f, f1, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(wallVerts, c1, s1, 0f, -c1, -s1, 0f, f1, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                        for (k in 0 until LENGTH_SUBDIVISIONS) {
+                            val z0 = k / (2f * LENGTH_SUBDIVISIONS)
+                            val z1 = (k + 1) / (2f * LENGTH_SUBDIVISIONS)
+                            val v0 = k / LENGTH_SUBDIVISIONS.toFloat()
+                            val v1 = (k + 1) / LENGTH_SUBDIVISIONS.toFloat()
 
-                // End cap
-                add(endCapVerts, c0, s0, 0f, c0, s0, 1f, f0, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(endCapVerts, c1, s1, 0f, c1, s1, 1f, f1, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(endCapVerts, c1, s1, 0f, -c1, -s1, 1f, f1, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(endCapVerts, c0, s0, 0f, -c0, -s0, 1f, f0, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                            // Outer wall
+                            add(wallVerts, c0, s0, z0, cm, sm, 0f, f0, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                            add(wallVerts, c1, s1, z0, cm, sm, 0f, f1, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                            add(wallVerts, c1, s1, z1, cm, sm, 0f, f1, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                            add(wallVerts, c0, s0, z1, cm, sm, 0f, f0, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
 
-                // Start cap
-                add(startCapVerts, c0, s0, 0f, c0, s0, -1f, f0, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(startCapVerts, c0, s0, 0f, -c0, -s0, -1f, f0, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(startCapVerts, c1, s1, 0f, -c1, -s1, -1f, f1, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                add(startCapVerts, c1, s1, 0f, c1, s1, -1f, f1, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                            // Inner wall
+                            add(wallVerts, c0, s0, z0, -cm, -sm, 0f, f0, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                            add(wallVerts, c0, s0, z1, -cm, -sm, 0f, f0, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                            add(wallVerts, c1, s1, z1, -cm, -sm, 0f, f1, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                            add(wallVerts, c1, s1, z0, -cm, -sm, 0f, f1, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                        }
 
+                        // End cap
+                        add(endCapVerts, c0, s0, 0f, c0, s0, 1f, f0, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                        add(endCapVerts, c1, s1, 0f, c1, s1, 1f, f1, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                        add(endCapVerts, c1, s1, 0f, -c1, -s1, 1f, f1, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                        add(endCapVerts, c0, s0, 0f, -c0, -s0, 1f, f0, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+
+                        // Start cap
+                        add(startCapVerts, c0, s0, 0f, c0, s0, -1f, f0, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                        add(startCapVerts, c0, s0, 0f, -c0, -s0, -1f, f0, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                        add(startCapVerts, c1, s1, 0f, -c1, -s1, -1f, f1, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                        add(startCapVerts, c1, s1, 0f, c1, s1, -1f, f1, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    }
+                }
             }
 
             // side walls next to open sectors
             val idx = placed.indexOf(p)
             val prev = placed[(idx - 1 + placed.size) % placed.size]
             val next = placed[(idx + 1) % placed.size]
-            val inner = 1f - WALL_THICKNESS
             if (prev.sector.material == SectorMaterial.OPEN) {
-                addSideWall(wallVerts, p.startAngle, -1f, inner, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                addSideWall(wallVerts, p.startAngle, -1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
             }
             if (next.sector.material == SectorMaterial.OPEN) {
-                addSideWall(wallVerts, p.endAngle, 1f, inner, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-            }
-
-            // water trough, generated once per sector
-            val overlapStart = max(p.startAngle, WATER_BAND_START)
-            val overlapEnd = min(p.endAngle, WATER_BAND_END)
-            if (overlapEnd > overlapStart) {
-                val bandSpan = WATER_BAND_END - WATER_BAND_START
-                val waterSteps = max(1, ceil((overlapEnd - overlapStart) / 360f * crossN).toInt())
-                for (wj in 0 until waterSteps) {
-                    val w0 = wj.toFloat() / waterSteps
-                    val w1 = (wj + 1).toFloat() / waterSteps
-                    val wa0 = Math.toRadians((overlapStart + (overlapEnd - overlapStart) * w0).toDouble())
-                    val wa1 = Math.toRadians((overlapStart + (overlapEnd - overlapStart) * w1).toDouble())
-                    // one tile across the whole band, continuous across sectors
-                    val u0 = (overlapStart + (overlapEnd - overlapStart) * w0 - WATER_BAND_START) / bandSpan
-                    val u1 = (overlapStart + (overlapEnd - overlapStart) * w1 - WATER_BAND_START) / bandSpan
-                    val c0w = cos(wa0).toFloat()
-                    val s0w = sin(wa0).toFloat()
-                    val c1w = cos(wa1).toFloat()
-                    val s1w = sin(wa1).toFloat()
-                    // bottom arc at inner radius
-                    addWater(waterVerts, c0w, s0w, 0f, -c0w, -s0w, 0f, u0, 0f, 0, wu0, wu1, wv0, wv1)
-                    addWater(waterVerts, c0w, s0w, 0.5f, -c0w, -s0w, 0f, u0, 1f, 0, wu0, wu1, wv0, wv1)
-                    addWater(waterVerts, c1w, s1w, 0.5f, -c1w, -s1w, 0f, u1, 1f, 0, wu0, wu1, wv0, wv1)
-                    addWater(waterVerts, c1w, s1w, 0f, -c1w, -s1w, 0f, u1, 0f, 0, wu0, wu1, wv0, wv1)
-                    // top free surface at inner radius - depth, same winding as bottom
-                    addWater(waterVerts, c0w, s0w, 0f, -c0w, -s0w, 0f, u0, 0f, 1, wu0, wu1, wv0, wv1)
-                    addWater(waterVerts, c0w, s0w, 0.5f, -c0w, -s0w, 0f, u0, 1f, 1, wu0, wu1, wv0, wv1)
-                    addWater(waterVerts, c1w, s1w, 0.5f, -c1w, -s1w, 0f, u1, 1f, 1, wu0, wu1, wv0, wv1)
-                    addWater(waterVerts, c1w, s1w, 0f, -c1w, -s1w, 0f, u1, 0f, 1, wu0, wu1, wv0, wv1)
-                }
+                addSideWall(wallVerts, p.endAngle, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
             }
         }
-
-        // water side walls at band edges
-        fun bandSector(angle: Float): PlacedSector? =
-            placed.firstOrNull {
-                angle >= it.startAngle - 0.001f && angle <= it.endAngle + 0.001f
-            }?.takeIf { it.sector.material != SectorMaterial.OPEN }
-
-        fun addBandWall(angle: Float, left: Boolean) {
-            if (bandSector(angle) == null) return
-            val a = Math.toRadians(angle.toDouble())
-            val c = cos(a).toFloat()
-            val s = sin(a).toFloat()
-            val nx = if (left) 0.5f else -0.5f
-            if (left) {
-                addWater(waterVerts, c, s, 0f, nx, -0.866f, 0f, 0f, 0f, 2, wu0, wu1, wv0, wv1)
-                addWater(waterVerts, c, s, 0f, nx, -0.866f, 0f, 1f, 0f, 2, wu0, wu1, wv0, wv1)
-                addWater(waterVerts, c, s, 0.5f, nx, -0.866f, 0f, 1f, 1f, 2, wu0, wu1, wv0, wv1)
-                addWater(waterVerts, c, s, 0.5f, nx, -0.866f, 0f, 0f, 1f, 2, wu0, wu1, wv0, wv1)
-            } else {
-                addWater(waterVerts, c, s, 0f, nx, -0.866f, 0f, 0f, 0f, 2, wu0, wu1, wv0, wv1)
-                addWater(waterVerts, c, s, 0.5f, nx, -0.866f, 0f, 0f, 1f, 2, wu0, wu1, wv0, wv1)
-                addWater(waterVerts, c, s, 0.5f, nx, -0.866f, 0f, 1f, 1f, 2, wu0, wu1, wv0, wv1)
-                addWater(waterVerts, c, s, 0f, nx, -0.866f, 0f, 1f, 0f, 2, wu0, wu1, wv0, wv1)
-            }
-        }
-        addBandWall(WATER_BAND_START, left = true)
-        addBandWall(WATER_BAND_END, left = false)
 
         val wallMesh = meshOf(wallVerts, "waterslide_tube_wall")
         val startCapMesh = meshOf(startCapVerts, "waterslide_tube_start_cap")
         val endCapMesh = meshOf(endCapVerts, "waterslide_tube_end_cap")
-        val waterMesh = meshOf(waterVerts, "waterslide_tube_water")
         return TubeModels(
-            SingleMeshModel(wallMesh, Materials.CUTOUT_MIPPED_BLOCK),
-            SingleMeshModel(startCapMesh, Materials.CUTOUT_MIPPED_BLOCK),
-            SingleMeshModel(endCapMesh, Materials.CUTOUT_MIPPED_BLOCK),
+            SingleMeshModel(wallMesh, TUBE_CUTOUT_MATERIAL),
+            SingleMeshModel(startCapMesh, TUBE_CAP_CUTOUT_MATERIAL),
+            SingleMeshModel(endCapMesh, TUBE_CAP_CUTOUT_MATERIAL),
             SingleMeshModel(wallMesh, TUBE_TRANSLUCENT_MATERIAL),
             SingleMeshModel(startCapMesh, TUBE_TRANSLUCENT_MATERIAL),
             SingleMeshModel(endCapMesh, TUBE_TRANSLUCENT_MATERIAL),
-            SingleMeshModel(endCapMesh, RING_TRANSLUCENT_MATERIAL),
-            SingleMeshModel(waterMesh, TUBE_TRANSLUCENT_MATERIAL)
+            SingleMeshModel(endCapMesh, RING_TRANSLUCENT_MATERIAL)
         )
     }
+
+    // dynamic water envelope model between two sections
+    @JvmStatic
+    fun waterModelFor(
+        vertsA: List<Float>,
+        vertsB: List<Float>,
+        radius: Float,
+        cullWalls: Boolean
+    ): Model {
+        val key = buildString {
+            append(if (cullWalls) 'c' else 'w').append('|')
+            append((radius * 8f).roundToInt()).append('|')
+            for (f in vertsA) append((f * 20f).roundToInt()).append(',')
+            append('|')
+            for (f in vertsB) append((f * 20f).roundToInt()).append(',')
+        }
+        return waterModelCache.getOrPut(key) {
+            buildWaterModel(vertsA, vertsB, radius, cullWalls)
+        }
+    }
+
+    @JvmStatic
+    fun clearWaterModels() {
+        waterModelCache.clear()
+    }
+
+    private fun buildWaterModel(
+        vertsA: List<Float>,
+        vertsB: List<Float>,
+        radius: Float,
+        cullWalls: Boolean
+    ): Model {
+        val nA = vertsA.size / 2
+        val nB = vertsB.size / 2
+        val n = min(nA, nB)
+        val waterVerts = ArrayList<V>()
+        val waterSprite = Minecraft.getInstance().getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
+            .apply(ResourceLocation.withDefaultNamespace("block/water_still"))
+        val su0 = waterSprite.u0
+        val su1 = waterSprite.u1
+        val sv0 = waterSprite.v0
+        val sv1 = waterSprite.v1
+        val tiles = (2f * Math.PI.toFloat() * radius).coerceAtLeast(0.5f)
+
+        fun addVertex(u: Float, v: Float, z: Float, uTex: Float) {
+            val r = kotlin.math.sqrt(u * u + v * v).coerceAtLeast(0.001f)
+            waterVerts += V(
+                u, v, z,
+                0f, 0f, 0f, 0f,
+                uTex, if (z > 0.25f) 1f else 0f,
+                (Math.round(su0 * 32767f) shl 16) or Math.round(su1 * 32767f),
+                (Math.round(sv0 * 65535f) shl 16) or Math.round(sv1 * 65535f),
+                u / r, v / r, 0f
+            )
+        }
+
+        for (i in 0 until n) {
+            addVertex(vertsA[i * 2], vertsA[i * 2 + 1], 0f, i.toFloat() / n * tiles)
+        }
+        for (i in 0 until n) {
+            addVertex(vertsB[i * 2], vertsB[i * 2 + 1], 0.5f, i.toFloat() / n * tiles)
+        }
+        // band strips: bottom arc and top arc; cullWalls drops the closing end walls
+        val m = n / 2
+        for (i in 0 until m - 1) {
+            waterVerts += waterVerts[i]
+            waterVerts += waterVerts[n + i]
+            waterVerts += waterVerts[n + i + 1]
+            waterVerts += waterVerts[i + 1]
+        }
+        for (i in m until n - 1) {
+            waterVerts += waterVerts[i]
+            waterVerts += waterVerts[n + i]
+            waterVerts += waterVerts[n + i + 1]
+            waterVerts += waterVerts[i + 1]
+        }
+        if (!cullWalls) {
+            // closing end walls between the bottom and top arcs
+            for (i in intArrayOf(m - 1, n - 1)) {
+                val j = (i + 1) % n
+                waterVerts += waterVerts[i]
+                waterVerts += waterVerts[n + i]
+                waterVerts += waterVerts[n + j]
+                waterVerts += waterVerts[j]
+            }
+        }
+        return SingleMeshModel(meshOf(waterVerts, "waterslide_tube_water"), STREAM_TRANSLUCENT_MATERIAL)
+    }
+
+    // band ring vertices on the same angular grid as the tube wall:
+    // bottom arc at rInFrac, top arc back at rSurfFrac, clipped to 210-330 degrees
+    @JvmStatic
+    fun bandVertices(rInFrac: Float, rSurfFrac: Float, mirror: Boolean): List<Float> {
+        val crossN = crossSections()
+        val degStep = 360f / crossN
+        val gridAnchor = 90f
+        val bandLo = 210f
+        val bandHi = 330f
+        // collect the clipped grid angles inside the band, ascending
+        val angles = ArrayList<Float>()
+        val norm = { a: Float -> WaterslideSectorLayout.normalize(a) }
+        for (k in 0 until crossN) {
+            val raw0 = gridAnchor + k * degStep
+            val raw1 = gridAnchor + (k + 1) * degStep
+            val cells = if (raw1 <= 360f) listOf(raw0 to raw1)
+            else if (raw0 >= 360f) listOf(raw0 - 360f to raw1 - 360f)
+            else listOf(raw0 to 360f, 0f to raw1 - 360f)
+            for ((cg0, cg1) in cells) {
+                val s = max(cg0, bandLo)
+                val e = min(cg1, bandHi)
+                if (e <= s) continue
+                if (angles.lastOrNull()?.let { abs(it - s) < 0.01f } != true) angles += s
+                angles += e
+            }
+        }
+        // normalize into the band range so the ring runs 210 -> 330 continuously
+        val sorted = angles.map { a ->
+            if (a < bandLo - 0.01f) a + 360f else a
+        }.sorted()
+        val out = ArrayList<Float>(sorted.size * 4)
+        for (a in sorted) {
+            val rad = Math.toRadians(a.toDouble())
+            val u = (Math.cos(rad) * rInFrac).toFloat()
+            val v = (Math.sin(rad) * rInFrac).toFloat()
+            out += if (mirror) -u else u
+            out += v
+        }
+        for (a in sorted.asReversed()) {
+            val rad = Math.toRadians(a.toDouble())
+            val u = (Math.cos(rad) * rSurfFrac).toFloat()
+            val v = (Math.sin(rad) * rSurfFrac).toFloat()
+            out += if (mirror) -u else u
+            out += v
+        }
+        return out
+    }
+
 
     private fun meshOf(verts: List<V>, descriptor: String): Mesh {
         if (verts.isEmpty()) {

@@ -15,8 +15,17 @@ public class WaterslideTubeInstance extends ColoredLitOverlayInstance {
     public final Vector3f currLateral = new Vector3f();
     public float prevRadius = 1.0f;
     public float currRadius = 1.0f;
-    public float waterFlow = 0.0f;
-    public float waterVBase = 0.0f;
+    public float wallThickness = 0.1f;
+    public float flowStart = 0.0f;
+    public float flowEnd = 0.0f;
+    public float phaseStart = 0.0f;
+    public float phaseEnd = 0.0f;
+    public float arcBase = 0.0f;
+    public float flowSign = 1.0f;
+    public float mirror = 1.0f;
+    public float flowUpstream = 0.0f;
+    public float phaseUpstream = 0.0f;
+    public float downstreamMix = 1.0f;
 
     public WaterslideTubeInstance(InstanceType<? extends WaterslideTubeInstance> type, InstanceHandle handle) {
         super(type, handle);
@@ -52,8 +61,17 @@ public class WaterslideTubeInstance extends ColoredLitOverlayInstance {
         this.currLateral.zero();
         this.prevRadius = 0.0f;
         this.currRadius = 0.0f;
-        this.waterFlow = 0.0f;
-        this.waterVBase = 0.0f;
+        this.wallThickness = 0.1f;
+        this.flowStart = 0.0f;
+        this.flowEnd = 0.0f;
+        this.phaseStart = 0.0f;
+        this.phaseEnd = 0.0f;
+        this.arcBase = 0.0f;
+        this.flowSign = 1.0f;
+        this.mirror = 1.0f;
+        this.flowUpstream = 0.0f;
+        this.phaseUpstream = 0.0f;
+        this.downstreamMix = 1.0f;
         return this;
     }
 }

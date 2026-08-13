@@ -10,6 +10,8 @@ import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
 import dev.silvergold.simulatedcoasters.track.CoasterBezierHandleEdit
 import dev.silvergold.simulatedcoasters.track.CoasterTrackPlacement
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
+import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
+import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.config.ModConfig
@@ -38,6 +40,7 @@ object WaterslideRadiusEdit {
     private val previewRadii = mutableMapOf<BlockPos, Float>()
     private var dragging = false
     private var dragAnchor: BlockPos? = null
+    private var lastChainRefreshRadius = -1f
 
     private data class CircleFrame(val lateral: Vec3, val up: Vec3)
 
@@ -98,6 +101,7 @@ object WaterslideRadiusEdit {
                 dragging = true
                 dragAnchor = anchor.immutable()
                 previewRadii[anchor] = be.radius
+                lastChainRefreshRadius = -1f
             }
         }
     }

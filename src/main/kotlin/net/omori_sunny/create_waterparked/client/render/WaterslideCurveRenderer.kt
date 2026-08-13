@@ -7,6 +7,7 @@ import com.mojang.blaze3d.vertex.VertexFormat
 import dev.engine_room.flywheel.api.visualization.VisualizationManager
 import net.createmod.catnip.animation.AnimationTickHolder
 import net.omori_sunny.create_waterparked.CreateWaterparked
+import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
@@ -15,6 +16,7 @@ import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEnti
 import net.omori_sunny.create_waterparked.mixin.client.LevelRendererAccessor
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRadiusEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit
+import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.waterslide.PlacedSector
@@ -23,6 +25,8 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlo
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
+import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.LightTexture
 import net.minecraft.client.renderer.LevelRenderer
@@ -43,6 +47,7 @@ import net.neoforged.neoforge.client.model.data.ModelData
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 // CPU fallback renderer for waterslide curves.
 class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
@@ -77,10 +82,11 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
         private const val PIXELS_PER_BLOCK = 16f
         private const val TILE_SUBDIVISION_PX = 8f
         private const val MAX_DRAW_DISTANCE_SQ = 192.0 * 192.0
-        private const val WATER_DEPTH = 0.12f
-        private const val WATER_FLOW_SPEED = 0.025f
-        private const val WATER_BAND_START = 210f
-        private const val WATER_BAND_END = 330f
+        private const val WATER_FADE_BLOCKS = 2f
+        // CPU fallback stream scroll rate, cycles per tick
+        private const val STREAM_FLOW_SPEED = 0.05f
+        private val WATER_TINT = floatArrayOf(0.3f, 0.6f, 1f)
+        private val WATER_SURFACE_TINT = floatArrayOf(0.65f, 0.9f, 1f)
 
         // Client anchor index.
         private val CLIENT_ANCHORS: MutableSet<WaterslideAnchorBlockEntity> =
@@ -128,8 +134,43 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                 renderAllCurves(be, poseStack, bufferSource, seenEdges, flywheelActive)
                 poseStack.popPose()
             }
+            renderDebugTrajectories(poseStack, bufferSource)
 // flush pipe batches
             endBatches(bufferSource)
+        }
+
+        // water simulation trajectory debug overlay
+        private fun renderDebugTrajectories(poseStack: PoseStack, bufferSource: MultiBufferSource) {
+            val polylines = WaterFlowSimulation.debugPolylines()
+            if (polylines.isEmpty()) return
+            val mc = Minecraft.getInstance()
+            val camera = mc.gameRenderer.mainCamera.position
+            val lines = bufferSource.getBuffer(RenderType.lines())
+            poseStack.pushPose()
+            poseStack.translate(-camera.x, -camera.y, -camera.z)
+            val pose = poseStack.last()
+            var colorIdx = 0
+            for (poly in polylines) {
+                if (poly.size < 2) continue
+                colorIdx++
+                val r = if (colorIdx % 2 == 0) 0.2f else 1f
+                val g = if (colorIdx % 3 == 0) 0.2f else 1f
+                val b = if (colorIdx % 2 == 1) 0.2f else 1f
+                for (i in 1 until poly.size) {
+                    val a = poly[i - 1]
+                    val c = poly[i]
+                    lines.addVertex(pose, a.x.toFloat(), a.y.toFloat(), a.z.toFloat())
+                        .setColor(r, g, b, 1f)
+                        .setNormal(pose, 0f, 1f, 0f)
+                    lines.addVertex(pose, c.x.toFloat(), c.y.toFloat(), c.z.toFloat())
+                        .setColor(r, g, b, 1f)
+                        .setNormal(pose, 0f, 1f, 0f)
+                }
+            }
+            poseStack.popPose()
+            if (bufferSource is MultiBufferSource.BufferSource) {
+                bufferSource.endBatch(RenderType.lines())
+            }
         }
 
         @JvmStatic
@@ -138,6 +179,8 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                 bufferSource.endBatch(TUBE_SOLID)
                 bufferSource.endBatch(TUBE_CUTOUT)
                 bufferSource.endBatch(TUBE_TRANSLUCENT)
+                bufferSource.endBatch(TUBE_WATER_TRANSLUCENT)
+                bufferSource.endBatch(TUBE_STREAM_TRANSLUCENT)
             }
         }
 
@@ -153,12 +196,14 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                 val primary = if (raw.isPrimary) raw else raw.secondary()
                 if (!WaterslideTrackMaterials.isWaterslide(primary)) continue
                 if (!seenEdges.add(edgeKey(primary))) continue
-                // Flywheel owns rendering when active.
-                if (flywheelActive) continue
                 val config = WaterslideSectorEdit.previewConfigFor(
                     primary.bePositions.getFirst(), primary.bePositions.getSecond()
                 ) ?: be.sectorConfigFor(peer)
-                renderCurve(level, primary, config, poseStack, bufferSource, be.isCurveWatered(peer))
+                val water = WaterFlowSimulation.resultFor(level, primary)
+                // Flywheel owns pipes and streams when active.
+                if (flywheelActive) continue
+                if (water != null) renderStreams(water, poseStack, bufferSource)
+                renderCurve(level, primary, config, poseStack, bufferSource, water)
             }
         }
 
@@ -212,6 +257,40 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                 .createCompositeState(false)
         )
 
+        // water is single-sided; cull backfaces between instances
+        private val TUBE_WATER_TRANSLUCENT: RenderType = RenderType.create(
+            "create_waterparked:waterslide_water_translucent",
+            DefaultVertexFormat.BLOCK,
+            VertexFormat.Mode.QUADS,
+            131072,
+            RenderType.CompositeState.builder()
+                .setShaderState(RenderStateShard.RENDERTYPE_TRANSLUCENT_SHADER)
+                .setTextureState(RenderStateShard.BLOCK_SHEET_MIPPED)
+                .setLightmapState(RenderStateShard.LIGHTMAP)
+                .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                .setCullState(RenderStateShard.CULL)
+                .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
+                .createCompositeState(false)
+        )
+
+// thrown water is visible from both sides
+        private val TUBE_STREAM_TRANSLUCENT: RenderType = RenderType.create(
+            "create_waterparked:waterslide_stream_translucent",
+            DefaultVertexFormat.BLOCK,
+            VertexFormat.Mode.QUADS,
+            131072,
+            RenderType.CompositeState.builder()
+                .setShaderState(RenderStateShard.RENDERTYPE_TRANSLUCENT_SHADER)
+                .setTextureState(RenderStateShard.BLOCK_SHEET_MIPPED)
+                .setLightmapState(RenderStateShard.LIGHTMAP)
+                .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                .setCullState(RenderStateShard.NO_CULL)
+                .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
+                .createCompositeState(false)
+        )
+
 // CCS renderer fallback
         @JvmStatic
         fun renderFromParent(
@@ -231,7 +310,8 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                 val primary = if (raw.isPrimary) raw else raw.secondary()
                 if (!WaterslideTrackMaterials.isWaterslide(primary)) continue
                 val config = self?.sectorConfigFor(peer) ?: WaterslideSectorConfig.defaultConfig()
-                renderCurve(level, primary, config, poseStack, bufferSource, self?.isCurveWatered(peer) ?: false)
+                val water = WaterFlowSimulation.resultFor(level, primary)
+                renderCurve(level, primary, config, poseStack, bufferSource, water)
             }
 
             poseStack.popPose()
@@ -243,7 +323,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             config: WaterslideSectorConfig,
             poseStack: PoseStack,
             bufferSource: MultiBufferSource,
-            watered: Boolean
+            water: WaterFlowSimulation.CurveWater?
         ) {
             val placed = WaterslideSectorLayout.place(config)
             val r0 = radiusAt(level, bc.bePositions.getFirst())
@@ -265,11 +345,8 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                 net.minecraft.client.renderer.texture.TextureAtlasSprite, RenderType>?>()
 
 // one cross-section subdivision
-            val maxR = max(r0, r1)
-            val crossN = max(
-                8,
-                Math.ceil((2.0 * Math.PI * maxR * PIXELS_PER_BLOCK / TILE_SUBDIVISION_PX)).toInt()
-            )
+            // low-poly cross-section, density from client config
+            val crossN = WaterslideTubeMesh.crossSections()
 
 // stable frames
             val ts = FloatArray(count + 1) { i ->
@@ -290,33 +367,8 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                 }
                 tangent = tangent.normalize()
 
-// prefer CCS frame
-                var lat = CoasterBezierRailFrames.lateralAt(bc, ts[i], tangent, level)
-                var up = tangent.cross(lat)
-                val ccsValid = lat.lengthSqr() > 1.0E-12 &&
-                    up.lengthSqr() > 1.0E-12 &&
-                    !lat.x.isNaN() && !lat.y.isNaN() && !lat.z.isNaN() &&
-                    !up.x.isNaN() && !up.y.isNaN() && !up.z.isNaN()
-                if (!ccsValid) {
-                    var fallbackUp = Vec3(0.0, 1.0, 0.0)
-                    if (abs(tangent.y) > 0.999) {
-                        fallbackUp = Vec3(1.0, 0.0, 0.0)
-                    }
-                    fallbackUp = fallbackUp.subtract(tangent.scale(fallbackUp.dot(tangent)))
-                    if (fallbackUp.lengthSqr() < 1.0E-12) {
-                        fallbackUp = Vec3(0.0, 0.0, 1.0).subtract(tangent.scale(tangent.z))
-                    }
-                    fallbackUp = fallbackUp.normalize()
-                    lat = fallbackUp.cross(tangent)
-                    if (lat.lengthSqr() < 1.0E-12) {
-                        lat = Vec3(0.0, 0.0, 1.0).cross(tangent)
-                    }
-                    lat = lat.normalize()
-                    up = tangent.cross(lat).normalize()
-                } else {
-                    lat = lat.normalize()
-                    up = up.normalize()
-                }
+// stable world-up frame
+                var (lat, up) = SlideCurveGeometry.stableFrame(tangent)
 
 // continuous lateral
                 if (prevLat != null && lat.dot(prevLat) < 0.0) {
@@ -361,10 +413,16 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                 extRads += r1
             }
 
-            var waterVBase = 0f
+            var totalLen = 0f
+            for (i in 0 until extCenters.size - 1) {
+                totalLen += extCenters[i].distanceTo(extCenters[i + 1]).toFloat()
+            }
+            var arcBase = 0f
             for (i in 0 until extCenters.size - 1) {
                 val center0 = extCenters[i]
                 val center1 = extCenters[i + 1]
+                val tan0 = extTangents[i]
+                val tan1 = extTangents[i + 1]
                 val lat0 = extLats[i]
                 val lat1 = extLats[i + 1]
                 val up0 = extUps[i]
@@ -380,7 +438,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                     val consumer = bufferSource.getBuffer(renderType)
                     renderSectorSegment(
                         center0, center1, lat0, lat1, up0, up1, rad0, rad1,
-                        p, sprite, poseStack, consumer, crossN, alpha, segLight
+                        tan0, tan1, p, sprite, poseStack, consumer, crossN, alpha, segLight
                     )
 
                     // side walls next to open sectors
@@ -390,29 +448,29 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                     if (prev.sector.material == SectorMaterial.OPEN) {
                         renderSideWall(
                             center0, center1, lat0, lat1, up0, up1, rad0, rad1,
-                            p.startAngle, -1f, sprite, poseStack, consumer, segLight, alpha
+                            tan0, tan1, p.startAngle, -1f, sprite, poseStack, consumer, segLight, alpha
                         )
                     }
                     if (next.sector.material == SectorMaterial.OPEN) {
                         renderSideWall(
                             center0, center1, lat0, lat1, up0, up1, rad0, rad1,
-                            p.endAngle, 1f, sprite, poseStack, consumer, segLight, alpha
+                            tan0, tan1, p.endAngle, 1f, sprite, poseStack, consumer, segLight, alpha
                         )
                     }
                 }
 
-                // water band: lower 120 degrees, inner surface
-                if (watered) {
+                // water envelope from the server-simulated sections
+                if (water != null && water.exists && water.segments.isNotEmpty() && i == 0) {
                     val waterSprite = Minecraft.getInstance()
                         .getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
-                        .apply(ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "block/water_slide_water"))
-                    val waterConsumer = bufferSource.getBuffer(TUBE_TRANSLUCENT)
-                    renderWaterSegment(
-                        level, center0, center1, lat0, lat1, up0, up1, rad0, rad1,
-                        placed, waterSprite, poseStack, waterConsumer, crossN, segLight, waterVBase
+                        .apply(ResourceLocation.withDefaultNamespace("block/water_still"))
+                    val waterConsumer = bufferSource.getBuffer(TUBE_WATER_TRANSLUCENT)
+                    renderWaterEnvelope(
+                        level, extCenters, extLats, extUps, extRads, water,
+                        waterSprite, poseStack, waterConsumer
                     )
                 }
-                waterVBase += center0.distanceTo(center1).toFloat()
+                arcBase += center0.distanceTo(center1).toFloat()
             }
 
 // end caps
@@ -583,41 +641,68 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             reverse: Boolean
         ) {
             val inner = (radius - WALL_THICKNESS).coerceAtLeast(0.001f)
+            val outer = radius + (ModClientConfig.wallThickness() - WALL_THICKNESS)
             val pose = poseStack.last()
-            val start = placed.startAngle
             val width = placed.sectorWidthDegrees()
-            for (j in 0 until crossN) {
-                val u0 = j.toFloat() / crossN.toFloat()
-                val u1 = (j + 1).toFloat() / crossN.toFloat()
-                val a0 = start + width * u0
-                val a1 = start + width * u1
-                val o0 = tubePoint(center, lat, up, radius, a0)
-                val o1 = tubePoint(center, lat, up, radius, a1)
-                val i0 = tubePoint(center, lat, up, inner, a0)
-                val i1 = tubePoint(center, lat, up, inner, a1)
-                if (reverse) {
+            if (width <= 0.001f) return
+            val texW = sprite.contents().width()
+            val texH = sprite.contents().height()
+            val border = ModConfig.sectorBorderPx().toFloat()
+            val midRadius = (outer + inner) / 2f
+            val capTargetW = Math.toRadians(width.toDouble()).toFloat() * midRadius * PIXELS_PER_BLOCK
+            val capTargetH = (outer - inner) * PIXELS_PER_BLOCK
+            fun capUv(u: Float, v: Float): Pair<Float, Float> =
+                nineSliceUv(u, v, capTargetW, capTargetH, texW, texH, border)
+            val startNorm = WaterslideSectorLayout.normalize(placed.startAngle)
+            val intervals = if (startNorm + width <= 360f)
+                listOf(startNorm to startNorm + width)
+            else
+                listOf(startNorm to 360f, 0f to startNorm + width - 360f)
+            val degStep = 360f / crossN
+            val gridAnchor = 90f
+            for ((lo, hi) in intervals) {
+                val wrap = if (lo == startNorm) 0f else 360f
+                for (j in 0 until crossN) {
+                    val raw0 = gridAnchor + j * degStep
+                    val raw1 = gridAnchor + (j + 1) * degStep
+                    val cells = if (raw1 <= 360f) listOf(raw0 to raw1)
+                    else if (raw0 >= 360f) listOf(raw0 - 360f to raw1 - 360f)
+                    else listOf(raw0 to 360f, 0f to raw1 - 360f)
+                    for ((cg0, cg1) in cells) {
+                        val s = max(cg0, lo)
+                        val e = min(cg1, hi)
+                        if (e <= s) continue
+                        val u0 = (s + wrap - startNorm) / width
+                        val u1 = (e + wrap - startNorm) / width
+                        val o0 = tubePoint(center, lat, up, outer, s)
+                        val o1 = tubePoint(center, lat, up, outer, e)
+                        val i0 = tubePoint(center, lat, up, inner, s)
+                        val i1 = tubePoint(center, lat, up, inner, e)
+                        if (reverse) {
 // reverse winding
-                    quad(
-                        consumer, pose, sprite,
-                        o0, i0, i1, o1,
-                        normal, normal, normal, normal,
-                        u0 to 1f, u0 to 0f, u1 to 0f, u1 to 1f,
-                        light, light, light, light,
-                        shadeFor(normal, 0.8f), shadeFor(normal, 0.8f),
-                        shadeFor(normal, 0.8f), shadeFor(normal, 0.8f),
-                        alpha
-                    )
-                } else {
-                    quad(
-                        consumer, pose, sprite,
-                        o0, o1, i1, i0,
-                        normal, normal, normal, normal,
-                        u0 to 1f, u1 to 1f, u1 to 0f, u0 to 0f,
-                        light, light, light, light,
-                        shadeFor(normal, 0.8f), shadeFor(normal, 0.8f),
-                        shadeFor(normal, 0.8f), shadeFor(normal, 0.8f),
-                        alpha
-                    )
+                            quad(
+                                consumer, pose, sprite,
+                                o0, i0, i1, o1,
+                                normal, normal, normal, normal,
+                                capUv(u0, 1f), capUv(u0, 0f), capUv(u1, 0f), capUv(u1, 1f),
+                                light, light, light, light,
+                                shadeFor(normal, 0.8f), shadeFor(normal, 0.8f),
+                                shadeFor(normal, 0.8f), shadeFor(normal, 0.8f),
+                                alpha
+                            )
+                        } else {
+                            quad(
+                                consumer, pose, sprite,
+                                o0, o1, i1, i0,
+                                normal, normal, normal, normal,
+                                capUv(u0, 1f), capUv(u1, 1f), capUv(u1, 0f), capUv(u0, 0f),
+                                light, light, light, light,
+                                shadeFor(normal, 0.8f), shadeFor(normal, 0.8f),
+                                shadeFor(normal, 0.8f), shadeFor(normal, 0.8f),
+                                alpha
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -631,6 +716,8 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             up1: Vec3,
             rad0: Float,
             rad1: Float,
+            tan0: Vec3,
+            tan1: Vec3,
             placed: PlacedSector,
             sprite: net.minecraft.client.renderer.texture.TextureAtlasSprite,
             poseStack: PoseStack,
@@ -642,236 +729,304 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             val texW = sprite.contents().width()
             val texH = sprite.contents().height()
             val border = ModConfig.sectorBorderPx().toFloat()
-            val avgRadius = (rad0 + rad1) / 2f
+            val wallExtra = ModClientConfig.wallThickness() - WALL_THICKNESS
+            val avgRadius = (rad0 + rad1) / 2f + wallExtra
             val arcLength = placed.sectorWidthRadians() * avgRadius
             val targetW = arcLength * PIXELS_PER_BLOCK
-            val targetH = center0.distanceTo(center1).toFloat() * PIXELS_PER_BLOCK
+            val targetH = WaterslideTubeMesh.bezierArcLength(center0, center1, tan0, tan1) * PIXELS_PER_BLOCK
             val m = max(1, Math.ceil((targetH / TILE_SUBDIVISION_PX).toDouble()).toInt())
             val pose = poseStack.last()
 
-            for (j in 0 until crossN) {
-                val u0 = j.toFloat() / crossN.toFloat()
-                val u1 = (j + 1).toFloat() / crossN.toFloat()
-                for (k in 0 until m) {
-                    val v0 = k.toFloat() / m.toFloat()
-                    val v1 = (k + 1).toFloat() / m.toFloat()
+            val width = placed.sectorWidthDegrees()
+            if (width <= 0.001f) return
+            val startNorm = WaterslideSectorLayout.normalize(placed.startAngle)
+            val intervals = if (startNorm + width <= 360f)
+                listOf(startNorm to startNorm + width)
+            else
+                listOf(startNorm to 360f, 0f to startNorm + width - 360f)
+            val degStep = 360f / crossN
+            val gridAnchor = 90f
+            for ((lo, hi) in intervals) {
+                val wrap = if (lo == startNorm) 0f else 360f
+                for (j in 0 until crossN) {
+                    val raw0 = gridAnchor + j * degStep
+                    val raw1 = gridAnchor + (j + 1) * degStep
+                    val cells = if (raw1 <= 360f) listOf(raw0 to raw1)
+                    else if (raw0 >= 360f) listOf(raw0 - 360f to raw1 - 360f)
+                    else listOf(raw0 to 360f, 0f to raw1 - 360f)
+                    for ((cg0, cg1) in cells) {
+                        val s = max(cg0, lo)
+                        val e = min(cg1, hi)
+                        if (e <= s) continue
+                        val u0 = (s + wrap - startNorm) / width
+                        val u1 = (e + wrap - startNorm) / width
+                        for (k in 0 until m) {
+                        val v0 = k.toFloat() / m.toFloat()
+                        val v1 = (k + 1).toFloat() / m.toFloat()
 
-                    val deg0 = placed.startAngle + placed.sectorWidthDegrees() * u0
-                    val deg1 = placed.startAngle + placed.sectorWidthDegrees() * u1
-                    val p00 = tubePoint(center0, lat0, up0, rad0, deg0)
-                    val p10 = tubePoint(center1, lat1, up1, rad1, deg0)
-                    val p11 = tubePoint(center1, lat1, up1, rad1, deg1)
-                    val p01 = tubePoint(center0, lat0, up0, rad0, deg1)
+                        val deg0 = s
+                        val deg1 = e
+                        val p00 = tubePoint(center0, lat0, up0, rad0 + wallExtra, deg0)
+                        val p10 = tubePoint(center1, lat1, up1, rad1 + wallExtra, deg0)
+                        val p11 = tubePoint(center1, lat1, up1, rad1 + wallExtra, deg1)
+                        val p01 = tubePoint(center0, lat0, up0, rad0 + wallExtra, deg1)
 
-                    val uv00 = nineSliceUv(u0, v0, targetW, targetH, texW, texH, border)
-                    val uv10 = nineSliceUv(u0, v1, targetW, targetH, texW, texH, border)
-                    val uv11 = nineSliceUv(u1, v1, targetW, targetH, texW, texH, border)
-                    val uv01 = nineSliceUv(u1, v0, targetW, targetH, texW, texH, border)
+                        val uv00 = nineSliceUv(u0, v0, targetW, targetH, texW, texH, border)
+                        val uv10 = nineSliceUv(u0, v1, targetW, targetH, texW, texH, border)
+                        val uv11 = nineSliceUv(u1, v1, targetW, targetH, texW, texH, border)
+                        val uv01 = nineSliceUv(u1, v0, targetW, targetH, texW, texH, border)
 
-                    val n00 = radialNormal(p00, center0)
-                    val n01 = radialNormal(p01, center0)
-                    val n11 = radialNormal(p11, center1)
-                    val n10 = radialNormal(p10, center1)
-                    quad(
-                        consumer, pose, sprite,
-                        p00, p01, p11, p10,
-                        n00, n01, n11, n10,
-                        uv00, uv01, uv11, uv10,
-                        segLight, segLight, segLight, segLight,
-                        shadeFor(n00, 1f), shadeFor(n01, 1f),
-                        shadeFor(n11, 1f), shadeFor(n10, 1f),
-                        alpha
-                    )
+                        val n00 = radialNormal(p00, center0)
+                        val n01 = radialNormal(p01, center0)
+                        val n11 = radialNormal(p11, center1)
+                        val n10 = radialNormal(p10, center1)
+                        quad(
+                            consumer, pose, sprite,
+                            p00, p01, p11, p10,
+                            n00, n01, n11, n10,
+                            uv00, uv01, uv11, uv10,
+                            segLight, segLight, segLight, segLight,
+                            shadeFor(n00, 1f), shadeFor(n01, 1f),
+                            shadeFor(n11, 1f), shadeFor(n10, 1f),
+                            alpha
+                        )
 
-                    val rIn0 = rad0 - WALL_THICKNESS
-                    val rIn1 = rad1 - WALL_THICKNESS
-                    val i00 = tubePoint(center0, lat0, up0, rIn0, deg0)
-                    val i10 = tubePoint(center1, lat1, up1, rIn1, deg0)
-                    val i11 = tubePoint(center1, lat1, up1, rIn1, deg1)
-                    val i01 = tubePoint(center0, lat0, up0, rIn0, deg1)
-                    val in00 = radialNormal(i00, center0).scale(-1.0)
-                    val in10 = radialNormal(i10, center1).scale(-1.0)
-                    val in11 = radialNormal(i11, center1).scale(-1.0)
-                    val in01 = radialNormal(i01, center0).scale(-1.0)
-                    quad(
-                        consumer, pose, sprite,
-                        i00, i10, i11, i01,
-                        in00, in10, in11, in01,
-                        uv00, uv10, uv11, uv01,
-                        segLight, segLight, segLight, segLight,
-                        shadeFor(in00, 0.55f), shadeFor(in10, 0.55f),
-                        shadeFor(in11, 0.55f), shadeFor(in01, 0.55f),
-                        alpha
-                    )
+                        val rIn0 = rad0 - WALL_THICKNESS
+                        val rIn1 = rad1 - WALL_THICKNESS
+                        val i00 = tubePoint(center0, lat0, up0, rIn0, deg0)
+                        val i10 = tubePoint(center1, lat1, up1, rIn1, deg0)
+                        val i11 = tubePoint(center1, lat1, up1, rIn1, deg1)
+                        val i01 = tubePoint(center0, lat0, up0, rIn0, deg1)
+                        val in00 = radialNormal(i00, center0).scale(-1.0)
+                        val in10 = radialNormal(i10, center1).scale(-1.0)
+                        val in11 = radialNormal(i11, center1).scale(-1.0)
+                        val in01 = radialNormal(i01, center0).scale(-1.0)
+                        quad(
+                            consumer, pose, sprite,
+                            i00, i10, i11, i01,
+                            in00, in10, in11, in01,
+                            uv00, uv10, uv11, uv01,
+                            segLight, segLight, segLight, segLight,
+                            shadeFor(in00, 0.55f), shadeFor(in10, 0.55f),
+                            shadeFor(in11, 0.55f), shadeFor(in01, 0.55f),
+                            alpha
+                        )
+                        }
+                    }
                 }
             }
         }
 
-        private fun renderWaterSegment(
+        private fun renderWaterEnvelope(
             level: Level,
-            center0: Vec3,
-            center1: Vec3,
-            lat0: Vec3,
-            lat1: Vec3,
-            up0: Vec3,
-            up1: Vec3,
-            rad0: Float,
-            rad1: Float,
-            placed: List<PlacedSector>,
+            centers: List<Vec3>,
+            lats: List<Vec3>,
+            ups: List<Vec3>,
+            rads: List<Float>,
+            water: WaterFlowSimulation.CurveWater,
             sprite: net.minecraft.client.renderer.texture.TextureAtlasSprite,
             poseStack: PoseStack,
-            consumer: VertexConsumer,
-            crossN: Int,
-            light: Int,
-            vBase: Float
+            consumer: VertexConsumer
         ) {
             val pose = poseStack.last()
-            val chordLen = center0.distanceTo(center1).toFloat()
-            val flowSign = if (center1.y < center0.y) 1f else -1f
-            val flow = AnimationTickHolder.getRenderTime(level) * WATER_FLOW_SPEED * flowSign
-            val rIn0 = (rad0 - WALL_THICKNESS).coerceAtLeast(0.001f)
-            val rIn1 = (rad1 - WALL_THICKNESS).coerceAtLeast(0.001f)
-            val rSurf0 = (rIn0 - WATER_DEPTH).coerceAtLeast(0.001f)
-            val rSurf1 = (rIn1 - WATER_DEPTH).coerceAtLeast(0.001f)
+            val fwd = water.flowSign < 0f
+            val light = LightTexture.FULL_BRIGHT
+            val flowScale = ModClientConfig.waterFlowScale()
+            val time = AnimationTickHolder.getRenderTime(level)
+            val segLen = ModConfig.waterSegmentLength()
+            val frameArc = FloatArray(centers.size)
+            for (i in 1 until centers.size) {
+                frameArc[i] = frameArc[i - 1] + centers[i - 1].distanceTo(centers[i]).toFloat()
+            }
+            val totalLen = frameArc.lastOrNull() ?: return
 
-            // U stays within one 16px tile across the band
-            fun arcUv(u: Float, v: Float): Pair<Float, Float> =
-                u to mod(vBase + v * chordLen + flow, 1f)
+            fun frameAt(arc: Float): Int {
+                for (i in 1 until centers.size) {
+                    if (frameArc[i] >= arc) return i - 1
+                }
+                return centers.size - 2
+            }
 
-            for (p in placed) {
-                if (p.sector.material == SectorMaterial.OPEN) continue
-                val start = max(p.startAngle, WATER_BAND_START)
-                val end = min(p.endAngle, WATER_BAND_END)
-                if (end <= start) continue
-                val bandSpan = WATER_BAND_END - WATER_BAND_START
-                val steps = max(1, Math.ceil(((end - start) / 360f * crossN).toDouble()).toInt())
-                for (j in 0 until steps) {
-                    val u0 = j.toFloat() / steps
-                    val u1 = (j + 1).toFloat() / steps
-                    val a0 = start + (end - start) * u0
-                    val a1 = start + (end - start) * u1
-                    val uG0 = (a0 - WATER_BAND_START) / bandSpan
-                    val uG1 = (a1 - WATER_BAND_START) / bandSpan
-
-                    // bottom arc at inner radius
-                    val b00 = tubePoint(center0, lat0, up0, rIn0, a0)
-                    val b10 = tubePoint(center1, lat1, up1, rIn1, a0)
-                    val b11 = tubePoint(center1, lat1, up1, rIn1, a1)
-                    val b01 = tubePoint(center0, lat0, up0, rIn0, a1)
-                    val nb00 = radialNormal(b00, center0).scale(-1.0)
-                    val nb10 = radialNormal(b10, center1).scale(-1.0)
-                    val nb11 = radialNormal(b11, center1).scale(-1.0)
-                    val nb01 = radialNormal(b01, center0).scale(-1.0)
+            // band ring angles on the same grid as the tube wall (90 + k*degStep)
+            val crossN = WaterslideTubeMesh.crossSections()
+            val degStep = 360f / crossN
+            val gridAnchor = 90f
+            val angles = ArrayList<Float>()
+            for (k in 0 until crossN) {
+                val raw0 = gridAnchor + k * degStep
+                val raw1 = gridAnchor + (k + 1) * degStep
+                val cells = if (raw1 <= 360f) listOf(raw0 to raw1)
+                else if (raw0 >= 360f) listOf(raw0 - 360f to raw1 - 360f)
+                else listOf(raw0 to 360f, 0f to raw1 - 360f)
+                for ((cg0, cg1) in cells) {
+                    val s = max(cg0, 210f)
+                    val e = min(cg1, 330f)
+                    if (e <= s) continue
+                    if (angles.lastOrNull()?.let { abs(it - s) < 0.01f } != true) angles += s
+                    angles += e
+                }
+            }
+            val sorted = angles.map { a -> if (a < 210f - 0.01f) a + 360f else a }.sorted()
+            val ring = ArrayList<Float>(sorted.size * 2)
+            for (a in sorted) ring += a
+            for (a in sorted.asReversed()) ring += a
+            val half = ring.size / 2
+            for (seg in water.segments) {
+                // fixed depth like the thrown water sheet
+                val depth = 0.25f
+                val arc0 = (if (fwd) seg.arc else totalLen - seg.arc).coerceIn(0f, totalLen)
+                val arc1 = (arc0 + segLen).coerceAtMost(totalLen)
+                val fi0 = frameAt(arc0)
+                val fi1 = frameAt(arc1)
+                val c0 = centers[fi0]
+                val c1 = centers[fi1]
+                val la0 = lats[fi0]
+                val la1 = lats[fi1]
+                val up0 = ups[fi0]
+                val up1 = ups[fi1]
+                val rIn0 = (rads[fi0] - WALL_THICKNESS).coerceAtLeast(0.05f)
+                val rIn1 = (rads[fi1] - WALL_THICKNESS).coerceAtLeast(0.05f)
+                val rSurf0 = (rIn0 - depth).coerceAtLeast(0.01f)
+                val rSurf1 = (rIn1 - depth).coerceAtLeast(0.01f)
+                val speed = abs(seg.speed) * WaterFlowSimulation.WATER_V_CYCLES_PER_BLOCK * flowScale
+                val flow = -time * speed
+                val tiles = (2.0 * Math.PI * rIn0).toFloat().coerceAtLeast(0.5f)
+                fun drawRingQuad(k: Int, j: Int) {
+                    val aK = ring[k]
+                    val aJ = ring[j]
+                    val rK0 = if (k < half) rIn0 else rSurf0
+                    val rK1 = if (k < half) rIn1 else rSurf1
+                    val rJ0 = if (j < half) rIn0 else rSurf0
+                    val rJ1 = if (j < half) rIn1 else rSurf1
+                    val p0 = tubePoint(c0, la0, up0, rK0, aK)
+                    val p1 = tubePoint(c1, la1, up1, rK1, aK)
+                    val p2 = tubePoint(c1, la1, up1, rJ1, aJ)
+                    val p3 = tubePoint(c0, la0, up0, rJ0, aJ)
+                    val uK = k.toFloat() / ring.size * tiles
+                    val uJ = j.toFloat() / ring.size * tiles
+                    val v0 = mod(arc0 * WaterFlowSimulation.WATER_V_CYCLES_PER_BLOCK + flow, 1f)
+                    val v1 = mod(arc1 * WaterFlowSimulation.WATER_V_CYCLES_PER_BLOCK + flow, 1f)
                     quad(
                         consumer, pose, sprite,
-                        b00, b10, b11, b01,
-                        nb00, nb10, nb11, nb01,
-                        arcUv(uG0, 0f), arcUv(uG0, 1f),
-                        arcUv(uG1, 1f), arcUv(uG1, 0f),
+                        p0, p1, p2, p3,
+                        p0, p1, p2, p3,
+                        uK to v0, uK to v1, uJ to v1, uJ to v0,
                         light, light, light, light,
                         0.55f, 0.55f, 0.55f, 0.55f,
-                        0.65f
-                    )
-
-                    // top free surface at inner radius - depth
-                    val t00 = tubePoint(center0, lat0, up0, rSurf0, a0)
-                    val t10 = tubePoint(center1, lat1, up1, rSurf1, a0)
-                    val t11 = tubePoint(center1, lat1, up1, rSurf1, a1)
-                    val t01 = tubePoint(center0, lat0, up0, rSurf0, a1)
-                    val nt00 = radialNormal(t00, center0).scale(-1.0)
-                    val nt10 = radialNormal(t10, center1).scale(-1.0)
-                    val nt11 = radialNormal(t11, center1).scale(-1.0)
-                    val nt01 = radialNormal(t01, center0).scale(-1.0)
-                    quad(
-                        consumer, pose, sprite,
-                        t00, t10, t11, t01,
-                        nt00, nt10, nt11, nt01,
-                        arcUv(uG0, 0f), arcUv(uG0, 1f),
-                        arcUv(uG1, 1f), arcUv(uG1, 0f),
-                        light, light, light, light,
-                        0.55f, 0.55f, 0.55f, 0.55f,
-                        0.65f
+                        0.75f, if (k >= half) WATER_SURFACE_TINT else WATER_TINT
                     )
                 }
-
-            }
-
-            // side walls at band edges
-            val leftSector = placed.firstOrNull {
-                WATER_BAND_START >= it.startAngle - 0.001f &&
-                    WATER_BAND_START <= it.endAngle + 0.001f
-            }
-            if (leftSector != null && leftSector.sector.material != SectorMaterial.OPEN) {
-                renderWaterWall(
-                    center0, center1, lat0, lat1, up0, up1,
-                    WATER_BAND_START, rIn0, rIn1, rSurf0, rSurf1,
-                    chordLen, flow, vBase, sprite, pose, consumer, light, left = true
-                )
-            }
-            val rightSector = placed.firstOrNull {
-                WATER_BAND_END >= it.startAngle - 0.001f &&
-                    WATER_BAND_END <= it.endAngle + 0.001f
-            }
-            if (rightSector != null && rightSector.sector.material != SectorMaterial.OPEN) {
-                renderWaterWall(
-                    center0, center1, lat0, lat1, up0, up1,
-                    WATER_BAND_END, rIn0, rIn1, rSurf0, rSurf1,
-                    chordLen, flow, vBase, sprite, pose, consumer, light, left = false
-                )
+                // open band strips: bottom arc and top arc; keep end walls when not culled
+                for (k in 0 until half - 1) {
+                    drawRingQuad(k, k + 1)
+                }
+                for (k in half until ring.size - 1) {
+                    drawRingQuad(k, k + 1)
+                }
+                if (!ModClientConfig.waterCullSegmentWalls()) {
+                    drawRingQuad(half - 1, half)
+                    drawRingQuad(ring.size - 1, 0)
+                }
             }
         }
 
-        private fun renderWaterWall(
-            center0: Vec3,
-            center1: Vec3,
-            lat0: Vec3,
-            lat1: Vec3,
-            up0: Vec3,
-            up1: Vec3,
-            angleDeg: Float,
-            rIn0: Float,
-            rIn1: Float,
-            rSurf0: Float,
-            rSurf1: Float,
-            chordLen: Float,
-            flow: Float,
-            vBase: Float,
-            sprite: net.minecraft.client.renderer.texture.TextureAtlasSprite,
-            pose: PoseStack.Pose,
-            consumer: VertexConsumer,
-            light: Int,
-            left: Boolean
+        // Falling water sheet after the slide outlet (CPU fallback).
+        private fun renderStreams(
+            water: WaterFlowSimulation.CurveWater,
+            poseStack: PoseStack,
+            bufferSource: MultiBufferSource
         ) {
-            val o0 = tubePoint(center0, lat0, up0, rIn0, angleDeg)
-            val i0 = tubePoint(center0, lat0, up0, rSurf0, angleDeg)
-            val o1 = tubePoint(center1, lat1, up1, rIn1, angleDeg)
-            val i1 = tubePoint(center1, lat1, up1, rSurf1, angleDeg)
-            val lateral = if (left) 0.5 else -0.5
-            val n0 = lat0.scale(lateral.toDouble()).add(up0.scale(-0.866))
-            val n1 = lat1.scale(lateral.toDouble()).add(up1.scale(-0.866))
-            fun uv(u: Float, v: Float): Pair<Float, Float> =
-                u to mod(vBase + v * chordLen + flow, 1f)
-            if (left) {
-                quad(
-                    consumer, pose, sprite,
-                    o0, i0, i1, o1,
-                    n0, n0, n1, n1,
-                    uv(0f, 0f), uv(1f, 0f), uv(1f, 1f), uv(0f, 1f),
-                    light, light, light, light,
-                    0.55f, 0.55f, 0.55f, 0.55f,
-                    0.65f
-                )
-            } else {
-                quad(
-                    consumer, pose, sprite,
-                    o0, o1, i1, i0,
-                    n0, n1, n1, n0,
-                    uv(0f, 0f), uv(0f, 1f), uv(1f, 1f), uv(1f, 0f),
-                    light, light, light, light,
-                    0.55f, 0.55f, 0.55f, 0.55f,
-                    0.65f
-                )
+            val exit = water.exit ?: return
+            val mc = Minecraft.getInstance()
+            val level = mc.level ?: return
+            val sprite = mc.getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
+                .apply(ResourceLocation.withDefaultNamespace("block/water_still"))
+            val consumer = bufferSource.getBuffer(TUBE_STREAM_TRANSLUCENT)
+            val pose = poseStack.last()
+            val light = LightTexture.FULL_BRIGHT
+            val (lat, up) = SlideCurveGeometry.stableFrame(exit.vel.normalize())
+            val count = 8
+            val outer = ArrayList<List<Vec3>>(count)
+            val inner = ArrayList<List<Vec3>>(count)
+            for (i in 0 until count) {
+                val theta = Math.toRadians((i + 0.5) / count * 120.0 + 210.0)
+                val c = Math.cos(theta)
+                val s = Math.sin(theta)
+                val pOut = exit.pos.add(lat.scale(c * 0.9)).add(up.scale(s * 0.9))
+                val pIn = exit.pos.add(lat.scale(c * 0.6)).add(up.scale(s * 0.6))
+                outer += traceFall(level, pOut, exit.vel)
+                inner += traceFall(level, pIn, exit.vel)
             }
+            val maxSamples = minOf(
+                outer.minOfOrNull { it.size } ?: return,
+                inner.minOfOrNull { it.size } ?: return
+            )
+            if (maxSamples < 2) return
+            val samples = maxSamples
+            val cum = FloatArray(samples)
+            for (k in 1 until samples) {
+                cum[k] = cum[k - 1] + outer[0][k - 1].distanceTo(outer[0][k]).toFloat()
+            }
+            val flow = -AnimationTickHolder.getRenderTime(level) * STREAM_FLOW_SPEED
+            fun vAt(k: Int): Float = mod(
+                cum[k] * WaterFlowSimulation.WATER_V_CYCLES_PER_BLOCK + flow, 1f
+            )
+            val maxSegments = max(4, (48 * ModClientConfig.polygonScale()).roundToInt())
+            val stride = max(1, (samples - 1) / maxSegments)
+
+            fun sheet(
+                a: List<Vec3>,
+                b: List<Vec3>,
+                u0: Float,
+                u1: Float,
+                tint: FloatArray,
+                alpha: Float,
+                flip: Boolean
+            ) {
+                for (k in 0 until samples - 1 step stride) {
+                    val k1 = minOf(k + stride, samples - 1)
+                    val a0 = a[k]
+                    val a1 = a[k1]
+                    val b1 = b[k1]
+                    val b0 = b[k]
+                    val edge1 = a1.subtract(a0)
+                    val edge2 = b0.subtract(a0)
+                    var normal = edge1.cross(edge2).normalize()
+                    if (flip) normal = normal.scale(-1.0)
+                    vertex(consumer, pose, sprite, a0, normal, u0 to vAt(k), light, 0.7f, alpha, tint)
+                    vertex(consumer, pose, sprite, a1, normal, u0 to vAt(k1), light, 0.7f, alpha, tint)
+                    vertex(consumer, pose, sprite, b1, normal, u1 to vAt(k1), light, 0.7f, alpha, tint)
+                    vertex(consumer, pose, sprite, b0, normal, u1 to vAt(k), light, 0.7f, alpha, tint)
+                }
+            }
+
+            val n = outer.size
+            val colArc = FloatArray(n)
+            for (i in 1 until n) {
+                colArc[i] = colArc[i - 1] + outer[i - 1][0].distanceTo(outer[i][0]).toFloat()
+            }
+            for (i in 0 until n - 1) {
+                val u0 = mod(colArc[i], 1f)
+                val u1 = mod(colArc[i + 1], 1f)
+                sheet(outer[i], outer[i + 1], u0, u1, WATER_TINT, 0.75f, false)
+                sheet(inner[i], inner[i + 1], u0, u1, WATER_SURFACE_TINT, 0.95f, true)
+            }
+        }
+
+        private fun traceFall(level: Level, pos: Vec3, vel: Vec3): List<Vec3> {
+            val dt = 0.5
+            val poly = ArrayList<Vec3>()
+            var p = pos
+            var v = vel
+            poly += p
+            for (step in 0 until 400) {
+                p = p.add(v.scale(dt / 20.0))
+                v = v.add(0.0, -32.0 * dt / 20.0, 0.0)
+                val bp = BlockPos.containing(p)
+                if (level.getBlockState(bp).isSolid || p.y < level.minBuildHeight) break
+                if (step % 2 == 0) poly += p
+            }
+            return poly
         }
 
         private fun renderSideWall(
@@ -883,6 +1038,8 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             up1: Vec3,
             rad0: Float,
             rad1: Float,
+            tan0: Vec3,
+            tan1: Vec3,
             angleDeg: Float,
             dir: Float,
             sprite: net.minecraft.client.renderer.texture.TextureAtlasSprite,
@@ -895,11 +1052,19 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             val a = Math.toRadians(angleDeg.toDouble())
             val sin = Math.sin(a).toFloat()
             val cos = Math.cos(a).toFloat()
+            val texW = sprite.contents().width()
+            val texH = sprite.contents().height()
+            val border = ModConfig.sectorBorderPx().toFloat()
+            val sideTargetW = ModClientConfig.wallThickness() * PIXELS_PER_BLOCK
+            val sideTargetH = WaterslideTubeMesh.bezierArcLength(center0, center1, tan0, tan1) * PIXELS_PER_BLOCK
+            fun sideUv(u: Float, v: Float): Pair<Float, Float> =
+                nineSliceUv(u, v, sideTargetW, sideTargetH, texW, texH, border)
             val inner0 = rad0 - WALL_THICKNESS
             val inner1 = rad1 - WALL_THICKNESS
-            val o0 = tubePoint(center0, lat0, up0, rad0, angleDeg)
+            val wallExtra = ModClientConfig.wallThickness() - WALL_THICKNESS
+            val o0 = tubePoint(center0, lat0, up0, rad0 + wallExtra, angleDeg)
             val i0 = tubePoint(center0, lat0, up0, inner0, angleDeg)
-            val o1 = tubePoint(center1, lat1, up1, rad1, angleDeg)
+            val o1 = tubePoint(center1, lat1, up1, rad1 + wallExtra, angleDeg)
             val i1 = tubePoint(center1, lat1, up1, inner1, angleDeg)
             val n0 = lat0.scale((-sin * dir).toDouble())
                 .add(up0.scale((cos * dir).toDouble()))
@@ -912,7 +1077,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                     consumer, pose, sprite,
                     o0, i0, i1, o1,
                     n0, n0, n1, n1,
-                    0f to 0f, 1f to 0f, 1f to 1f, 0f to 1f,
+                    sideUv(0f, 0f), sideUv(1f, 0f), sideUv(1f, 1f), sideUv(0f, 1f),
                     light, light, light, light,
                     0.7f, 0.7f, 0.7f, 0.7f,
                     alpha
@@ -922,7 +1087,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                     consumer, pose, sprite,
                     o0, o1, i1, i0,
                     n0, n0, n1, n1,
-                    0f to 0f, 0f to 1f, 1f to 1f, 1f to 0f,
+                    sideUv(0f, 0f), sideUv(0f, 1f), sideUv(1f, 1f), sideUv(1f, 0f),
                     light, light, light, light,
                     0.7f, 0.7f, 0.7f, 0.7f,
                     alpha
@@ -963,7 +1128,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
         private fun radialNormal(p: Vec3, center: Vec3): Vec3 =
             p.subtract(center).normalize()
 
-// 9-slice UV
+// tiled UV
         private fun nineSliceUv(
             u01: Float,
             v01: Float,
@@ -975,24 +1140,16 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
         ): Pair<Float, Float> {
             val px = u01 * targetW
             val py = v01 * targetH
-            val w = texW.toFloat()
-            val h = texH.toFloat()
-            val cx = (w - 2f * border).coerceAtLeast(1f)
-            val cy = (h - 2f * border).coerceAtLeast(1f)
-            val right = (targetW - border).coerceAtLeast(border)
-            val top = (targetH - border).coerceAtLeast(border)
-
-            val uf = when {
-                px < border -> px / w
-                px >= right -> (w - (targetW - px)) / w
-                else -> (border + mod(px - border, cx)) / w
-            }
-            val vf = when {
-                py < border -> py / h
-                py >= top -> (h - (targetH - py)) / h
-                else -> (border + mod(py - border, cy)) / h
-            }
+            val centerW = (texW.toFloat() - border * 2f).coerceAtLeast(1f)
+            val centerH = (texH.toFloat() - border * 2f).coerceAtLeast(1f)
+            val uf = mod(border + mod(px, centerW), texW.toFloat()) / texW.toFloat()
+            val vf = mod(border + mod(py, centerH), texH.toFloat()) / texH.toFloat()
             return uf to vf
+        }
+
+        private fun smoothstep01(edge0: Float, edge1: Float, x: Float): Float {
+            val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
+            return t * t * (3f - 2f * t)
         }
 
         private fun mod(v: Float, m: Float): Float = ((v % m) + m) % m
@@ -1021,12 +1178,16 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             shadeB: Float,
             shadeC: Float,
             shadeD: Float,
-            alpha: Float
+            alpha: Float,
+            tint: FloatArray? = null
         ) {
-            vertex(consumer, pose, sprite, a, na, uva, lightA, shadeA, alpha)
-            vertex(consumer, pose, sprite, b, nb, uvb, lightB, shadeB, alpha)
-            vertex(consumer, pose, sprite, c, nc, uvc, lightC, shadeC, alpha)
-            vertex(consumer, pose, sprite, d, nd, uvd, lightD, shadeD, alpha)
+            // flat face: one normal and one shade for the whole quad
+            val fn = b.subtract(a).cross(d.subtract(a)).normalize()
+            val shade = (shadeA + shadeB + shadeC + shadeD) / 4f
+            vertex(consumer, pose, sprite, a, fn, uva, lightA, shade, alpha, tint)
+            vertex(consumer, pose, sprite, b, fn, uvb, lightB, shade, alpha, tint)
+            vertex(consumer, pose, sprite, c, fn, uvc, lightC, shade, alpha, tint)
+            vertex(consumer, pose, sprite, d, fn, uvd, lightD, shade, alpha, tint)
         }
 
         private fun vertex(
@@ -1038,10 +1199,14 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             uv: Pair<Float, Float>,
             light: Int,
             shade: Float,
-            alpha: Float
+            alpha: Float,
+            tint: FloatArray? = null
         ) {
+            val r = tint?.get(0) ?: shade
+            val g = tint?.get(1) ?: shade
+            val b = tint?.get(2) ?: shade
             consumer.addVertex(pose, p.x.toFloat(), p.y.toFloat(), p.z.toFloat())
-                .setColor(shade, shade, shade, alpha)
+                .setColor(r, g, b, alpha)
                 .setUv(sprite.getU(uv.first), sprite.getV(uv.second))
                 .setLight(light)
                 .setNormal(pose, normal.x.toFloat(), normal.y.toFloat(), normal.z.toFloat())
