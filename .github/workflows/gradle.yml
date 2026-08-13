@@ -24,7 +24,7 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
 
-    - name: resolve and download Create: Coasters Simulated jar
+    - name: "resolve and download Create: Coasters Simulated jar"
       env:
         CCS_VERSION: ${{ env.CCS_VERSION }}
       run: |
