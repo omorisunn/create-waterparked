@@ -161,14 +161,12 @@ object SlideClientSession {
             val upCam = rightN.cross(worldTanNow).normalize()
             val perp = felt.subtract(worldTanNow.scale(felt.dot(worldTanNow)))
             val rawRoll = Math.toDegrees(Math.atan2(perp.dot(rightN), perp.dot(upCam))).toFloat()
-            val prevRoll = session.lastRoll
-            val unwrapped = if (prevRoll == null) rawRoll
-            else prevRoll + Mth.wrapDegrees(rawRoll - prevRoll)
+            val prevRoll = session.lastRoll ?: 0f
+            val unwrapped = prevRoll + Mth.wrapDegrees(rawRoll - prevRoll)
             session.lastRoll = unwrapped
             val targetRoll = unwrapped.coerceIn(-30f, 30f)
-            val prevSmoothedRoll = session.lastSmoothedRoll
-            val smoothedRoll = if (prevSmoothedRoll == null) targetRoll
-            else prevSmoothedRoll + Mth.wrapDegrees(targetRoll - prevSmoothedRoll)
+            val prevSmoothedRoll = session.lastSmoothedRoll ?: 0f
+            val smoothedRoll = prevSmoothedRoll + Mth.wrapDegrees(targetRoll - prevSmoothedRoll)
                 .coerceIn(-MAX_CAMERA_ROLL_STEP, MAX_CAMERA_ROLL_STEP)
             session.lastSmoothedRoll = smoothedRoll
             roll = smoothedRoll.coerceIn(-30f, 30f)
@@ -232,6 +230,7 @@ object SlideClientSession {
             session.startTrackYaw = yawOf(tan)
             session.startTrackPitch = pitchOf(tan)
             if (player != null) {
+                // start the camera at the pre-entry view, then the track delta adds on
                 session.freeLookYaw = player.getYRot()
                 session.freeLookPitch = player.getXRot()
                 session.lastEntityYaw = player.getYRot()
@@ -240,6 +239,10 @@ object SlideClientSession {
                 session.lastEntityYaw = yawOf(tan)
                 session.lastEntityPitch = pitchOf(tan)
             }
+            // snap the smoothed camera to the entry view so the FIRST frame is
+            // immediate (no easing from zero); smoothing only applies afterwards
+            session.lastCameraYaw = session.freeLookYaw
+            session.lastCameraPitch = session.freeLookPitch
         }
     }
 

@@ -15,6 +15,7 @@ import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
 import net.createmod.catnip.outliner.Outliner
 import net.omori_sunny.create_waterparked.CreateWaterparked
+import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
@@ -116,8 +117,8 @@ object WaterslideSectorEdit {
             handleAdd(event, player, mainBlockId)
             return
         }
-// stick adds an empty sector
-        if (player.mainHandItem.item === Items.STICK) {
+// axe (not sneaking) adds an empty sector
+        if (player.mainHandItem.item is AxeItem && !player.isShiftKeyDown) {
             handleAdd(event, player, null)
             return
         }
@@ -134,6 +135,15 @@ object WaterslideSectorEdit {
         }
 
         sendSector(event.level, hit.curve, action, hit.angle, null)
+        player.displayClientMessage(
+            Component.translatable(
+                if (action == SectorEditAction.DELETE)
+                    "create_waterparked.sector.deleted"
+                else
+                    "create_waterparked.sector.added"
+            ).withStyle(ChatFormatting.GREEN),
+            true
+        )
         CreateWaterparked.LOGGER.debug(
             "WaterslideSectorEdit: sent {} angle={}",
             action, hit.angle
@@ -174,6 +184,11 @@ object WaterslideSectorEdit {
             pendingBlockAnchor = pos.immutable()
             showPendingBox(level, pos)
             spawnParticles(level, Vec3.atCenterOf(pos), 12)
+            player.displayClientMessage(
+                Component.translatable("create_waterparked.sector.select_second")
+                    .withStyle(ChatFormatting.YELLOW),
+                true
+            )
             event.isCanceled = true
             event.cancellationResult = InteractionResult.SUCCESS
             return
@@ -405,7 +420,7 @@ object WaterslideSectorEdit {
     }
 
     private fun isSectorAddTool(stack: net.minecraft.world.item.ItemStack): Boolean =
-        stack.item is BlockItem || stack.item === Items.STICK
+        stack.item is BlockItem || stack.item is AxeItem
 
 // second anchor add preview
     private fun updateTargetPreview(mc: Minecraft, level: Level, pending: BlockPos) {
@@ -562,6 +577,11 @@ object WaterslideSectorEdit {
                 SectorEditAction.DELETE,
                 hit.angleDegrees
             )
+        )
+        mc.player?.displayClientMessage(
+            Component.translatable("create_waterparked.sector.deleted")
+                .withStyle(ChatFormatting.GREEN),
+            true
         )
         CreateWaterparked.LOGGER.debug("WaterslideSectorEdit: axe delete sector {}", hit.sectorId)
         return true
@@ -1016,9 +1036,13 @@ object WaterslideSectorEdit {
         b: Float,
         a: Float
     ) {
-        for (i in 0 until WALL_SEGMENTS) {
-            val a0 = i.toDouble() / WALL_SEGMENTS * 2.0 * Math.PI
-            val a1 = (i + 1).toDouble() / WALL_SEGMENTS * 2.0 * Math.PI
+        // match the tube wall's low-poly cross-section grid (gridAnchor=90,
+        // crossSections() sides) so the outline follows the actual polygon
+        val crossN = WaterslideTubeMesh.crossSections()
+        val degStep = 360.0 / crossN
+        for (i in 0 until crossN) {
+            val a0 = Math.toRadians(90.0 + i * degStep)
+            val a1 = Math.toRadians(90.0 + (i + 1) * degStep)
             val p0 = circlePoint(center, frame, radius, a0)
             val p1 = circlePoint(center, frame, radius, a1)
             WaterslideEditorRenderTypes.billboardStrip(

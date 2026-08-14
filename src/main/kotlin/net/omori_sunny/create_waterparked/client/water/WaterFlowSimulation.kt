@@ -1,6 +1,7 @@
 package net.omori_sunny.create_waterparked.client.water
 
 import com.simibubi.create.content.trains.track.BezierConnection
+import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
@@ -36,13 +37,17 @@ object WaterFlowSimulation {
     private data class TubeSeg(
         val a: Vec3,
         val b: Vec3,
-        val r: Float
+        val r0: Float,
+        val r1: Float
     )
 
     private val fields = HashMap<Pair<Long, Long>, CurveWater>()
     private val segCache = HashMap<ResourceKey<Level>, Pair<String, List<TubeSeg>>>()
     private var version = 0
     private var debugPolylines: List<List<Vec3>> = emptyList()
+    // cooldown cache: thrown-stream trajectories recompute only on a sync refresh
+    private var streamCacheVersion = -1
+    private val streamCache = HashMap<String, Pair<List<List<Vec3>>, List<List<Vec3>>>>()
 
     @JvmStatic
     fun debugPolylines(): List<List<Vec3>> = debugPolylines
@@ -115,7 +120,7 @@ object WaterFlowSimulation {
         private val buckets = HashMap<Long, MutableList<TubeSeg>>()
 
         fun add(seg: TubeSeg) {
-            val r = seg.r.toDouble() + 0.5
+            val r = max(seg.r0, seg.r1).toDouble() + 0.5
             val minX = Mth.floor((min(seg.a.x, seg.b.x) - r) / GRID_SIZE)
             val maxX = Mth.floor((max(seg.a.x, seg.b.x) + r) / GRID_SIZE)
             val minY = Mth.floor((min(seg.a.y, seg.b.y) - r) / GRID_SIZE)
@@ -144,8 +149,9 @@ object WaterFlowSimulation {
                             val lenSq = ab.lengthSqr()
                             if (lenSq < 1.0E-12) continue
                             val t = ((p.subtract(s.a)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
+                            val r = (s.r0 + (s.r1 - s.r0) * t).toDouble()
                             val closest = s.a.add(ab.scale(t))
-                            if (p.distanceToSqr(closest) < s.r.toDouble() * s.r.toDouble()) return true
+                            if (p.distanceToSqr(closest) < r * r) return true
                         }
                     }
                 }
@@ -178,12 +184,23 @@ object WaterFlowSimulation {
         coverEnd: Float,
         ownFrames: List<Vec3>
     ): Pair<List<List<Vec3>>, List<List<Vec3>>>? {
+        // cooldown: only recompute after a sync refresh (version bump)
+        if (streamCacheVersion != version) {
+            streamCacheVersion = version
+            streamCache.clear()
+        }
+        val cacheKey = "${center.x},${center.y},${center.z}|${exitVel.x},${exitVel.y},${exitVel.z}|$rIn|$rSurf|$coverStart|$coverEnd"
+        streamCache[cacheKey]?.let { return it }
+
         val own = ownCenterHash(ownFrames)
         val grid = SegGrid()
         for (s in allTubeSegments(level)) {
             if (own.contains(hashVec(s.a)) || own.contains(hashVec(s.b))) continue
             grid.add(s)
         }
+        // fixed angular grid (same spacing as the in-tube band) so the thrown
+        // sheet lines up ring-to-ring at the mouth; the ragged cut-off comes from
+        // each ray's independent pipe/ground collision, not from random angles
         val count = 16
         val outer = ArrayList<List<Vec3>>(count)
         val inner = ArrayList<List<Vec3>>(count)
@@ -198,14 +215,14 @@ object WaterFlowSimulation {
             outer += traceStream(level, outerPos, exitVel, grid)
             inner += traceStream(level, innerPos, exitVel, grid)
         }
-        val maxSamples = minOf(
-            outer.minOfOrNull { it.size } ?: return null,
-            inner.minOfOrNull { it.size } ?: return null
-        )
-        if (maxSamples < 2) return null
-        val outO = outer.map { it.subList(0, maxSamples) }
-        val outI = inner.map { it.subList(0, maxSamples) }
-        return outO to outI
+        // keep every ray's full length (no shortest-ray truncation); the end
+        // fades out instead of cutting mid-air
+        if (outer.any { it.size >= 2 } && inner.any { it.size >= 2 }) {
+            val result = outer to inner
+            streamCache[cacheKey] = result
+            return result
+        }
+        return null
     }
 
     private fun traceStream(
@@ -214,18 +231,27 @@ object WaterFlowSimulation {
         vel: Vec3,
         grid: SegGrid
     ): List<Vec3> {
-        val dt = 0.5
+        // strict physics: dt in seconds, v in blocks/s, gravity 32 blocks/s^2
+        val dt = 0.05
         val poly = ArrayList<Vec3>()
         var p = pos
         var v = vel
         poly += p
-        for (step in 0 until 400) {
-            p = p.add(v.scale(dt / 20.0))
-            v = v.add(0.0, -32.0 * dt / 20.0, 0.0)
+        var grace = 0
+        for (step in 0 until 240) {
+            p = p.add(v.scale(dt))
+            v = v.add(0.0, -32.0 * dt, 0.0)
             val bp = BlockPos.containing(p)
             if (level.getBlockState(bp).isSolid || p.y < level.minBuildHeight) break
-            if (grid.hit(p)) break
-            if (step % 2 == 0) poly += p
+            if (grid.hit(p)) {
+                // keep flying a short stretch past the pipe before cutting, so
+                // the water doesn't vanish right at the flywheel/BE surface
+                grace++
+                if (grace >= 8) break
+            } else {
+                grace = 0
+            }
+            poly += p
         }
         return poly
     }
@@ -243,13 +269,12 @@ object WaterFlowSimulation {
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
                 val r1 = SlideCurveGeometry.radiusAt(level, b)
-                val count = bc.getSegmentCount().coerceAtLeast(1)
-                for (i in 0 until count) {
-                    val t0 = if (i == 0) 0f else bc.getSegmentT(i)
-                    val t1 = if (i == count - 1) 1f else bc.getSegmentT(i + 1)
-                    val p0 = bc.getPosition(t0.toDouble())
-                    val p1 = bc.getPosition(t1.toDouble())
-                    out += TubeSeg(p0, p1, max(Mth.lerp(t0, r0, r1), Mth.lerp(t1, r0, r1)))
+                // reuse the exact same sampling as the flywheel renderer
+                // (interpolated radius + open-end extensions) so the collision
+                // surface equals the visible tube, not a fat collision box
+                val frames = WaterslideTubeMesh.sampleSegments(level, bc, r0, r1, Vec3.ZERO)
+                for (f in frames) {
+                    out += TubeSeg(f.prevSpine, f.currSpine, f.prevRadius, f.currRadius)
                 }
             }
         }

@@ -18,7 +18,7 @@ public final class WaterslideTrackMaterials {
         TrackMaterialFactory.make(ID)
             .lang("Water Slide Track")
             .block(NonNullSupplier.lazy(() -> () -> ModBlocks.INSTANCE.getWATERSLIDE_TRACK()))
-            .particle(ResourceLocation.fromNamespaceAndPath("create", "block/industrial_iron_block"))
+            .particle(ResourceLocation.fromNamespaceAndPath("create_waterparked", "block/waterslide_track"))
             .standardModels()
             .noRecipeGen()
             .build();

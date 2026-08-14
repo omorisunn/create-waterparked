@@ -166,7 +166,13 @@ object PhysicsSlideTrajectoryBuilder {
                         val speed = vel.length()
                         vel = vel.subtract(dir.scale(radialVel))
                         val after = vel.length()
-                        if (after > 1.0E-9) vel = vel.scale(speed / after)
+                        if (after > 1.0E-9) {
+                            vel = vel.scale(speed / after)
+                        } else {
+                            // fully radial hit: slide along the tube tangent instead
+                            // of zeroing the velocity (keeps the horizontal component)
+                            vel = hit.tangent.scale(speed)
+                        }
                     }
                     pos = hit.center.add(dir.scale(wallDist))
                     // watered tubes apply water friction on every wall contact
@@ -673,14 +679,14 @@ object PhysicsSlideTrajectoryBuilder {
             else -> b.y <= a.y
         }
         val entryTan = if (towardSecond) tan else tan.scale(-1.0)
-        val along = vel.dot(entryTan)
         val center = fa.center.lerp(fb.center, bestT)
-        val inner = max(0.1, radius - SLIDE_WALL_THICKNESS)
-        val target = max(MIN_WALL_DIST, inner - poseWidth / 2.0)
-        val radial = pos.subtract(center)
-        val entryPos = if (radial.lengthSqr() < 1.0E-12) center.add(up.scale(target))
-        else center.add(radial.normalize().scale(target))
-        val entryVel = entryTan.scale(max(along, 0.5))
+        // keep the player's actual contact position; the in-tube physics slides
+        // them back inside the wall gradually instead of snapping radially
+        // (no "air wall" jump)
+        val entryPos = pos
+        // preserve BOTH the incoming direction and speed when re-entering
+        // another slide; wall collisions are handled by the in-tube physics
+        val entryVel = vel
         return ReentryStart(
             bc, towardSecond, startT, entryPos, entryVel, center, entryTan, lat, up, radius
         )

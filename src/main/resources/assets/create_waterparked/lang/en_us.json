@@ -15,7 +15,10 @@
   "create_waterparked.sector.add_ok": "Can add sector",
   "create_waterparked.sector.add_fail": "Cannot add sector here",
   "create_waterparked.sector.added": "Sector added",
+  "create_waterparked.sector.deleted": "Sector deleted",
+  "create_waterparked.sector.select_second": "Right-click the other waterslide anchor",
   "create_waterparked.sector.delete_last": "Cannot delete the last sector",
   "create_waterparked.track.sector_boundary_snap_hint": "Hold %s to disable snapping",
-  "create_waterparked.slide.exit_hint": "Press %s to exit the slide"
+  "create_waterparked.slide.exit_hint": "Press %s to exit the slide",
+  "create_waterparked.ponder.ponder_connect.header": "Connecting Waterslide Anchors"
 }

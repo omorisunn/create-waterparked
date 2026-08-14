@@ -16,6 +16,8 @@ import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
 import net.omori_sunny.create_waterparked.content.sit.SlideSitEntity
 import net.omori_sunny.create_waterparked.network.WaterslideDebugRequestPayload
+import net.omori_sunny.create_waterparked.ponder.WaterslidePonderPlugin
+import net.createmod.ponder.foundation.PonderIndex
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.entity.EntityRenderer
 import net.minecraft.resources.ResourceLocation
@@ -61,6 +63,8 @@ object CreateWaterparkedClient {
     }
 
     private fun onClientSetup(event: FMLClientSetupEvent) {
+        // ponder stories for waterslide items
+        event.enqueueWork { PonderIndex.addPlugin(WaterslidePonderPlugin()) }
         // flywheel instanced rendering
         SimpleBlockEntityVisualizer.builder(ModBlockEntities.WATERSLIDE_ANCHOR_BE)
             .factory { ctx, be, pt -> WaterslideTubeVisual(ctx, be, pt) }

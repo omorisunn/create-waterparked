@@ -1,5 +1,7 @@
 package net.omori_sunny.create_waterparked.game.physics
 
+import com.simibubi.create.AllItems
+import com.simibubi.create.content.equipment.armor.DivingBootsItem
 import com.simibubi.create.content.trains.track.BezierConnection
 import dev.ryanhcode.sable.Sable
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
@@ -119,6 +121,15 @@ object PlayerSlideController {
                     tryStartSlide(level, entity)
                 }
             }
+            // water flow pushes players standing inside the tube (not while sliding)
+            for (player in level.players()) {
+                if (player.isRemoved || sessions.containsKey(player.uuid)) continue
+                val center = player.position().add(0.0, player.bbHeight / 2.0, 0.0)
+                val waterVel = ServerWaterSimulation.waterVelocityAt(level, center) ?: continue
+                // push scales with the player's velocity relative to the water
+                val relVel = waterVel.subtract(player.deltaMovement.scale(20.0))
+                player.addDeltaMovement(relVel.scale(0.1 / 20.0))
+            }
         }
     }
 
@@ -175,6 +186,7 @@ object PlayerSlideController {
     }
 
     private fun tryStartSlide(level: ServerLevel, entity: Entity) {
+        if (isWearingCopperDivingBoots(entity)) return
         val player = entity as? ServerPlayer
         if (player != null && player.isShiftKeyDown) return
         val cd = entryCooldown[entity.uuid]
@@ -205,9 +217,10 @@ object PlayerSlideController {
         val entryTanWorld = entryTangentWorld(level, entry)
         val along = velWorld.dot(entryTanWorld)
         if (along < -0.5) return
-        // keep only the tangential component plus the configured entrance boost;
-        // dropping the radial part avoids an instant speed burst on entry
-        var startVelWorld = entryTanWorld.scale(along.coerceAtLeast(0.0))
+        // preserve the player's actual 3D velocity (direction AND magnitude)
+        // and add the configured entrance boost; the trajectory builder already
+        // starts from the real position/velocity and resolves any wall contact
+        var startVelWorld = velWorld
             .add(entryTanWorld.scale(ModConfig.entranceBoost() * 20.0))
         val maxSpeed = ModConfig.slideMaxEntrySpeed()
         if (startVelWorld.lengthSqr() > maxSpeed * maxSpeed) {
@@ -581,6 +594,15 @@ object PlayerSlideController {
             }
         }
         return key
+    }
+
+    // Create copper diving boots are heavy enough to keep the player from
+    // being swept into a slide (netherite diving boots are intentionally NOT
+    // affected by this rule).
+    private fun isWearingCopperDivingBoots(entity: Entity): Boolean {
+        if (entity !is LivingEntity) return false
+        val worn = DivingBootsItem.getWornItem(entity)
+        return !worn.isEmpty && worn.item === AllItems.COPPER_DIVING_BOOTS.get()
     }
 
     private fun entityDimensions(entity: Entity): EntityDimensions =

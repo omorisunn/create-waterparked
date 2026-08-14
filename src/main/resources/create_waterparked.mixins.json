@@ -30,7 +30,11 @@
     "client.CoasterCurveDyeOutlineClientMixin",
     "client.CoasterTrackPlacementPreviewMixin",
     "client.LevelRendererAccessor",
-    "client.SableEntityOrientationMixin"
+    "client.SableEntityOrientationMixin",
+    "ponder.WaterslidePonderLevelAccessor",
+    "ponder.WaterslidePonderLevelInvoker",
+    "ponder.WaterslideSchematicLevelAccessor",
+    "ponder.WaterslidePonderSceneRegistryMixin"
   ],
   "injectors": {
     "defaultRequire": 1

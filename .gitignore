@@ -35,3 +35,7 @@ libs/
 
 MODELING.md
 /TODO.md
+/.dsh-skin/
+/.dsh/
+/.dshcraft-staging/
+/.gradle-home/

@@ -59,15 +59,24 @@ object ServerWaterSimulation {
     )
 
     private class SegmentAcc {
-        var speedSum = 0.0
+        var velSum = Vec3.ZERO
+        var axisSum = Vec3.ZERO
         var count = 0
 
-        fun add(speed: Double) {
-            speedSum += speed
+        fun add(vel: Vec3, axis: Vec3) {
+            velSum = velSum.add(vel)
+            axisSum = axisSum.add(axis)
             count++
         }
 
-        fun averageSpeed(): Float = if (count == 0) 0f else (speedSum / count).toFloat()
+        // average particle velocity projected onto the segment's average axis;
+        // positive = along the curve forward direction (downstream)
+        fun signedSpeed(): Float {
+            if (count == 0) return 0f
+            val avgAxis = axisSum.normalize()
+            if (avgAxis.lengthSqr() < 1.0E-12) return 0f
+            return velSum.scale(1.0 / count).dot(avgAxis).toFloat()
+        }
     }
 
     private class SegGrid {
@@ -179,6 +188,37 @@ object ServerWaterSimulation {
     fun field(level: Level, a: BlockPos, b: BlockPos): CurveField? =
         fields[level.dimension()]?.get(edgeKey(a, b))
 
+    // water flow velocity (blocks/s) at a world position, for pushing players.
+    // Returns null when the position isn't inside a simulated water tube.
+    @JvmStatic
+    fun waterVelocityAt(level: ServerLevel, pos: Vec3): Vec3? {
+        val fieldMap = fields[level.dimension()] ?: return null
+        if (fieldMap.isEmpty()) return null
+        val segs = allSegments(level, structureSignature(level))
+        var best: TubeSeg? = null
+        var bestD = Double.MAX_VALUE
+        var bestT = 0.0
+        for (s in segs) {
+            val ab = s.b.subtract(s.a)
+            val lenSq = ab.lengthSqr()
+            if (lenSq < 1.0E-12) continue
+            val t = ((pos.subtract(s.a)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
+            val closest = s.a.add(ab.scale(t))
+            val d = pos.distanceToSqr(closest)
+            if (d < bestD) { bestD = d; best = s; bestT = t }
+        }
+        val seg = best ?: return null
+        if (bestD > (seg.rIn * seg.rIn).toDouble()) return null
+        val arc = seg.arcStart + (bestT * seg.len).toFloat()
+        val field = fieldMap[seg.curveKey] ?: return null
+        if (field.segments.isEmpty()) return null
+        val segLen = ModConfig.waterSegmentLength().toFloat()
+        val idx = (arc / segLen).toInt().coerceIn(0, field.segments.size - 1)
+        val speed = field.segments[idx].speed
+        if (kotlin.math.abs(speed) < 0.01f) return Vec3.ZERO
+        return seg.b.subtract(seg.a).normalize().scale(speed.toDouble())
+    }
+
     // called every server tick; recalculates on demand with a cooldown guard
     fun tickServer(level: ServerLevel) {
         val dim = level.dimension()
@@ -242,10 +282,26 @@ object ServerWaterSimulation {
         val debugOut = if (collectDebug) ArrayList<MutableList<Vec3>>() else null
         val count = ModConfig.waterSimParticleCount()
         val perLeg = max(1, count / max(1, sources.size))
+        // Deterministic sampling: the same structure signature must always produce
+        // the same particle rays. Random world RNG made every recalculation (login
+        // resync, periodic recalc, edits) change ExitInfo.vel, so the client's
+        // thrown water visibly drifted. Sort sources and seed per particle instead.
+        val sortedSources = sources.sortedWith(
+            compareBy<LegStart>(
+                { it.center.x }, { it.center.y }, { it.center.z },
+                { it.tangent.x }, { it.tangent.y }, { it.tangent.z },
+                { it.lateral.x }, { it.lateral.y }, { it.lateral.z },
+                { it.rIn }
+            )
+        )
+        val sigSeed = sig.hashCode().toLong()
         var idx = 0
-        for (src in sources) {
+        for ((sourceIndex, src) in sortedSources.withIndex()) {
             for (i in 0 until perLeg) {
-                integrate(level, src, grid, segments, acc, exits, debugOut)
+                val seed = sigSeed + sourceIndex * -7046029254386353131L + i * -2960836687051489901L
+                val rng = java.util.Random(seed)
+                integrate(level, src, grid, segments, acc, exits, debugOut,
+                    rng.nextDouble(), rng.nextDouble())
                 if (++idx >= count * 2) break
             }
         }
@@ -255,10 +311,27 @@ object ServerWaterSimulation {
             val list = segMap.entries.sortedBy { it.key }.map { (segIdx, a) ->
                 WaterSegment(
                     (segIdx * segLen + segLen / 2f),
-                    a.averageSpeed()
+                    a.signedSpeed()
                 )
             }
             out[key] = CurveField(list, exits[key])
+        }
+        // TEMP DIAGNOSTIC: per-curve segment coverage + flow direction sign
+        for ((key, field) in out) {
+            val segs = field.segments
+            if (segs.isEmpty()) continue
+            val arcs = segs.map { it.arc }.sorted()
+            var gaps = 0
+            for (i in 1 until arcs.size) {
+                if (arcs[i] - arcs[i - 1] > segLen * 1.5f) gaps++
+            }
+            val pos = segs.count { it.speed >= 0f }
+            val spdMin = segs.minOf { it.speed }
+            val spdMax = segs.maxOf { it.speed }
+            CreateWaterparked.LOGGER.info(
+                "[WaterSeg] key={},{} n={} arcMin={} arcMax={} gaps={} pos={} neg={} spdMin={} spdMax={}",
+                key.first, key.second, segs.size, arcs.first(), arcs.last(), gaps, pos, segs.size - pos, spdMin, spdMax
+            )
         }
         fields[dim] = out
         val entries = out.map { (key, field) ->
@@ -324,15 +397,15 @@ object ServerWaterSimulation {
         segments: List<TubeSeg>,
         acc: HashMap<Pair<Long, Long>, HashMap<Int, SegmentAcc>>,
         exits: HashMap<Pair<Long, Long>, ExitInfo>,
-        debugOut: MutableList<MutableList<Vec3>>?
+        debugOut: MutableList<MutableList<Vec3>>?,
+        u: Double,
+        ang: Double
     ) {
         val dt = 0.03
         val gravity = 32.0 * dt
         val maxSteps = (ModConfig.waterSimMaxBlocks() / 0.2).toInt()
         val segLen = ModConfig.waterSegmentLength().toFloat()
-        // uniform disc sample on the anchor opening
-        val u = level.random.nextDouble()
-        val ang = level.random.nextDouble() * Math.PI * 2.0
+        // uniform disc sample on the anchor opening (deterministic per particle)
         val rr = kotlin.math.sqrt(u) * src.rIn
         var pos = src.center
             .add(src.lateral.scale(cos(ang) * rr))
@@ -364,7 +437,14 @@ object ServerWaterSimulation {
                             // wall contact: drop the outward component, slide along the wall
                             val n = radial.scale(1.0 / dist)
                             val vn = vel.dot(n)
-                            if (vn > 0.0) vel = vel.subtract(n.scale(vn))
+                            if (vn > 0.0) {
+                                vel = vel.subtract(n.scale(vn))
+                                if (vel.lengthSqr() < 1.0E-9) {
+                                    // fully radial hit: slide along the segment axis
+                                    // instead of zeroing (keeps the flow horizontal)
+                                    vel = ab.normalize().scale(vn)
+                                }
+                            }
                             pos = axis.add(n.scale(seg.rIn.toDouble()))
                             vel = vel.scale((1.0 - ModConfig.slideWaterFriction()).coerceAtLeast(0.0))
                         } else {
@@ -397,8 +477,7 @@ object ServerWaterSimulation {
                         val segIdx = (arc / segLen).toInt()
                         val segMap = acc.getOrPut(seg2.curveKey) { HashMap() }
                         val segAcc = segMap.getOrPut(segIdx) { SegmentAcc() }
-                        val spd = vel.dot(seg2.b.subtract(seg2.a).normalize())
-                        segAcc.add(spd)
+                        segAcc.add(vel, seg2.b.subtract(seg2.a).normalize())
                     }
                 }
                 if (!inTube) {

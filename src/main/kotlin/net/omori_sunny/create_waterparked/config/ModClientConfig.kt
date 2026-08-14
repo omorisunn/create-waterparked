@@ -8,59 +8,80 @@ import net.neoforged.neoforge.common.ModConfigSpec
 object ModClientConfig {
     private val BUILDER = ModConfigSpec.Builder()
 
-    // skeleton rings in translucent mode
-    val SHOW_SKELETON_WHEN_TRANSLUCENT: ModConfigSpec.BooleanValue = BUILDER
-        .comment(
-            "Show segment-junction skeleton rings when the slide tube is translucent " +
-                "in edit mode."
-        )
-        .define("showSkeletonWhenTranslucent", true)
+    // slide (riding)
+    lateinit var SHOW_SLIDE_EXIT_HINT: ModConfigSpec.BooleanValue
+    lateinit var CAMERA_SMOOTHING: ModConfigSpec.DoubleValue
+    lateinit var SHOW_SKELETON_WHEN_TRANSLUCENT: ModConfigSpec.BooleanValue
+    // rendering
+    lateinit var POLYGON_SCALE: ModConfigSpec.DoubleValue
+    lateinit var WALL_THICKNESS: ModConfigSpec.DoubleValue
+    lateinit var WATER_FLOW_SCALE: ModConfigSpec.DoubleValue
+    lateinit var WATER_ENVELOPE_VERTICES: ModConfigSpec.IntValue
+    lateinit var WATER_ENVELOPE_SPACING: ModConfigSpec.IntValue
+    lateinit var WATER_JITTER_SCALE: ModConfigSpec.DoubleValue
+    lateinit var WATER_JITTER_FREQUENCY: ModConfigSpec.DoubleValue
+    lateinit var WATER_JITTER_TIME_SCALE: ModConfigSpec.DoubleValue
+    // water simulation
+    lateinit var WATER_PARTICLE_COUNT: ModConfigSpec.IntValue
+    // debug
+    lateinit var WATER_SIM_DEBUG: ModConfigSpec.BooleanValue
 
-    val SHOW_SLIDE_EXIT_HINT: ModConfigSpec.BooleanValue = BUILDER
-        .comment("Show the \"Shift to exit\" hint while sliding.")
-        .define("showSlideExitHint", true)
+    lateinit var SPEC: ModConfigSpec
 
-    // camera smoothing while sliding, 0 = off
-    val CAMERA_SMOOTHING: ModConfigSpec.DoubleValue = BUILDER
-        .comment("Camera smoothing strength while sliding. 0 = off, higher = smoother.")
-        .defineInRange("cameraSmoothing", 0.35, 0.0, 0.9)
+    init {
+        BUILDER.push("slide")
+        SHOW_SLIDE_EXIT_HINT = BUILDER
+            .comment("Show the \"Shift to exit\" hint while sliding.")
+            .define("showSlideExitHint", true)
+        CAMERA_SMOOTHING = BUILDER
+            .comment("Camera smoothing strength while sliding. 0 = off, higher = smoother.")
+            .defineInRange("cameraSmoothing", 0.9, 0.0, 0.9)
+        SHOW_SKELETON_WHEN_TRANSLUCENT = BUILDER
+            .comment("Show segment-junction skeleton rings when the slide tube is translucent in edit mode.")
+            .define("showSkeletonWhenTranslucent", false)
+        BUILDER.pop()
 
-    // particles for the client-side water shape simulation
-    val WATER_PARTICLE_COUNT: ModConfigSpec.IntValue = BUILDER
-        .comment("Number of particles used to compute the client-side water shape.")
-        .defineInRange("waterParticleCount", 64, 8, 256)
+        BUILDER.push("rendering")
+        POLYGON_SCALE = BUILDER
+            .comment("Mesh polygon density scale. Lower = fewer faces.")
+            .defineInRange("polygonScale", 0.5, 0.05, 2.0)
+        WALL_THICKNESS = BUILDER
+            .comment("Pipe wall thickness in blocks. Thickens outward; inner radius stays fixed.")
+            .defineInRange("wallThickness", 0.5, 0.1, 0.5)
+        WATER_FLOW_SCALE = BUILDER
+            .comment("Water flow scroll speed scale. Higher = faster.")
+            .defineInRange("waterFlowScale", 1.0, 0.1, 4.0)
+        WATER_ENVELOPE_VERTICES = BUILDER
+            .comment("Vertex count of the water envelope polygon. Lower = rougher water shape.")
+            .defineInRange("waterEnvelopeVertices", 16, 4, 16)
+        WATER_ENVELOPE_SPACING = BUILDER
+            .comment("Spacing between rendered water envelope sections, in blocks.")
+            .defineInRange("waterEnvelopeSpacing", 2, 1, 4)
+        WATER_JITTER_SCALE = BUILDER
+            .comment("Water vertex jitter amplitude (turbulence) in blocks. 0 = off.")
+            .defineInRange("waterJitterScale", 0.2, 0.0, 1.5)
+        WATER_JITTER_FREQUENCY = BUILDER
+            .comment("Water vertex jitter noise frequency (cycles per block).")
+            .defineInRange("waterJitterFrequency", 2.0, 1.0, 16.0)
+        WATER_JITTER_TIME_SCALE = BUILDER
+            .comment("Water vertex jitter noise time scale (how fast the noise evolves).")
+            .defineInRange("waterJitterTimeScale", 12.0, 0.1, 16.0)
+        BUILDER.pop()
 
-    // polygon density, client-only
-    val POLYGON_SCALE: ModConfigSpec.DoubleValue = BUILDER
-        .comment("Mesh polygon density scale. Lower = fewer faces.")
-        .defineInRange("polygonScale", 0.5, 0.05, 2.0)
+        BUILDER.push("water")
+        WATER_PARTICLE_COUNT = BUILDER
+            .comment("Number of particles used to compute the client-side water shape.")
+            .defineInRange("waterParticleCount", 64, 8, 256)
+        BUILDER.pop()
 
-    // pipe wall thickness, client-only
-    val WALL_THICKNESS: ModConfigSpec.DoubleValue = BUILDER
-        .comment("Pipe wall thickness in blocks. Thickens outward; inner radius stays fixed.")
-        .defineInRange("wallThickness", 0.2, 0.1, 0.5)
+        BUILDER.push("debug")
+        WATER_SIM_DEBUG = BUILDER
+            .comment("Show the server water simulation trajectories (debug).")
+            .define("waterSimDebug", false)
+        BUILDER.pop()
 
-    // water flow scroll speed scale, client-only
-    val WATER_FLOW_SCALE: ModConfigSpec.DoubleValue = BUILDER
-        .comment("Water flow scroll speed scale. Higher = faster.")
-        .defineInRange("waterFlowScale", 1.0, 0.1, 4.0)
-
-    // envelope polygon vertex count for the water mesh
-    val WATER_ENVELOPE_VERTICES: ModConfigSpec.IntValue = BUILDER
-        .comment("Vertex count of the water envelope polygon. Lower = rougher water shape.")
-        .defineInRange("waterEnvelopeVertices", 16, 4, 16)
-
-    // rendering section spacing for the water envelope
-    val WATER_ENVELOPE_SPACING: ModConfigSpec.IntValue = BUILDER
-        .comment("Spacing between rendered water envelope sections, in blocks.")
-        .defineInRange("waterEnvelopeSpacing", 2, 1, 4)
-
-    // debug: show the water simulation trajectories
-    val WATER_SIM_DEBUG: ModConfigSpec.BooleanValue = BUILDER
-        .comment("Show the server water simulation trajectories (debug).")
-        .define("waterSimDebug", false)
-
-    val SPEC: ModConfigSpec = BUILDER.build()
+        SPEC = BUILDER.build()
+    }
 
     fun showSkeletonWhenTranslucent(): Boolean = SHOW_SKELETON_WHEN_TRANSLUCENT.get()
 
@@ -75,6 +96,12 @@ object ModClientConfig {
     fun wallThickness(): Float = WALL_THICKNESS.get().toFloat().coerceIn(0.1f, 0.5f)
 
     fun waterFlowScale(): Float = WATER_FLOW_SCALE.get().toFloat().coerceIn(0.1f, 4.0f)
+
+    fun waterJitterScale(): Float = WATER_JITTER_SCALE.get().toFloat().coerceIn(0f, 1.5f)
+
+    fun waterJitterFrequency(): Float = WATER_JITTER_FREQUENCY.get().toFloat().coerceIn(1f, 16f)
+
+    fun waterJitterTimeScale(): Float = WATER_JITTER_TIME_SCALE.get().toFloat().coerceIn(0.1f, 16f)
 
     fun waterEnvelopeVertices(): Int = WATER_ENVELOPE_VERTICES.get().coerceIn(4, 16)
 
