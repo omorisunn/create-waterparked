@@ -73,8 +73,20 @@ public class WaterslideTubeVisual extends AbstractVisual
 
     // same light sampling as Coasters Simulated's flywheel/BER renderers, with
     // a +3 brightness boost for the translucent water surfaces
+    private int tubeLight(Level level, Vec3 pos) {
+        return LevelRenderer.getLightColor(level, BlockPos.containing(toWorldPos(pos)));
+    }
+
+    private Vec3 toWorldPos(Vec3 plotGlobal) {
+        if (subLevel == null) return plotGlobal;
+        Vector3d local = JOMLConversion.toJOML(plotGlobal.subtract(subPlotCenter));
+        Vector3d out = subLevel.logicalPose().transformPosition(local, new Vector3d());
+        return JOMLConversion.toMojang(out);
+    }
+
     private int waterLight(Level level, Vec3 pos) {
-        BlockPos bp = BlockPos.containing(pos);
+        Vec3 world = toWorldPos(pos);
+        BlockPos bp = BlockPos.containing(world);
         int block = level.getBrightness(LightLayer.BLOCK, bp) + 3;
         int sky = level.getBrightness(LightLayer.SKY, bp) + 3;
         return LightTexture.pack(Mth.clamp(block, 0, 15), Mth.clamp(sky, 0, 15));
@@ -98,6 +110,7 @@ public class WaterslideTubeVisual extends AbstractVisual
 
     private final WaterslideAnchorBlockEntity be;
     private final SubLevel subLevel;
+    private final Vec3 subPlotCenter;
     private final List<TubeCurve> curves = new ArrayList<>();
     private String lastDataSig = "";
     private String lastStreamPoseSig = "";
@@ -109,6 +122,7 @@ public class WaterslideTubeVisual extends AbstractVisual
         super(ctx, be.getLevel(), partialTick);
         this.be = be;
         this.subLevel = Sable.HELPER.getContaining(be);
+        this.subPlotCenter = subLevel == null ? Vec3.ZERO : Vec3.atLowerCornerOf(subLevel.getPlot().getCenterBlock());
         collect();
         ACTIVE.add(this);
     }
@@ -990,7 +1004,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             for (int i = 0; i < wall.length; i++) {
                 WaterslideTubeMesh.TubeSegmentFrame f = frames.get(i);
                 Vec3 mid = f.getPrevSpine().add(f.getCurrSpine()).scale(0.5).add(origin);
-                int light = LevelRenderer.getLightColor(level, BlockPos.containing(mid));
+                int light = tubeLight(level, mid);
                 wall[i]
                     .setSegment(
                         f.getPrevSpine(), f.getCurrSpine(),
@@ -1023,7 +1037,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 WaterslideTubeInstance startCap = startCapInstancer.createInstance();
                 Vec3 startTip = first.getPrevSpine();
                 Vec3 startTan = first.getPrevTangent();
-                int startLight = LevelRenderer.getLightColor(level, BlockPos.containing(startTip.add(origin)));
+                int startLight = tubeLight(level, startTip.add(origin));
                 startCap
                     .setSegment(
                         startTip, startTip.add(startTan.scale(0.001)),
@@ -1050,7 +1064,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 WaterslideTubeInstance endCap = endCapInstancer.createInstance();
                 Vec3 endTip = last.getCurrSpine();
                 Vec3 endTan = last.getCurrTangent();
-                int endLight = LevelRenderer.getLightColor(level, BlockPos.containing(endTip.add(origin)));
+                int endLight = tubeLight(level, endTip.add(origin));
                 endCap
                     .setSegment(
                         endTip, endTip.add(endTan.scale(0.001)),
