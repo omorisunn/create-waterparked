@@ -10,6 +10,9 @@ import dev.engine_room.flywheel.api.visual.ShaderLightVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.lib.visual.AbstractVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
+import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.companion.math.JOMLConversion;
+import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager;
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode;
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames;
@@ -40,6 +43,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMate
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry;
 import net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Vector3d;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -74,6 +78,19 @@ public class WaterslideTubeVisual extends AbstractVisual
         int block = level.getBrightness(LightLayer.BLOCK, bp) + 3;
         int sky = level.getBrightness(LightLayer.SKY, bp) + 3;
         return LightTexture.pack(Mth.clamp(block, 0, 15), Mth.clamp(sky, 0, 15));
+    }
+
+    // World gravity expressed in the curve's local coordinate space, so thrown
+    // water follows the rotated shape of a Sable sub-level.
+    private Vec3 localGravity(BezierConnection curve) {
+        Level lvl = be.getLevel();
+        if (lvl == null) return new Vec3(0.0, -32.0, 0.0);
+        SubLevel sub = Sable.HELPER.getContaining(lvl, curve.bePositions.getFirst());
+        if (sub == null) return new Vec3(0.0, -32.0, 0.0);
+        Vector3d out = sub.logicalPose().transformNormalInverse(
+            JOMLConversion.toJOML(new Vec3(0.0, -32.0, 0.0)), new Vector3d()
+        );
+        return JOMLConversion.toMojang(out);
     }
 
 
@@ -619,7 +636,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             Pair<List<List<Vec3>>, List<List<Vec3>>> res =
                 WaterFlowSimulation.INSTANCE.predictStreams(
                     level, exit.getPos(), throwVel, outletCenter.add(origin), lat0, up0,
-                    rIn, rSurf, c0, c1, own
+                    rIn, rSurf, c0, c1, own, localGravity(curve)
                 );
             if (res == null) return null;
             List<List<Vec3>> outer = res.getFirst();

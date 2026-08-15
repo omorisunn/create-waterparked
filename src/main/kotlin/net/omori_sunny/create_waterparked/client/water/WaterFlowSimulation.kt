@@ -395,14 +395,15 @@ object WaterFlowSimulation {
         rSurf: Float,
         coverStart: Float,
         coverEnd: Float,
-        ownFrames: List<Vec3>
+        ownFrames: List<Vec3>,
+        gravity: Vec3 = Vec3(0.0, -32.0, 0.0)
     ): Pair<List<List<Vec3>>, List<List<Vec3>>>? {
         // cooldown: only recompute after a sync refresh (version bump)
         if (streamCacheVersion != version) {
             streamCacheVersion = version
             streamCache.clear()
         }
-        val cacheKey = "${center.x},${center.y},${center.z}|${exitVel.x},${exitVel.y},${exitVel.z}|$rIn|$rSurf|$coverStart|$coverEnd"
+        val cacheKey = "${center.x},${center.y},${center.z}|${exitVel.x},${exitVel.y},${exitVel.z}|$rIn|$rSurf|$coverStart|$coverEnd|${gravity.x},${gravity.y},${gravity.z}"
         streamCache[cacheKey]?.let { return it }
 
         val own = ownCenterHash(ownFrames)
@@ -425,8 +426,8 @@ object WaterFlowSimulation {
             val s = sin(theta)
             val outerPos = center.add(lat.scale(c * rIn)).add(up.scale(s * rIn))
             val innerPos = center.add(lat.scale(c * rSurf)).add(up.scale(s * rSurf))
-            outer += traceStream(level, outerPos, exitVel, grid)
-            inner += traceStream(level, innerPos, exitVel, grid)
+            outer += traceStream(level, outerPos, exitVel, grid, gravity)
+            inner += traceStream(level, innerPos, exitVel, grid, gravity)
         }
         // keep every ray's full length (no shortest-ray truncation); the end
         // fades out instead of cutting mid-air
@@ -442,9 +443,10 @@ object WaterFlowSimulation {
         level: Level,
         pos: Vec3,
         vel: Vec3,
-        grid: SegGrid
+        grid: SegGrid,
+        gravity: Vec3
     ): List<Vec3> {
-        // strict physics: dt in seconds, v in blocks/s, gravity 32 blocks/s^2
+        // strict physics: dt in seconds, v in blocks/s, gravity in blocks/s^2
         val dt = 0.05
         val poly = ArrayList<Vec3>()
         var p = pos
@@ -453,7 +455,7 @@ object WaterFlowSimulation {
         var grace = 0
         for (step in 0 until 240) {
             p = p.add(v.scale(dt))
-            v = v.add(0.0, -32.0 * dt, 0.0)
+            v = v.add(gravity.scale(dt))
             val bp = BlockPos.containing(p)
             if (level.getBlockState(bp).isSolid || p.y < level.minBuildHeight) break
             if (grid.hit(p)) {
