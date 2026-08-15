@@ -301,11 +301,30 @@ object PlayerSlideController {
         entity: Entity,
         requireSolid: Boolean = true
     ): SlideEntry? {
-        val p = entity.position()
+        val mainHit = findSlideEntryInSpace(level, MainSlideSpaceAccess(level), entity, requireSolid)
+        if (mainHit != null) return mainHit
+
+        val container = SubLevelContainer.getContainer(level) ?: return null
+        for (raw in container.allSubLevels) {
+            val sub = raw as? ServerSubLevel ?: continue
+            val access = SubSlideSpaceAccess(level, sub)
+            val hit = findSlideEntryInSpace(level, access, entity, requireSolid) ?: continue
+            return hit
+        }
+        return null
+    }
+
+    private fun findSlideEntryInSpace(
+        level: ServerLevel,
+        access: SlideSpaceAccess,
+        entity: Entity,
+        requireSolid: Boolean
+    ): SlideEntry? {
+        val localPos = access.worldToLocal(entity.position())
         val margin = entityDimensions(entity).width / 2.0
         var best: SegmentHit? = null
-        for (anchorPos in SlideAnchorIndex.all(level).toList()) {
-            val be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
+        for (anchorPos in SlideAnchorIndex.all(level, access.space)) {
+            val be = access.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
             if (be == null) {
                 SlideAnchorIndex.unregister(level, anchorPos)
                 continue
@@ -315,15 +334,15 @@ object PlayerSlideController {
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
-                val r0 = SlideCurveGeometry.radiusAt(level, a)
-                val r1 = SlideCurveGeometry.radiusAt(level, b)
-                val cf = curveFrames(level, bc, r0, r1) ?: continue
-                if (!cf.bounds.contains(p)) continue
-                val config = SlideCurveGeometry.sectorConfig(level, a, b)
+                val r0 = SlideCurveGeometry.radiusAt(access.level, a)
+                val r1 = SlideCurveGeometry.radiusAt(access.level, b)
+                val cf = curveFrames(access, bc, r0, r1) ?: continue
+                if (!cf.bounds.contains(localPos)) continue
+                val config = SlideCurveGeometry.sectorConfig(access.level, a, b)
                     ?: WaterslideSectorConfig.defaultConfig()
                 for (i in 0 until cf.frames.size - 1) {
                     val hit = testSegment(
-                        p, bc, cf.frames[i], cf.frames[i + 1], config, requireSolid, margin
+                        localPos, bc, cf.frames[i], cf.frames[i + 1], config, requireSolid, margin
                     ) ?: continue
                     if (best == null || hit.distSq < best.distSq) best = hit
                 }
@@ -334,7 +353,7 @@ object PlayerSlideController {
 
     // cached per-curve tube envelope; no max-radius guess
     private fun curveFrames(
-        level: ServerLevel,
+        access: SlideSpaceAccess,
         bc: BezierConnection,
         r0: Float,
         r1: Float
@@ -345,11 +364,11 @@ object PlayerSlideController {
         else b.asLong() to a.asLong()
         val h0 = bc.starts.getFirst()
         val h1 = bc.starts.getSecond()
-        val sig = "$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()}"
+        val sig = "${access.space.cacheKey(access.level)}|$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()}"
         curveFramesCache[key]?.let { if (it.sig == sig) return it }
 
         // entry only inside the real tube, never on the open-end extension
-        val frames = SlideCurveGeometry.sampleFrames(level, bc, r0, r1, includeExtensions = false)
+        val frames = SlideCurveGeometry.sampleFrames(access.level, bc, r0, r1, includeExtensions = false)
         if (frames.size < 2) return null
         var minX = Double.MAX_VALUE
         var minY = Double.MAX_VALUE
