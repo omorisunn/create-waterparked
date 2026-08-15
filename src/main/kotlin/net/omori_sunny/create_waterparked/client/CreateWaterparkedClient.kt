@@ -127,6 +127,7 @@ object CreateWaterparkedClient {
             )
         }
         WaterslideTubeVisual.tickVisibility()
+        net.omori_sunny.create_waterparked.client.editor.SubLevelEditFocus.tick(mc)
         WaterSlideSoundManager.tick()
         WaterslideSplashSpawner.tickStanding(mc)
         val debug = ModClientConfig.waterSimDebug()

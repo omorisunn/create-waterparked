@@ -29,22 +29,37 @@ class WaterslideSectorBlockEditPayload(
             val player = ctx.player() ?: return@enqueueWork
             if (player !is ServerPlayer) return@enqueueWork
             val level = player.serverLevel()
+            val globalA = resolveSubPos(level, curveA)
+            val globalB = resolveSubPos(level, curveB)
             val range = CoasterTrackGauge.maxCoasterCurvePacketInteractionRangeBlocks().toDouble()
-            if (!player.canInteractWithBlock(curveA, range)) return@enqueueWork
-            if (!WaterslideSectorBlockEdit.setSectorBlock(level, curveA, curveB, sectorId, blockId)) {
+            if (!player.canInteractWithBlock(globalA, range)) return@enqueueWork
+            if (!WaterslideSectorBlockEdit.setSectorBlock(level, globalA, globalB, sectorId, blockId)) {
                 return@enqueueWork
             }
 
 // fresh BE data to the player
-            for (pos in listOf(curveA, curveB)) {
+            for (pos in listOf(globalA, globalB)) {
                 (level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity)
                     ?.let { player.connection.send(ClientboundBlockEntityDataPacket.create(it)) }
             }
         }
     }
 
-    companion object {
-        val TYPE: CustomPacketPayload.Type<WaterslideSectorBlockEditPayload> = CustomPacketPayload.Type(
+    private fun resolveSubPos(
+        level: net.minecraft.server.level.ServerLevel,
+        pos: BlockPos
+    ): BlockPos {
+        if (level.getBlockEntity(pos) != null) return pos
+        val container = dev.ryanhcode.sable.api.sublevel.SubLevelContainer.getContainer(level)
+        container?.allSubLevels?.forEach { raw ->
+            val sub = raw as? dev.ryanhcode.sable.sublevel.ServerSubLevel ?: return@forEach
+            val candidate = pos.offset(sub.getPlot().getCenterBlock())
+            if (level.getBlockEntity(candidate) != null) return candidate
+        }
+        return pos
+    }
+
+    companion object {        val TYPE: CustomPacketPayload.Type<WaterslideSectorBlockEditPayload> = CustomPacketPayload.Type(
             ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "waterslide_sector_block_edit")
         )
 
