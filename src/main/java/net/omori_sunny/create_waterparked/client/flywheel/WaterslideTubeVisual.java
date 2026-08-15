@@ -82,12 +82,9 @@ public class WaterslideTubeVisual extends AbstractVisual
 
     // World gravity expressed in the curve's local coordinate space, so thrown
     // water follows the rotated shape of a Sable sub-level.
-    private Vec3 localGravity(BezierConnection curve) {
-        Level lvl = be.getLevel();
-        if (lvl == null) return new Vec3(0.0, -32.0, 0.0);
-        SubLevel sub = Sable.HELPER.getContaining(lvl, curve.bePositions.getFirst());
-        if (sub == null) return new Vec3(0.0, -32.0, 0.0);
-        Vector3d out = sub.logicalPose().transformNormalInverse(
+    private Vec3 localGravity() {
+        if (subLevel == null) return new Vec3(0.0, -32.0, 0.0);
+        Vector3d out = subLevel.logicalPose().transformNormalInverse(
             JOMLConversion.toJOML(new Vec3(0.0, -32.0, 0.0)), new Vector3d()
         );
         return JOMLConversion.toMojang(out);
@@ -100,8 +97,10 @@ public class WaterslideTubeVisual extends AbstractVisual
     private static float lastPolygonScale = -1f;
 
     private final WaterslideAnchorBlockEntity be;
+    private final SubLevel subLevel;
     private final List<TubeCurve> curves = new ArrayList<>();
     private String lastDataSig = "";
+    private String lastStreamPoseSig = "";
     private float lastWaterTime = -1f;
     @Nullable
     private SectionCollector lightSections;
@@ -109,6 +108,7 @@ public class WaterslideTubeVisual extends AbstractVisual
     public WaterslideTubeVisual(VisualizationContext ctx, WaterslideAnchorBlockEntity be, float partialTick) {
         super(ctx, be.getLevel(), partialTick);
         this.be = be;
+        this.subLevel = Sable.HELPER.getContaining(be);
         collect();
         ACTIVE.add(this);
     }
@@ -119,6 +119,18 @@ public class WaterslideTubeVisual extends AbstractVisual
         if (scale != lastPolygonScale) {
             lastPolygonScale = scale;
             WaterslideTubeMesh.INSTANCE.clearModels();
+        }
+        if (subLevel != null) {
+            String poseSig = subLevel.logicalPose().position().x + "," + subLevel.logicalPose().position().y +
+                "," + subLevel.logicalPose().position().z + "|" + subLevel.logicalPose().orientation().x +
+                "," + subLevel.logicalPose().orientation().y + "," + subLevel.logicalPose().orientation().z +
+                "," + subLevel.logicalPose().orientation().w;
+            if (!poseSig.equals(lastStreamPoseSig)) {
+                lastStreamPoseSig = poseSig;
+                for (TubeCurve c : curves) {
+                    c.refreshStream();
+                }
+            }
         }
         String sig = dataSignature();
         if (sig.equals(lastDataSig)) return;
@@ -636,7 +648,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             Pair<List<List<Vec3>>, List<List<Vec3>>> res =
                 WaterFlowSimulation.INSTANCE.predictStreams(
                     level, exit.getPos(), throwVel, outletCenter.add(origin), lat0, up0,
-                    rIn, rSurf, c0, c1, own, localGravity(curve)
+                    rIn, rSurf, c0, c1, own, localGravity()
                 );
             if (res == null) return null;
             List<List<Vec3>> outer = res.getFirst();
@@ -941,6 +953,13 @@ public class WaterslideTubeVisual extends AbstractVisual
                 streamInstances.add(arr[i]);
                 waterInstances.add(arr[i]);
             }
+        }
+
+        void refreshStream() {
+            if (streamWater == null && streamSegments == null) return;
+            streamWater = null;
+            streamSegments = null;
+            rebuildInstances();
         }
 
         void setTranslucent(boolean value) {
