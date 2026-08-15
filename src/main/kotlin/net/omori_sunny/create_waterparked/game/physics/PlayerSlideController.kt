@@ -228,10 +228,11 @@ object PlayerSlideController {
             startVelWorld = startVelWorld.normalize().scale(maxSpeed)
         }
         val subLevel = Sable.HELPER.getContaining(level, entry.anchorPos) as? ServerSubLevel
+        val access = if (subLevel != null) SubSlideSpaceAccess(level, subLevel) else MainSlideSpaceAccess(level)
         val startPos = if (subLevel != null) toLocalPos(subLevel, entity.position()) else entity.position()
         val startVel = if (subLevel != null) toLocalVel(subLevel, startVelWorld) else startVelWorld
         val trajectory = PhysicsSlideTrajectoryBuilder.build(
-            level, entry.curve, entry.towardSecond, entry.startT,
+            access, entry.curve, entry.towardSecond, entry.startT,
             startPos, startVel, dims.width.toDouble(), dims.height.toDouble()
         )
         if (trajectory == null) {

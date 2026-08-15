@@ -88,7 +88,7 @@ object PhysicsSlideTrajectoryBuilder {
     )
 
     fun build(
-        level: ServerLevel,
+        access: SlideSpaceAccess,
         entryCurve: BezierConnection,
         towardSecond: Boolean,
         startT: Float?,
@@ -99,7 +99,7 @@ object PhysicsSlideTrajectoryBuilder {
     ): SlideTrajectory? {
         val maxSamples = ModConfig.slideMaxTrajectorySamples()
         val maxLength = ModConfig.slideMaxTrajectoryBlocks()
-        var tube = buildTube(level, entryCurve, towardSecond, startT) ?: return null
+        var tube = buildTube(access, entryCurve, towardSecond, startT) ?: return null
         if (tube.frames.size < 2) return null
         tube.cursor = nearestIndex(tube.frames, startPos)
 
@@ -273,7 +273,7 @@ object PhysicsSlideTrajectoryBuilder {
             // ================= free fall segment =================
             val fallStart = time
             val grid = ReentryGrid()
-            for (s in allReentrySegments(level)) grid.add(s)
+            for (s in allReentrySegments(access)) grid.add(s)
             val fallSampleInterval = SAMPLE_INTERVAL * 4
             var check = 0
             // a reentry into the pipe we just left is only accepted after the
@@ -292,12 +292,12 @@ object PhysicsSlideTrajectoryBuilder {
                 time += DT
                 // landing wins over reentry so a pipe mouth sitting on the
                 // ground cannot pull the player back after they touched down
-                if (hitsGround(level, pos, poseHeight)) {
-                    val surfaceY = groundSurfaceY(level, pos, poseHeight)
+                if (hitsGround(access, pos, poseHeight)) {
+                    val surfaceY = groundSurfaceY(access, pos, poseHeight)
                     if (surfaceY != null) pos = Vec3(pos.x, surfaceY, pos.z)
                     break
                 }
-                if (pos.y < level.minBuildHeight - 10) {
+                if (pos.y < access.level.minBuildHeight - 10) {
                     // fell out of the world: end like a normal block contact
                     break
                 }
@@ -307,18 +307,18 @@ object PhysicsSlideTrajectoryBuilder {
                         val isSelf = selfCurves != null && seg.curve in selfCurves
                         val selfBlocked = isSelf && (time < noSelfUntil || !wasClear)
                         if (!selfBlocked) {
-                            val start = reentryStart(level, seg, pos, vel, poseWidth)
+                            val start = reentryStart(access, seg, pos, vel, poseWidth)
                             if (start != null) {
                                 samples += SlideSample(
                                     time, start.pos, start.center, safeTangent(start.vel, start.tangent),
                                     start.up, start.radius, start.vel.length(), true,
                                     ServerWaterSimulation.field(
-                                        level,
+                                        access.level,
                                         start.curve.bePositions.getFirst(),
                                         start.curve.bePositions.getSecond()
                                     )?.segments?.isNotEmpty() == true
                                 )
-                                val nextTube = buildTube(level, start.curve, start.towardSecond, start.startT)
+                                val nextTube = buildTube(access, start.curve, start.towardSecond, start.startT)
                                 if (nextTube == null || nextTube.frames.size < 2) break
                                 nextTube.cursor = nearestIndex(nextTube.frames, start.pos)
                                 tube = nextTube
@@ -359,7 +359,7 @@ object PhysicsSlideTrajectoryBuilder {
     }
 
     private fun buildTube(
-        level: ServerLevel,
+        access: SlideSpaceAccess,
         entryCurve: BezierConnection,
         towardSecond: Boolean,
         startT: Float?
@@ -375,9 +375,9 @@ object PhysicsSlideTrajectoryBuilder {
             val a = bc.bePositions.getFirst()
             val b = bc.bePositions.getSecond()
             tube.curves.add(bc)
-            val r0 = SlideCurveGeometry.radiusAt(level, a)
-            val r1 = SlideCurveGeometry.radiusAt(level, b)
-            val base = cachedFrames(level, bc, r0, r1)
+            val r0 = SlideCurveGeometry.radiusAt(access.level, a)
+            val r1 = SlideCurveGeometry.radiusAt(access.level, b)
+            val base = cachedFrames(access, bc, r0, r1)
             if (base.isEmpty()) break
 
             val walkFrames: List<SlideCurveGeometry.Frame>
@@ -388,22 +388,22 @@ object PhysicsSlideTrajectoryBuilder {
             } else {
                 val ordered = if (atFirst) base else SlideCurveGeometry.reversed(base)
                 val startAnchorOpenEnd = first &&
-                    (level.getBlockEntity(if (atFirst) a else b) as? CoasterAnchorpointBlockEntity)?.legCount() == 1
+                    (access.getBlockEntity(if (atFirst) a else b) as? CoasterAnchorpointBlockEntity)?.legCount() == 1
                 val startIdx = if (startAnchorOpenEnd && ordered.size > 1) 1 else 0
                 walkFrames = ordered.subList(startIdx, ordered.size)
             }
             if (walkFrames.isEmpty()) break
 
-            val config = SlideCurveGeometry.sectorConfig(level, a, b)
+            val config = SlideCurveGeometry.sectorConfig(access.level, a, b)
                 ?: WaterslideSectorConfig.defaultConfig()
-            val watered = isCurveWatered(level, a, b)
+            val watered = isCurveWatered(access, a, b)
             for (f in walkFrames) pushFrame(tube.frames, f, config, watered)
 
             first = false
             midStart = false
 
             val exitPos = if (atFirst) b else a
-            val exitBe = level.getBlockEntity(exitPos) as? WaterslideAnchorBlockEntity ?: break
+            val exitBe = access.getBlockEntity(exitPos) as? WaterslideAnchorBlockEntity ?: break
             if (exitBe.legCount() <= 1) break
 
             val next = exitBe.anchorPeerCurvesView.values
@@ -508,8 +508,8 @@ object PhysicsSlideTrajectoryBuilder {
         return best
     }
 
-    private fun isCurveWatered(level: ServerLevel, a: BlockPos, b: BlockPos): Boolean =
-        !ServerWaterSimulation.field(level, a, b)?.segments.isNullOrEmpty()
+    private fun isCurveWatered(access: SlideSpaceAccess, a: BlockPos, b: BlockPos): Boolean =
+        !ServerWaterSimulation.field(access.level, a, b)?.segments.isNullOrEmpty()
 
     private fun sameEdge(x: BezierConnection, y: BezierConnection): Boolean {
         val xa = x.bePositions.getFirst().asLong()
@@ -533,24 +533,24 @@ object PhysicsSlideTrajectoryBuilder {
     private fun sectorAt(config: WaterslideSectorConfig, angle: Float): PlacedSector? =
         WaterslideSectorLayout.sectorAt(WaterslideSectorLayout.place(config), angle)
 
-    private fun hitsGround(level: ServerLevel, pos: Vec3, height: Double): Boolean {
+    private fun hitsGround(access: SlideSpaceAccess, pos: Vec3, height: Double): Boolean {
         val feet = BlockPos.containing(pos.x, pos.y - height / 2.0 - 0.01, pos.z)
-        return solidBlock(level, feet)
+        return solidBlock(access, feet)
     }
 
-    private fun solidBlock(level: ServerLevel, pos: BlockPos): Boolean {
-        val state = level.getBlockState(pos)
-        return !state.getCollisionShape(level, pos).isEmpty()
+    private fun solidBlock(access: SlideSpaceAccess, pos: BlockPos): Boolean {
+        val state = access.getBlockState(pos)
+        return !state.getCollisionShape(access.level, pos).isEmpty()
     }
 
-    private fun groundSurfaceY(level: ServerLevel, pos: Vec3, height: Double): Double? {
+    private fun groundSurfaceY(access: SlideSpaceAccess, pos: Vec3, height: Double): Double? {
         val blockX = Mth.floor(pos.x)
         val blockZ = Mth.floor(pos.z)
         val feetY = pos.y - height / 2.0
         for (y in Mth.floor(feetY - 0.01) downTo Mth.floor(feetY - 3.0)) {
             val blockPos = BlockPos(blockX, y, blockZ)
-            val state = level.getBlockState(blockPos)
-            val shape = state.getCollisionShape(level, blockPos)
+            val state = access.getBlockState(blockPos)
+            val shape = state.getCollisionShape(access.level, blockPos)
             if (shape.isEmpty()) continue
             return y + shape.max(Direction.Axis.Y) + 0.01 + height / 2.0
         }
@@ -559,20 +559,20 @@ object PhysicsSlideTrajectoryBuilder {
 
     private val reentryCache = HashMap<ResourceKey<Level>, Pair<String, List<ReentrySegment>>>()
 
-    private fun allReentrySegments(level: ServerLevel): List<ReentrySegment> {
-        val sig = structureSignature(level)
-        reentryCache[level.dimension()]?.let { if (it.first == sig) return it.second }
+    private fun allReentrySegments(access: SlideSpaceAccess): List<ReentrySegment> {
+        val sig = structureSignature(access)
+        reentryCache[access.level.dimension()]?.let { if (it.first == sig) return it.second }
         val out = ArrayList<ReentrySegment>()
-        for (anchorPos in SlideAnchorIndex.all(level)) {
-            val be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity ?: continue
+        for (anchorPos in SlideAnchorIndex.all(access.level)) {
+            val be = access.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity ?: continue
             for (raw in be.anchorPeerCurvesView.values) {
                 val bc = if (raw.isPrimary) raw else raw.secondary()
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
-                val r0 = SlideCurveGeometry.radiusAt(level, a)
-                val r1 = SlideCurveGeometry.radiusAt(level, b)
-                val frames = cachedFrames(level, bc, r0, r1)
+                val r0 = SlideCurveGeometry.radiusAt(access.level, a)
+                val r1 = SlideCurveGeometry.radiusAt(access.level, b)
+                val frames = cachedFrames(access, bc, r0, r1)
                 for (i in 0 until frames.size - 1) {
                     val fa = frames[i]
                     val fb = frames[i + 1]
@@ -584,14 +584,14 @@ object PhysicsSlideTrajectoryBuilder {
                 }
             }
         }
-        reentryCache[level.dimension()] = sig to out
+        reentryCache[access.level.dimension()] = sig to out
         return out
     }
 
-    private fun structureSignature(level: ServerLevel): String {
+    private fun structureSignature(access: SlideSpaceAccess): String {
         val sb = StringBuilder()
-        for (pos in SlideAnchorIndex.all(level).sortedBy { it.asLong() }) {
-            val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
+        for (pos in SlideAnchorIndex.all(access.level).sortedBy { it.asLong() }) {
+            val be = access.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
             sb.append(pos.asLong()).append('|')
             for (e in be.anchorPeerCurvesView.entries.sortedBy { it.key.asLong() }) {
                 val raw = e.value
@@ -607,8 +607,8 @@ object PhysicsSlideTrajectoryBuilder {
                     .append(bc.starts.getSecond().x).append(',')
                     .append(bc.starts.getSecond().y).append(',')
                     .append(bc.starts.getSecond().z).append(',')
-                    .append(SlideCurveGeometry.radiusAt(level, a)).append(',')
-                    .append(SlideCurveGeometry.radiusAt(level, b)).append(';')
+                    .append(SlideCurveGeometry.radiusAt(access.level, a)).append(',')
+                    .append(SlideCurveGeometry.radiusAt(access.level, b)).append(';')
             }
         }
         return sb.toString()
@@ -617,7 +617,7 @@ object PhysicsSlideTrajectoryBuilder {
     private val frameCache = HashMap<Pair<Long, Long>, Pair<String, List<SlideCurveGeometry.Frame>>>()
 
     private fun cachedFrames(
-        level: ServerLevel,
+        access: SlideSpaceAccess,
         bc: BezierConnection,
         r0: Float,
         r1: Float
@@ -630,7 +630,7 @@ object PhysicsSlideTrajectoryBuilder {
         val h1 = bc.starts.getSecond()
         val sig = "$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()}"
         frameCache[key]?.let { if (it.first == sig) return it.second }
-        val frames = SlideCurveGeometry.sampleFrames(level, bc, r0, r1)
+        val frames = SlideCurveGeometry.sampleFrames(access.level, bc, r0, r1)
         if (frameCache.size > 1024) frameCache.clear()
         frameCache[key] = sig to frames
         return frames
@@ -640,7 +640,7 @@ object PhysicsSlideTrajectoryBuilder {
     // locate the curve, pick the slide direction from the fall velocity, and
     // project the player back inside the tube.
     private fun reentryStart(
-        level: ServerLevel,
+        access: SlideSpaceAccess,
         seg: ReentrySegment,
         pos: Vec3,
         vel: Vec3,
@@ -650,7 +650,7 @@ object PhysicsSlideTrajectoryBuilder {
         val a = bc.bePositions.getFirst()
         val b = bc.bePositions.getSecond()
         val frames = cachedFrames(
-            level, bc, SlideCurveGeometry.radiusAt(level, a), SlideCurveGeometry.radiusAt(level, b)
+            access, bc, SlideCurveGeometry.radiusAt(access.level, a), SlideCurveGeometry.radiusAt(access.level, b)
         )
         if (frames.size < 2) return null
         var bestI = 0
