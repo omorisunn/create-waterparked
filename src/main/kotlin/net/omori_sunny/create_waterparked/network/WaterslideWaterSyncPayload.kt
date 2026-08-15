@@ -9,9 +9,13 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import net.minecraft.resources.ResourceLocation
 import net.minecraft.world.phys.Vec3
 import net.neoforged.neoforge.network.handling.IPayloadContext
+import java.util.UUID
 
-// server -> client water field sync
-class WaterslideWaterSyncPayload(val entries: List<Entry>) : CustomPacketPayload {
+// server -> client water field sync for one slide space
+class WaterslideWaterSyncPayload(
+    val entries: List<Entry>,
+    val subLevelId: UUID? = null
+) : CustomPacketPayload {
 
     data class Entry(
         val edgeA: Long,
@@ -82,9 +86,18 @@ class WaterslideWaterSyncPayload(val entries: List<Entry>) : CustomPacketPayload
             ::Entry
         )
 
+        private val NULLABLE_UUID_CODEC: StreamCodec<RegistryFriendlyByteBuf, UUID?> = StreamCodec.of(
+            { buf, v ->
+                buf.writeBoolean(v != null)
+                if (v != null) buf.writeUUID(v)
+            },
+            { buf -> if (buf.readBoolean()) buf.readUUID() else null }
+        )
+
         val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, WaterslideWaterSyncPayload> =
             StreamCodec.composite(
                 ENTRY_CODEC.apply(ByteBufCodecs.list(256)), WaterslideWaterSyncPayload::entries,
+                NULLABLE_UUID_CODEC, WaterslideWaterSyncPayload::subLevelId,
                 ::WaterslideWaterSyncPayload
             )
     }

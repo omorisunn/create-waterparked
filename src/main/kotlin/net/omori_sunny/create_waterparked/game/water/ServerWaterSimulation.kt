@@ -183,6 +183,9 @@ object ServerWaterSimulation {
         }
     }
 
+    private fun subId(access: SlideSpaceAccess): UUID? =
+        (access.space as? SlideSpace.SubLevel)?.id
+
     private fun toEntries(f: Map<Pair<Long, Long>, CurveField>): List<WaterslideWaterSyncPayload.Entry> =
         f.map { (key, field) ->
             WaterslideWaterSyncPayload.Entry(
@@ -284,7 +287,7 @@ object ServerWaterSimulation {
         if (sources.isEmpty()) {
             fields[key] = emptyMap()
             CreateWaterparked.LOGGER.info("Water sim: no water sources")
-            PacketDistributor.sendToPlayersInDimension(level, WaterslideWaterSyncPayload(emptyList()))
+            PacketDistributor.sendToPlayersInDimension(level, WaterslideWaterSyncPayload(emptyList(), subId(access)))
             return
         }
         val segments = allSegments(access, sig)
@@ -362,7 +365,7 @@ object ServerWaterSimulation {
             entries.sumOf { it.segments.size }
         )
         try {
-            val payload = WaterslideWaterSyncPayload(entries)
+            val payload = WaterslideWaterSyncPayload(entries, subId(access))
             CreateWaterparked.LOGGER.info("Water payload sending entries={}", payload.entries.size)
             PacketDistributor.sendToPlayersInDimension(level, payload)
         } catch (e: Exception) {

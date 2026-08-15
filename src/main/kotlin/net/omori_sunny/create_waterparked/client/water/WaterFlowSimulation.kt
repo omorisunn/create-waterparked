@@ -6,8 +6,10 @@ import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation
 import net.omori_sunny.create_waterparked.network.WaterslideWaterSyncPayload
+import net.minecraft.client.Minecraft
 import net.minecraft.core.BlockPos
 import net.minecraft.resources.ResourceKey
 import net.minecraft.util.Mth
@@ -42,7 +44,7 @@ object WaterFlowSimulation {
         val r1: Float
     )
 
-    private val fields = HashMap<Pair<Long, Long>, CurveWater>()
+    private val fields = HashMap<String, HashMap<Pair<Long, Long>, CurveWater>>()
     private val segCache = HashMap<ResourceKey<Level>, Pair<String, List<TubeSeg>>>()
     private var version = 0
     private var debugPolylines: List<List<Vec3>> = emptyList()
@@ -73,10 +75,13 @@ object WaterFlowSimulation {
 
     @JvmStatic
     fun applySync(payload: WaterslideWaterSyncPayload) {
+        val level = Minecraft.getInstance().level ?: return
+        val space = if (payload.subLevelId == null) SlideSpace.Main else SlideSpace.SubLevel(payload.subLevelId)
+        val key = space.cacheKey(level)
         net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
-            "Water sync received entries={}", payload.entries.size
+            "Water sync received space={} entries={}", key, payload.entries.size
         )
-        fields.clear()
+        val target = HashMap<Pair<Long, Long>, CurveWater>()
         for (e in payload.entries) {
             if (e.segments.isEmpty()) continue
             var sum = 0.0
@@ -88,19 +93,38 @@ object WaterFlowSimulation {
             val exit = if (e.exitPos != null) {
                 ServerWaterSimulation.ExitInfo(e.exitPos, e.exitVel ?: Vec3.ZERO)
             } else null
-            fields[edgeKey(e.edgeA, e.edgeB)] = CurveWater(true, flowSign, segments, exit)
+            target[edgeKey(e.edgeA, e.edgeB)] = CurveWater(true, flowSign, segments, exit)
         }
+        fields[key] = target
         bumpVersion()
         WaterslideTubeVisual.refreshAll()
     }
 
     @JvmStatic
-    fun resultFor(level: Level, bc: BezierConnection): CurveWater? =
-        fields[edgeKeyOf(bc)]
+    fun resultFor(level: Level, space: SlideSpace, bc: BezierConnection): CurveWater? =
+        fields[space.cacheKey(level)]?.get(edgeKeyOf(bc))
 
     @JvmStatic
-    fun fieldFor(level: Level, a: BlockPos, b: BlockPos): CurveWater? =
-        fields[edgeKey(a.asLong(), b.asLong())]
+    fun resultFor(level: Level, bc: BezierConnection): CurveWater? {
+        val edge = edgeKeyOf(bc)
+        for (map in fields.values) {
+            map[edge]?.let { return it }
+        }
+        return null
+    }
+
+    @JvmStatic
+    fun fieldFor(level: Level, space: SlideSpace, a: BlockPos, b: BlockPos): CurveWater? =
+        fields[space.cacheKey(level)]?.get(edgeKey(a.asLong(), b.asLong()))
+
+    @JvmStatic
+    fun fieldFor(level: Level, a: BlockPos, b: BlockPos): CurveWater? {
+        val edge = edgeKey(a.asLong(), b.asLong())
+        for (map in fields.values) {
+            map[edge]?.let { return it }
+        }
+        return null
+    }
 
     // Client-side contact check against the RENDERED water data: true when the
     // position is inside the tube cylinder of a curve that has a synced water
@@ -116,7 +140,8 @@ object WaterFlowSimulation {
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val key = edgeKeyOf(bc)
                 if (!seen.add(key)) continue
-                if (fields[key]?.exists != true) continue
+                val space = SlideSpace.ofLevelAndSub(level, be.blockPos)
+                if (fields[space.cacheKey(level)]?.get(key)?.exists != true) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
@@ -136,7 +161,7 @@ object WaterFlowSimulation {
     // all cached thrown-stream polylines (world coordinates), exposed for the
     // player splash spawner so flying through the thrown water also counts
     @JvmStatic
-    fun hasAnyWaterFields(): Boolean = fields.values.any { it.exists }
+    fun hasAnyWaterFields(): Boolean = fields.values.any { map -> map.values.any { it.exists } }
 
     @JvmStatic
     fun allStreamPolylines(): List<List<Vec3>> {
@@ -208,7 +233,8 @@ object WaterFlowSimulation {
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val key = edgeKeyOf(bc)
                 if (!seen.add(key)) continue
-                if (fields[key]?.exists != true) continue
+                val space = SlideSpace.ofLevelAndSub(level, be.blockPos)
+                if (fields[space.cacheKey(level)]?.get(key)?.exists != true) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
@@ -269,7 +295,8 @@ object WaterFlowSimulation {
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val key = edgeKeyOf(bc)
                 if (!seen.add(key)) continue
-                if (fields[key]?.exists != true) continue
+                val space = SlideSpace.ofLevelAndSub(level, be.blockPos)
+                if (fields[space.cacheKey(level)]?.get(key)?.exists != true) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
