@@ -9,11 +9,14 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslideEditorRenderTy
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPreview
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
+import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashParticle
+import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashSpawner
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
+import net.omori_sunny.create_waterparked.content.registry.ModParticles
 import net.omori_sunny.create_waterparked.content.sit.SlideSitEntity
 import net.omori_sunny.create_waterparked.network.WaterslideDebugRequestPayload
 import net.omori_sunny.create_waterparked.ponder.WaterslidePonderPlugin
@@ -29,6 +32,7 @@ import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent
 import net.neoforged.neoforge.client.event.ClientTickEvent
 import net.neoforged.neoforge.client.event.EntityRenderersEvent
+import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent
 import net.neoforged.neoforge.client.gui.ConfigurationScreen
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory
 import net.neoforged.neoforge.common.NeoForge
@@ -43,6 +47,7 @@ object CreateWaterparkedClient {
     fun registerClientEvents() {
         MOD_BUS.addListener(::onClientSetup)
         MOD_BUS.addListener(::onRegisterRenderers)
+        MOD_BUS.addListener(::onRegisterParticleProviders)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(WaterslidePlacementPreview::onClientTick)
@@ -52,6 +57,7 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(SlideClientSession::onClientTickPre)
         NeoForge.EVENT_BUS.addListener(SlideClientSession::onClientTickPost)
         NeoForge.EVENT_BUS.addListener(SlideCameraHandler::onComputeCameraAngles)
+        NeoForge.EVENT_BUS.addListener(SlideCameraHandler::onComputeFov)
         NeoForge.EVENT_BUS.addListener(::onRenderLevelStage)
         NeoForge.EVENT_BUS.addListener(::onClientLevelUnload)
 
@@ -81,6 +87,12 @@ object CreateWaterparkedClient {
         }
     }
 
+    private fun onRegisterParticleProviders(event: RegisterParticleProvidersEvent) {
+        event.registerSpriteSet(ModParticles.WATER_SLIDE_SPLASH) { sprites ->
+            WaterslideSplashParticle.Provider(sprites)
+        }
+    }
+
     private fun onRenderLevelStage(event: RenderLevelStageEvent) {
         val buffers = Minecraft.getInstance().renderBuffers().bufferSource()
         when (event.stage) {
@@ -103,11 +115,20 @@ object CreateWaterparkedClient {
     }
 
     private var lastDebugState: Boolean? = null
+    private var clientTickLog = 0L
 
     private fun onClientTick(event: ClientTickEvent.Post) {
+        clientTickLog++
+        val mc = Minecraft.getInstance()
+        if (clientTickLog % 200 == 1L) {
+            CreateWaterparked.LOGGER.info(
+                "[ClientTick] alive tick={} level={} player={}",
+                clientTickLog, mc.level != null, mc.player != null
+            )
+        }
         WaterslideTubeVisual.tickVisibility()
         WaterSlideSoundManager.tick()
-        val mc = Minecraft.getInstance()
+        WaterslideSplashSpawner.tickStanding(mc)
         val debug = ModClientConfig.waterSimDebug()
         if (mc.connection != null && lastDebugState != debug) {
             lastDebugState = debug

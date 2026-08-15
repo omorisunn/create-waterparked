@@ -29,7 +29,8 @@ data class SlideSampleWire(
     val uz: Float,
     val radius: Float,
     val speed: Float,
-    val inTube: Boolean
+    val inTube: Boolean,
+    val watered: Boolean
 ) {
     fun toSample(): SlideSample =
         SlideSample(
@@ -40,7 +41,8 @@ data class SlideSampleWire(
             Vec3(ux.toDouble(), uy.toDouble(), uz.toDouble()),
             radius,
             speed.toDouble(),
-            inTube
+            inTube,
+            watered
         )
 
     companion object {
@@ -52,7 +54,8 @@ data class SlideSampleWire(
             s.up.x.toFloat(), s.up.y.toFloat(), s.up.z.toFloat(),
             s.radius,
             s.speed.toFloat(),
-            s.inTube
+            s.inTube,
+            s.watered
         )
     }
 }
@@ -104,6 +107,7 @@ class SlideTrajectoryPayload(
                         b.writeFloat(s.radius)
                         b.writeFloat(s.speed)
                         b.writeBoolean(s.inTube)
+                        b.writeBoolean(s.watered)
                     }
                 },
                 { buf ->
@@ -119,7 +123,7 @@ class SlideTrajectoryPayload(
                             b.readFloat(), b.readFloat(), b.readFloat(),
                             b.readFloat(), b.readFloat(), b.readFloat(),
                             b.readFloat(), b.readFloat(),
-                            b.readBoolean()
+                            b.readBoolean(), b.readBoolean()
                         )
                     }
                     SlideTrajectoryPayload(sessionId, startTick, swimming, subLevelId, samples)

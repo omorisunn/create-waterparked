@@ -30,6 +30,8 @@ public class WaterslideTubeInstance extends ColoredLitOverlayInstance {
     public float jitterFrequency = 4.0f;
     public float jitterTimeScale = 1.0f;
     public float jitterTime = 0.0f;
+    public float tailFadeStart = 0.0f;
+    public float tailFadeEnd = 0.0f;
 
     public WaterslideTubeInstance(InstanceType<? extends WaterslideTubeInstance> type, InstanceHandle handle) {
         super(type, handle);
@@ -80,6 +82,8 @@ public class WaterslideTubeInstance extends ColoredLitOverlayInstance {
         this.jitterFrequency = 4.0f;
         this.jitterTimeScale = 1.0f;
         this.jitterTime = 0.0f;
+        this.tailFadeStart = 0.0f;
+        this.tailFadeEnd = 0.0f;
         return this;
     }
 }

@@ -129,7 +129,8 @@ object PhysicsSlideTrajectoryBuilder {
         }
         pos = clampBody(pos, hit)
         samples += SlideSample(
-            0.0, pos, hit.center, safeTangent(vel, hit.tangent), hit.up, hit.radius, vel.length()
+            0.0, pos, hit.center, safeTangent(vel, hit.tangent), hit.up, hit.radius, vel.length(),
+            true, hit.watered
         )
 
         outer@ while (true) {
@@ -239,7 +240,8 @@ object PhysicsSlideTrajectoryBuilder {
                 if (time - lastSampleTime >= SAMPLE_INTERVAL - 1.0E-9) {
                     val th = tube.hit(pos)
                     samples += SlideSample(
-                        time, pos, th.center, safeTangent(vel, th.tangent), th.up, th.radius, vel.length()
+                        time, pos, th.center, safeTangent(vel, th.tangent), th.up, th.radius, vel.length(),
+                        true, th.watered
                     )
                     lastSampleTime = time
                 }
@@ -309,7 +311,12 @@ object PhysicsSlideTrajectoryBuilder {
                             if (start != null) {
                                 samples += SlideSample(
                                     time, start.pos, start.center, safeTangent(start.vel, start.tangent),
-                                    start.up, start.radius, start.vel.length(), true
+                                    start.up, start.radius, start.vel.length(), true,
+                                    ServerWaterSimulation.field(
+                                        level,
+                                        start.curve.bePositions.getFirst(),
+                                        start.curve.bePositions.getSecond()
+                                    )?.segments?.isNotEmpty() == true
                                 )
                                 val nextTube = buildTube(level, start.curve, start.towardSecond, start.startT)
                                 if (nextTube == null || nextTube.frames.size < 2) break
@@ -328,7 +335,7 @@ object PhysicsSlideTrajectoryBuilder {
                 if (time - lastSampleTime >= fallSampleInterval - 1.0E-9) {
                     samples += SlideSample(
                         time, pos, tubeCenter, safeTangent(vel, tubeUp),
-                        tubeUp, tubeRadius, vel.length(), false
+                        tubeUp, tubeRadius, vel.length(), false, false
                     )
                     lastSampleTime = time
                 }
@@ -341,7 +348,7 @@ object PhysicsSlideTrajectoryBuilder {
         if (last.time < time - 1.0E-9) {
             samples += SlideSample(
                 time, pos, tubeCenter, safeTangent(vel, tubeUp),
-                tubeUp, tubeRadius, vel.length(), inTubeState
+                tubeUp, tubeRadius, vel.length(), inTubeState, inTubeState && hit.watered
             )
         }
         CreateWaterparked.LOGGER.info(

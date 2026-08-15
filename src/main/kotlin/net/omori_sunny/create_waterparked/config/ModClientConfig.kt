@@ -23,6 +23,9 @@ object ModClientConfig {
     lateinit var WATER_JITTER_TIME_SCALE: ModConfigSpec.DoubleValue
     // water simulation
     lateinit var WATER_PARTICLE_COUNT: ModConfigSpec.IntValue
+    // slide splash particles
+    lateinit var SPLASH_DENSITY: ModConfigSpec.DoubleValue
+    lateinit var SPLASH_MAX_RATE: ModConfigSpec.IntValue
     // debug
     lateinit var WATER_SIM_DEBUG: ModConfigSpec.BooleanValue
 
@@ -74,6 +77,15 @@ object ModClientConfig {
             .defineInRange("waterParticleCount", 64, 8, 256)
         BUILDER.pop()
 
+        BUILDER.push("splash")
+        SPLASH_DENSITY = BUILDER
+            .comment("How tightly packed the splash particles are. Multiplier applied to the speed-based spawn rate.")
+            .defineInRange("splashDensity", 2.0, 0.25, 8.0)
+        SPLASH_MAX_RATE = BUILDER
+            .comment("Maximum splash particles spawned per side per second.")
+            .defineInRange("splashMaxRate", 40, 8, 120)
+        BUILDER.pop()
+
         BUILDER.push("debug")
         WATER_SIM_DEBUG = BUILDER
             .comment("Show the server water simulation trajectories (debug).")
@@ -90,6 +102,10 @@ object ModClientConfig {
     fun cameraSmoothing(): Float = CAMERA_SMOOTHING.get().toFloat().coerceIn(0f, 0.9f)
 
     fun waterParticleCount(): Int = WATER_PARTICLE_COUNT.get().coerceIn(8, 256)
+
+    fun splashDensity(): Double = SPLASH_DENSITY.get().coerceIn(0.25, 8.0)
+
+    fun splashMaxRate(): Double = SPLASH_MAX_RATE.get().toDouble().coerceIn(8.0, 120.0)
 
     fun polygonScale(): Float = POLYGON_SCALE.get().toFloat().coerceIn(0.05f, 2.0f)
 

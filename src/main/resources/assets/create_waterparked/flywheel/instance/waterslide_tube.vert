@@ -181,6 +181,13 @@ void flw_instanceVertex(in FlwInstance i) {
     }
 
     flw_vertexColor = i.color;
+    if (isWater > 0.5 && i.tailFadeEnd > i.tailFadeStart + 0.0001) {
+        // smooth per-vertex tail fade along the thrown stream; stream segments
+        // use a fixed 0.5 arc step, so arcBase + t*0.5 is the stream coordinate
+        float streamArc = i.arcBase + t * 0.5;
+        float tailFade = 1.0 - smoothstep(i.tailFadeStart, i.tailFadeEnd, streamArc);
+        flw_vertexColor.a *= tailFade;
+    }
     flw_vertexOverlay = i.overlay;
     flw_vertexLight = vec2(i.light) / 256.0;
 

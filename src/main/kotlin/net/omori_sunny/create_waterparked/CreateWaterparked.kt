@@ -9,6 +9,7 @@ import net.omori_sunny.create_waterparked.content.registry.ModCreativeTabs
 import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
 import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
 import net.omori_sunny.create_waterparked.content.registry.ModItems
+import net.omori_sunny.create_waterparked.content.registry.ModParticles
 import net.omori_sunny.create_waterparked.content.registry.ModSounds
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 import net.omori_sunny.create_waterparked.datagen.CreateWaterparkedDataGen
@@ -39,6 +40,7 @@ object CreateWaterparked {
         ModEntityTypes.REGISTRY.register(MOD_BUS)
         ModDataComponents.REGISTRY.register(MOD_BUS)
         ModSounds.REGISTRY.register(MOD_BUS)
+        ModParticles.REGISTRY.register(MOD_BUS)
         ModCreativeTabs.REGISTRY.register(MOD_BUS)
 
         MOD_BUS.addListener(ModPayloads::register)

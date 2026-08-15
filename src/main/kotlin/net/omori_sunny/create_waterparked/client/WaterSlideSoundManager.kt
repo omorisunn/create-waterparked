@@ -1,5 +1,6 @@
 package net.omori_sunny.create_waterparked.client
 
+import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.content.registry.ModSounds
@@ -14,27 +15,30 @@ import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
 import kotlin.math.abs
+import kotlin.math.sqrt
 
-// Looping water sound near watered tracks. The volume follows the local flow
-// speed of the nearest watered curve and is attenuated by distance (the sound
-// instance is positioned at the closest curve point and uses LINEAR falloff).
+// One looping water sound per watered slide curve. Every instance computes its
+// own distance falloff and local-flow-speed volume, so several slides can be
+// heard at once.
 @OnlyIn(Dist.CLIENT)
 object WaterSlideSoundManager {
     private const val RANGE = 16.0
-    private const val MAX_VOLUME = 0.8f
+    private const val MAX_VOLUME = 0.64f
     private const val SPEED_FULL_VOLUME = 16.0
     private const val CURVE_SAMPLES = 20
 
-    private var active: WaterSlideSoundInstance? = null
+    private val sounds = LinkedHashMap<Pair<Long, Long>, WaterSlideSoundInstance>()
+    private var debugTick = 0L
 
     fun tick() {
         val mc = Minecraft.getInstance()
         val level = mc.level ?: return stopAll()
         val player = mc.player ?: return stopAll()
         val p = player.position()
-        var best = Double.MAX_VALUE
-        var bestPos = Vec3.ZERO
-        var bestSpeed = 0f
+        val seen = HashSet<Pair<Long, Long>>()
+        var playableCurves = 0
+        var curvesInRange = 0
+
         for (be in WaterslideCurveRenderer.clientAnchors()) {
             if (be.level !== level || be.isRemoved) continue
             for ((peer, raw) in be.anchorPeerCurvesView) {
@@ -43,7 +47,8 @@ object WaterSlideSoundManager {
                 val water = WaterFlowSimulation.resultFor(level, bc) ?: continue
                 val segs = water.segments
                 if (segs.isEmpty()) continue
-                // nearest sampled point on this curve + its local segment speed
+                playableCurves++
+
                 var nearestSq = Double.MAX_VALUE
                 var nearestPos = bc.getPosition(0.0)
                 var nearestFrac = 0.0
@@ -57,33 +62,59 @@ object WaterSlideSoundManager {
                         nearestFrac = f
                     }
                 }
-                if (nearestSq >= best) continue
+
+                if (nearestSq > RANGE * RANGE) continue
+
+                val a = bc.bePositions.getFirst().asLong()
+                val b = bc.bePositions.getSecond().asLong()
+                val key = if (a <= b) a to b else b to a
+                seen.add(key)
+                curvesInRange++
                 val idx = (nearestFrac * segs.size).toInt().coerceIn(0, segs.size - 1)
-                best = nearestSq
-                bestPos = nearestPos
-                bestSpeed = abs(segs[idx].speed)
+                val speed = abs(segs[idx].speed)
+                val speedFactor = (speed / SPEED_FULL_VOLUME).toDouble().coerceIn(0.0, 1.0)
+                val distFactor = (1.0 - sqrt(nearestSq) / RANGE).coerceIn(0.0, 1.0)
+                val volume = (MAX_VOLUME * speedFactor * distFactor).toFloat()
+                val inst = sounds.getOrPut(key) {
+                    WaterSlideSoundInstance(ModSounds.WATER_FLOW.value()).also {
+                        // volume and position must be valid BEFORE play():
+                        // SoundEngine drops volume-zero sounds entirely.
+                        it.setVolume(volume)
+                        it.setPosition(nearestPos)
+                        CreateWaterparked.LOGGER.info(
+                            "[WaterSound] play key={} pos={} distSq={} volume={}",
+                            key, nearestPos, nearestSq, volume
+                        )
+                        mc.soundManager.play(it)
+                    }
+                }
+                inst.setVolume(volume)
+                inst.setPosition(nearestPos)
             }
         }
-        if (best > RANGE * RANGE) {
-            // keep the handle, fade out instead of stop/start churn
-            active?.setVolume(0f)
-            return
+
+        val it = sounds.entries.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            if (e.key !in seen) {
+                Minecraft.getInstance().soundManager.stop(e.value)
+                it.remove()
+            }
         }
-        if (active == null) {
-            val inst = WaterSlideSoundInstance(ModSounds.WATER_FLOW.value())
-            mc.getSoundManager().play(inst)
-            active = inst
+
+        if (level.gameTime - debugTick >= 40) {
+            debugTick = level.gameTime
+            CreateWaterparked.LOGGER.info(
+                "[WaterSound] playableCurves={} inRange={} sounds={} player={}",
+                playableCurves, curvesInRange, sounds.size, p
+            )
         }
-        val inst = active ?: return
-        val speedFactor = (bestSpeed / SPEED_FULL_VOLUME).toDouble().coerceIn(0.0, 1.0)
-        inst.setVolume((MAX_VOLUME * speedFactor).toFloat())
-        inst.setPosition(bestPos)
     }
 
     fun stopAll() {
         val mc = Minecraft.getInstance()
-        active?.let { mc.getSoundManager().stop(it) }
-        active = null
+        sounds.values.forEach { mc.soundManager.stop(it) }
+        sounds.clear()
     }
 
     private class WaterSlideSoundInstance(
@@ -93,8 +124,8 @@ object WaterSlideSoundManager {
         init {
             relative = false
             looping = true
-            attenuation = SoundInstance.Attenuation.LINEAR
-            volume = 0.8f
+            attenuation = SoundInstance.Attenuation.NONE
+            volume = 0f
         }
 
         override fun tick() {

@@ -128,7 +128,7 @@ object PlayerSlideController {
                 val waterVel = ServerWaterSimulation.waterVelocityAt(level, center) ?: continue
                 // push scales with the player's velocity relative to the water
                 val relVel = waterVel.subtract(player.deltaMovement.scale(20.0))
-                player.addDeltaMovement(relVel.scale(0.1 / 20.0))
+                player.addDeltaMovement(relVel.scale(0.2 / 20.0))
             }
         }
     }

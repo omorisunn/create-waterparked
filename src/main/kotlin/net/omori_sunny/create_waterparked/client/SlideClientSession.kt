@@ -3,10 +3,12 @@ package net.omori_sunny.create_waterparked.client
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
 import dev.ryanhcode.sable.companion.math.JOMLConversion
 import net.omori_sunny.create_waterparked.CreateWaterparked
+import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.game.physics.SlideEndReason
 import net.omori_sunny.create_waterparked.game.physics.SlideTrajectory
 import net.omori_sunny.create_waterparked.game.physics.SLIDE_WALL_THICKNESS
+import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashSpawner
 import net.omori_sunny.create_waterparked.network.SlideCancelPayload
 import net.omori_sunny.create_waterparked.network.SlideEndPayload
 import net.omori_sunny.create_waterparked.network.SlideSyncPayload
@@ -78,6 +80,78 @@ object SlideClientSession {
     }
 
     private var active: Active? = null
+    private var waterDebugTick = 0L
+
+    @JvmStatic
+    fun isSliding(): Boolean = active != null
+
+    // Current playback speed in blocks/second, derived from the velocity that
+    // onClientTickPost already applied from the trajectory sample.
+    @JvmStatic
+    fun currentSpeedBlocksPerSecond(): Float {
+        if (active == null) return 0f
+        val player = Minecraft.getInstance().player ?: return 0f
+        return (player.deltaMovement.length() * 20.0).toFloat()
+    }
+
+    // True while the player's actual collision box intersects a rendered
+    // water band (in-tube) or a thrown stream polyline. This uses the entity
+    // bounding box directly, not a single probe point.
+    @JvmStatic
+    fun isOnWateredSegment(level: Level): Boolean {
+        val session = active ?: return false
+        val playerBox = Minecraft.getInstance().player?.boundingBox ?: return false
+
+        // Strict contact test against the player's actual collision box. The
+        // trajectory inTube flag is NOT part of the gate: the player may be
+        // in a free-fall sample between two tubes (or a stream arc) while the
+        // box still slices a rendered water band, and the box is authoritative.
+        val sub = session.subLevel(level)
+        val localBox = if (sub != null) toLocalBox(level, session, playerBox) else null
+        val worldTube = WaterFlowSimulation.intersectsWateredTubeBox(level, playerBox)
+        val subTube = sub != null && localBox != null &&
+            WaterFlowSimulation.intersectsWateredTubeBox(sub.getLevel(), localBox)
+        val inStream = WaterFlowSimulation.intersectsStreamBox(level, playerBox, 0.45)
+        val hit = worldTube || subTube || inStream
+
+        if (!hit && level.gameTime - waterDebugTick >= 20) {
+            waterDebugTick = level.gameTime
+            val elapsed = (level.gameTime - session.startTick + session.timeOffsetTicks) / 20.0
+            val at = session.trajectory.sampleAt(elapsed)
+            CreateWaterparked.LOGGER.info(
+                "[SplashWater] inTube={} watered={} worldTube={} subTube={} stream={} box={}",
+                at.sample.inTube, at.sample.watered, worldTube, subTube, inStream, playerBox
+            )
+        }
+        return hit
+    }
+
+    private fun toLocalBox(
+        level: Level,
+        session: Active,
+        worldBox: net.minecraft.world.phys.AABB
+    ): net.minecraft.world.phys.AABB? {
+        val sub = session.subLevel(level) ?: return null
+        val pose = sub.logicalPose()
+        val corners = listOf(
+            Vec3(worldBox.minX, worldBox.minY, worldBox.minZ),
+            Vec3(worldBox.minX, worldBox.minY, worldBox.maxZ),
+            Vec3(worldBox.minX, worldBox.maxY, worldBox.minZ),
+            Vec3(worldBox.minX, worldBox.maxY, worldBox.maxZ),
+            Vec3(worldBox.maxX, worldBox.minY, worldBox.minZ),
+            Vec3(worldBox.maxX, worldBox.minY, worldBox.maxZ),
+            Vec3(worldBox.maxX, worldBox.maxY, worldBox.minZ),
+            Vec3(worldBox.maxX, worldBox.maxY, worldBox.maxZ)
+        )
+        val local = corners.map { corner ->
+            val out = pose.transformPositionInverse(JOMLConversion.toJOML(corner), Vector3d())
+            JOMLConversion.toMojang(out)
+        }
+        return net.minecraft.world.phys.AABB(
+            local.minOf { it.x }, local.minOf { it.y }, local.minOf { it.z },
+            local.maxOf { it.x }, local.maxOf { it.y }, local.maxOf { it.z }
+        )
+    }
 
     // Per-frame camera state, lerped by partialTick like Sable.
     @JvmStatic
@@ -243,6 +317,19 @@ object SlideClientSession {
             // immediate (no easing from zero); smoothing only applies afterwards
             session.lastCameraYaw = session.freeLookYaw
             session.lastCameraPitch = session.freeLookPitch
+
+            // pre-spawn the entry splash and entry sound right now, instead of
+            // waiting for the next client tick (removes the visible delay)
+            val worldPos = toWorldPos(level, session, first.position)
+            val bodyCenter = Vec3(
+                worldPos.x,
+                if (payload.swimmingPose) worldPos.y + 0.3 else worldPos.y - SIT_HEIGHT + 0.3,
+                worldPos.z
+            )
+            val velPerTick = tan.scale(first.speed / 20.0)
+            WaterslideSplashSpawner.onSlideStart(
+                mc, bodyCenter, velPerTick, first.speed, first.watered
+            )
         }
     }
 
@@ -359,6 +446,11 @@ object SlideClientSession {
                 true
             )
         }
+
+        // Splash particles must run AFTER the playback velocity above has been
+        // written, otherwise they read the zeroed pre-tick deltaMovement and
+        // never spawn.
+        WaterslideSplashSpawner.tickSliding(mc)
     }
 
     private fun toWorldPos(level: Level, session: Active, local: Vec3): Vec3 {

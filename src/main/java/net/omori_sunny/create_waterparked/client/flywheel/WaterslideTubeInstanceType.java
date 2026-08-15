@@ -45,6 +45,8 @@ public final class WaterslideTubeInstanceType {
                     .scalar("jitterFrequency", FloatRepr.FLOAT)
                     .scalar("jitterTimeScale", FloatRepr.FLOAT)
                     .scalar("jitterTime", FloatRepr.FLOAT)
+                    .scalar("tailFadeStart", FloatRepr.FLOAT)
+                    .scalar("tailFadeEnd", FloatRepr.FLOAT)
                     .build()
             )
             .writer((ptr, instance) -> {
@@ -77,6 +79,8 @@ public final class WaterslideTubeInstanceType {
                 MemoryUtil.memPutFloat(ptr + 140L, instance.jitterFrequency);
                 MemoryUtil.memPutFloat(ptr + 144L, instance.jitterTimeScale);
                 MemoryUtil.memPutFloat(ptr + 148L, instance.jitterTime);
+                MemoryUtil.memPutFloat(ptr + 152L, instance.tailFadeStart);
+                MemoryUtil.memPutFloat(ptr + 156L, instance.tailFadeEnd);
             })
             .vertexShader(VERTEX_SHADER)
             .cullShader(CULL_SHADER)

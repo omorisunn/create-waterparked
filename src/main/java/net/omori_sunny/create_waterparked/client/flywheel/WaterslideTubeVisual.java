@@ -24,6 +24,7 @@ import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -66,10 +67,13 @@ public class WaterslideTubeVisual extends AbstractVisual
         return t * t * (3f - 2f * t);
     }
 
-    // water is translucent and should always pick up full sky light; block
-    // light is kept from the actual position so caves still light it
-    private static int waterLight(int rawLight) {
-        return LightTexture.pack(15, LightTexture.block(rawLight));
+    // same light sampling as Coasters Simulated's flywheel/BER renderers, with
+    // a +3 brightness boost for the translucent water surfaces
+    private int waterLight(Level level, Vec3 pos) {
+        BlockPos bp = BlockPos.containing(pos);
+        int block = level.getBrightness(LightLayer.BLOCK, bp) + 3;
+        int sky = level.getBrightness(LightLayer.SKY, bp) + 3;
+        return LightTexture.pack(Mth.clamp(block, 0, 15), Mth.clamp(sky, 0, 15));
     }
 
 
@@ -571,22 +575,6 @@ public class WaterslideTubeVisual extends AbstractVisual
             return (xa == ya && xb == yb) || (xa == yb && xb == ya);
         }
 
-        // average the jitter amplitude/time speed with the neighboring curve's
-        // boundary speed so speedT (and therefore the noise time coordinate)
-        // matches bit-for-bit at a junction ring
-        private float junctionJitterSpeed(BlockPos anchor, float ownSpeed) {
-            BezierConnection nb = neighborCurveAt(anchor);
-            if (nb == null) return ownSpeed;
-            WaterFlowSimulation.CurveWater nw = WaterFlowSimulation.INSTANCE.resultFor(level, nb);
-            if (nw == null || !nw.getExists() || nw.getSegments().isEmpty()) return ownSpeed;
-            List<ServerWaterSimulation.WaterSegment> ns = nw.getSegments();
-            boolean nbAtFirst = nb.bePositions.getFirst().equals(anchor);
-            float nbSpeed = Math.abs(nbAtFirst
-                ? ns.get(0).getSpeed()
-                : ns.get(ns.size() - 1).getSpeed());
-            return (ownSpeed + nbSpeed) * 0.5f;
-        }
-
         @Nullable
         private List<StreamSegment> buildStreamSegments() {
             ServerWaterSimulation.ExitInfo exit = water.getExit();
@@ -728,11 +716,9 @@ public class WaterslideTubeVisual extends AbstractVisual
                 ServerWaterSimulation.WaterSegment seg = segments.get(i);
                 ServerWaterSimulation.WaterSegment nxt = (i + 1 < segments.size())
                     ? segments.get(i + 1) : seg;
-                // per-segment speed = particle speed; flowStart/flowEnd still
-                // blend jitter between segments, while the texture scroll is
-                // direct (flowUpstream)
+                // per-segment speed = particle speed; keep the same writing as
+                // a normal interior water segment (no junction-specific tweaks)
                 renderBand(seg.getArc(), seg.getSpeed(), nxt.getSpeed(),
-                    i == 0, i == segments.size() - 1,
                     wallThickness, mirror, scale, now);
                 // fill a segment the server simulation occasionally misses
                 if (i + 1 < segments.size()) {
@@ -741,14 +727,13 @@ public class WaterslideTubeVisual extends AbstractVisual
                         float midArc = seg.getArc() + gap * 0.5f;
                         float midSpeed = (seg.getSpeed() + nxt.getSpeed()) * 0.5f;
                         renderBand(midArc, midSpeed, nxt.getSpeed(),
-                            false, false, wallThickness, mirror, scale, now);
+                            wallThickness, mirror, scale, now);
                     }
                 }
             }
         }
 
         private void renderBand(float arc, float speed, float speedNext,
-                                boolean firstSeg, boolean lastSeg,
                                 float wallThickness, float mirror, float scale, float now) {
             boolean segForward = speed >= 0f;
             int frameIdx = frameIndexAtArc(arc);
@@ -787,10 +772,9 @@ public class WaterslideTubeVisual extends AbstractVisual
                 pl = f.getCurrLateral().scale(-1.0); cl = f.getPrevLateral().scale(-1.0);
                 pr = f.getCurrRadius(); cr = f.getPrevRadius();
             }
-            // flowStart/flowEnd must follow the render direction so the jitter
-            // amplitude/time matches at shared boundary rings for BOTH forward
-            // and backward segments. At the two curve ends a junction anchor
-            // replaces the boundary value with the neighbor-averaged speed.
+            // flowStart/flowEnd follow the render direction exactly like a
+            // normal interior segment (jitter amplitude/time blends to the next
+            // segment in the same curve; no junction special-casing)
             float k = WaterFlowSimulation.WATER_V_CYCLES_PER_BLOCK * scale;
             float ownFlow = Math.abs(speed) * k / 40f;
             float flow;
@@ -798,24 +782,12 @@ public class WaterslideTubeVisual extends AbstractVisual
             if (segForward) {
                 flow = ownFlow;
                 flowEnd = Math.abs(speedNext) * k / 40f;
-                if (firstSeg) {
-                    flow = junctionJitterSpeed(curve.bePositions.getFirst(), ownFlow);
-                }
-                if (lastSeg) {
-                    flowEnd = junctionJitterSpeed(curve.bePositions.getSecond(), ownFlow);
-                }
             } else {
                 flow = Math.abs(speedNext) * k / 40f;
                 flowEnd = ownFlow;
-                if (lastSeg) {
-                    flow = junctionJitterSpeed(curve.bePositions.getSecond(), ownFlow);
-                }
-                if (firstSeg) {
-                    flowEnd = junctionJitterSpeed(curve.bePositions.getFirst(), ownFlow);
-                }
             }
             Vec3 mid = ps.add(cs).scale(0.5).add(origin);
-            int light = waterLight(LevelRenderer.getLightColor(level, BlockPos.containing(mid)));
+            int light = waterLight(level, mid);
             w.setSegment(ps, cs, pt, ct, pl, cl, pr, cr)
                 .light(light)
                 .color(0.3f, 0.6f, 1f, 0.75f);
@@ -904,22 +876,25 @@ public class WaterslideTubeVisual extends AbstractVisual
             );
             WaterslideTubeInstance[] arr = new WaterslideTubeInstance[segs.size()];
             streamInstancer.createInstances(arr);
+            // last third of the stream fades out; expressed in the shader's arc
+            // coordinates (0.5 per segment) so the fade is continuous across
+            // vertices instead of a per-segment alpha step.
+            int fadeStart = Math.max(0, arr.length - arr.length / 3);
+            float fadeStartArc = fadeStart * 0.5f;
+            float fadeEndArc = arr.length * 0.5f;
             for (int i = 0; i < arr.length; i++) {
                 StreamSegment s = segs.get(i);
-                // fade the tail out gradually and ramp the jitter up so the thrown
-                // water breaks up more violently toward the end
-                float fade = 1f;
+                // ramp the jitter up toward the tail so the water breaks up
+                // more violently as it thins out
                 float jitterBoost = 1f;
-                int fadeStart = Math.max(0, arr.length - arr.length / 3);
                 if (arr.length > 1 && i >= fadeStart) {
                     float tailT = (float) (i - fadeStart + 1) / (arr.length - fadeStart + 1);
-                    fade = 1f - tailT;
                     // ramp the jitter up sharply toward the tail so the water
                     // breaks apart more violently as it thins out
                     jitterBoost = 1f + tailT * tailT * 8.0f;
                 }
                 Vec3 mid = s.prevSpine.add(s.currSpine).scale(0.5).add(origin);
-                int light = waterLight(LevelRenderer.getLightColor(level, BlockPos.containing(mid)));
+                int light = waterLight(level, mid);
                 arr[i]
                     .setSegment(
                         s.prevSpine, s.currSpine,
@@ -928,7 +903,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                         s.prevRadius, s.currRadius
                     )
                     .light(light)
-                    .color(0.3f, 0.6f, 1f, Math.max(0f, 0.75f * fade));
+                    .color(0.3f, 0.6f, 1f, 0.75f);
                 arr[i].wallThickness = wallThickness;
                 arr[i].mirror = mirror;
                 arr[i].arcBase = s.arcBase;
@@ -940,6 +915,8 @@ public class WaterslideTubeVisual extends AbstractVisual
                 arr[i].jitterScale = ModClientConfig.INSTANCE.waterJitterScale() * jitterBoost;
                 arr[i].jitterFrequency = ModClientConfig.INSTANCE.waterJitterFrequency();
                 arr[i].jitterTimeScale = ModClientConfig.INSTANCE.waterJitterTimeScale();
+                arr[i].tailFadeStart = fadeStartArc;
+                arr[i].tailFadeEnd = fadeEndArc;
                 arr[i].phaseUpstream = 0f;
                 arr[i].phaseStart = 0f;
                 arr[i].phaseEnd = 0f;

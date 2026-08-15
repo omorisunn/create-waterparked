@@ -21,7 +21,8 @@ data class SlideSample(
     val up: Vec3,
     val radius: Float,
     val speed: Double,
-    val inTube: Boolean = true
+    val inTube: Boolean = true,
+    val watered: Boolean = false
 ) {
     val position: Vec3
         get() = center
@@ -78,7 +79,8 @@ class SlideTrajectory(
         val radius = a.radius + (b.radius - a.radius) * f.toFloat()
         val speed = a.speed + (b.speed - a.speed) * f
         val inTube = a.inTube && b.inTube
-        return AtTime(SlideSample(time, center, tubeCenter, unit, up, radius, speed, inTube), lo)
+        val watered = a.watered && b.watered
+        return AtTime(SlideSample(time, center, tubeCenter, unit, up, radius, speed, inTube, watered), lo)
     }
 
     private fun slerpUnit(a: Vec3, b: Vec3, f: Double): Vec3 {

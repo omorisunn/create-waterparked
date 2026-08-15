@@ -12,6 +12,7 @@ import net.minecraft.core.BlockPos
 import net.minecraft.resources.ResourceKey
 import net.minecraft.util.Mth
 import net.minecraft.world.level.Level
+import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
@@ -100,6 +101,191 @@ object WaterFlowSimulation {
     @JvmStatic
     fun fieldFor(level: Level, a: BlockPos, b: BlockPos): CurveWater? =
         fields[edgeKey(a.asLong(), b.asLong())]
+
+    // Client-side contact check against the RENDERED water data: true when the
+    // position is inside the tube cylinder of a curve that has a synced water
+    // field. This matches what the player sees (the flywheel water band),
+    // independent of the server trajectory's per-frame watered flag.
+    @JvmStatic
+    fun isInsideWateredTube(level: Level, pos: Vec3, margin: Double = 0.6): Boolean {
+        val seen = HashSet<Pair<Long, Long>>()
+        for (be in WaterslideCurveRenderer.clientAnchors()) {
+            if (be.level !== level || be.isRemoved) continue
+            for (raw in be.anchorPeerCurvesView.values) {
+                val bc = if (raw.isPrimary) raw else raw.secondary()
+                if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
+                val key = edgeKeyOf(bc)
+                if (!seen.add(key)) continue
+                if (fields[key]?.exists != true) continue
+                val a = bc.bePositions.getFirst()
+                val b = bc.bePositions.getSecond()
+                val r0 = SlideCurveGeometry.radiusAt(level, a)
+                val r1 = SlideCurveGeometry.radiusAt(level, b)
+                val samples = 24
+                for (i in 0..samples) {
+                    val t = i.toFloat() / samples
+                    val center = bc.getPosition(t.toDouble())
+                    val radius = r0 + (r1 - r0) * t + margin
+                    if (center.distanceToSqr(pos) <= radius * radius) return true
+                }
+            }
+        }
+        return false
+    }
+
+    // all cached thrown-stream polylines (world coordinates), exposed for the
+    // player splash spawner so flying through the thrown water also counts
+    @JvmStatic
+    fun hasAnyWaterFields(): Boolean = fields.values.any { it.exists }
+
+    @JvmStatic
+    fun allStreamPolylines(): List<List<Vec3>> {
+        val out = ArrayList<List<Vec3>>()
+        for ((outer, inner) in streamCache.values) {
+            out.addAll(outer)
+            out.addAll(inner)
+        }
+        return out
+    }
+
+    data class StreamContact(val pos: Vec3, val velocity: Vec3)
+
+    // Velocity of the thrown stream at the closest polyline point to pos.
+    // Stream polylines are traced with fixed 0.05s steps, so finite
+    // differences recover the true ballistic velocity at each point.
+    @JvmStatic
+    fun streamVelocityAt(level: Level, pos: Vec3, radius: Double): Vec3? =
+        streamContactAt(level, pos, radius)?.velocity
+
+    // Closest point on a thrown stream polyline to pos, plus that point's
+    // water velocity. Returns null when no polyline is within radius.
+    @JvmStatic
+    fun streamContactAt(level: Level, pos: Vec3, radius: Double): StreamContact? {
+        val maxDistSq = radius * radius
+        var bestSq = Double.MAX_VALUE
+        var bestPos: Vec3? = null
+        var bestVel: Vec3? = null
+        for (poly in allStreamPolylines()) {
+            for (i in 0 until poly.size - 1) {
+                val a = poly[i]
+                val b = poly[i + 1]
+                val ab = b.subtract(a)
+                val lenSq = ab.lengthSqr()
+                val t = if (lenSq < 1.0E-12) 0.0
+                else ((pos.subtract(a)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
+                val closest = a.add(ab.scale(t))
+                val distSq = pos.distanceToSqr(closest)
+                if (distSq <= maxDistSq && distSq < bestSq) {
+                    bestSq = distSq
+                    bestPos = closest
+                    bestVel = streamPointVelocity(poly, i).lerp(streamPointVelocity(poly, i + 1), t)
+                }
+            }
+        }
+        val p = bestPos ?: return null
+        return StreamContact(p, bestVel ?: Vec3.ZERO)
+    }
+
+    private fun streamPointVelocity(poly: List<Vec3>, idx: Int): Vec3 {
+        val i0 = (idx - 1).coerceAtLeast(0)
+        val i1 = (idx + 1).coerceAtMost(poly.size - 1)
+        if (i1 <= i0) return Vec3.ZERO
+        val span = 0.05 * (i1 - i0)
+        return poly[i1].subtract(poly[i0]).scale(1.0 / span)
+    }
+
+    // Collision-box version of the contact checks: use the player's actual
+    // AABB instead of a single probe point. Distance is measured to the
+    // closest point of the box (clamped sphere test), which is exact for a
+    // box-vs-tube check and catches tubes passing through the box centre.
+    @JvmStatic
+    fun intersectsWateredTubeBox(level: Level, box: AABB): Boolean {
+        val seen = HashSet<Pair<Long, Long>>()
+        for (be in WaterslideCurveRenderer.clientAnchors()) {
+            if (be.level !== level || be.isRemoved) continue
+            for (raw in be.anchorPeerCurvesView.values) {
+                val bc = if (raw.isPrimary) raw else raw.secondary()
+                if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
+                val key = edgeKeyOf(bc)
+                if (!seen.add(key)) continue
+                if (fields[key]?.exists != true) continue
+                val a = bc.bePositions.getFirst()
+                val b = bc.bePositions.getSecond()
+                val r0 = SlideCurveGeometry.radiusAt(level, a)
+                val r1 = SlideCurveGeometry.radiusAt(level, b)
+                val samples = 48
+                for (i in 0..samples) {
+                    val t = i.toFloat() / samples
+                    val center = bc.getPosition(t.toDouble())
+                    val radius = r0 + (r1 - r0) * t + 0.1
+                    val dx = min(max(center.x, box.minX), box.maxX) - center.x
+                    val dy = min(max(center.y, box.minY), box.maxY) - center.y
+                    val dz = min(max(center.z, box.minZ), box.maxZ) - center.z
+                    if (dx * dx + dy * dy + dz * dz <= radius * radius) return true
+                }
+            }
+        }
+        return false
+    }
+
+    @JvmStatic
+    fun intersectsStreamBox(level: Level, box: AABB, radius: Double): Boolean {
+        for (poly in allStreamPolylines()) {
+            for (i in 0 until poly.size - 1) {
+                val segBox = AABB(poly[i], poly[i + 1]).inflate(radius)
+                if (box.intersects(segBox)) return true
+            }
+        }
+        return false
+    }
+
+    @JvmStatic
+    fun isInsideStream(level: Level, pos: Vec3, radius: Double): Boolean {
+        val r2 = radius * radius
+        for (poly in allStreamPolylines()) {
+            for (i in 0 until poly.size - 1) {
+                val a = poly[i]
+                val b = poly[i + 1]
+                val ab = b.subtract(a)
+                val lenSq = ab.lengthSqr()
+                val t = if (lenSq < 1.0E-12) 0.0
+                else ((pos.subtract(a)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
+                if (pos.distanceToSqr(a.add(ab.scale(t))) <= r2) return true
+            }
+        }
+        return false
+    }
+
+    // diagnostic: distance from pos to the closest watered curve surface
+    // (negative means inside); used to debug Sable coordinate mismatches
+    @JvmStatic
+    fun debugNearestWateredTube(level: Level, pos: Vec3): Double {
+        var best = Double.MAX_VALUE
+        val seen = HashSet<Pair<Long, Long>>()
+        for (be in WaterslideCurveRenderer.clientAnchors()) {
+            if (be.level !== level || be.isRemoved) continue
+            for (raw in be.anchorPeerCurvesView.values) {
+                val bc = if (raw.isPrimary) raw else raw.secondary()
+                if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
+                val key = edgeKeyOf(bc)
+                if (!seen.add(key)) continue
+                if (fields[key]?.exists != true) continue
+                val a = bc.bePositions.getFirst()
+                val b = bc.bePositions.getSecond()
+                val r0 = SlideCurveGeometry.radiusAt(level, a)
+                val r1 = SlideCurveGeometry.radiusAt(level, b)
+                val samples = 24
+                for (i in 0..samples) {
+                    val t = i.toFloat() / samples
+                    val center = bc.getPosition(t.toDouble())
+                    val radius = r0 + (r1 - r0) * t
+                    val d = center.distanceTo(pos) - radius
+                    if (d < best) best = d
+                }
+            }
+        }
+        return best
+    }
 
     @JvmStatic
     fun clear() {
