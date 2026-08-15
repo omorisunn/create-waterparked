@@ -101,13 +101,26 @@ object PlayerSlideController {
             }
         }
         for (level in event.server.allLevels) {
-            for (anchorPos in SlideAnchorIndex.all(level).toList()) {
+            for (anchorPos in SlideAnchorIndex.all(level, SlideSpace.Main).toList()) {
                 val be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
                 if (be != null) SlideWaterManager.tickServer(level, be)
                 else SlideAnchorIndex.unregister(level, anchorPos)
             }
+            SubLevelContainer.getContainer(level)?.allSubLevels?.forEach { raw ->
+                val sub = raw as? ServerSubLevel ?: return@forEach
+                val access = SubSlideSpaceAccess(level, sub)
+                for (anchorPos in SlideAnchorIndex.all(level, access.space).toList()) {
+                    val be = access.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
+                    if (be != null) SlideWaterManager.tickServer(level, be)
+                    else SlideAnchorIndex.unregister(level, anchorPos)
+                }
+            }
             SableCoordProbe.dump(level)
             ServerWaterSimulation.tickServer(level)
+            SubLevelContainer.getContainer(level)?.allSubLevels?.forEach { raw ->
+                val sub = raw as? ServerSubLevel ?: return@forEach
+                ServerWaterSimulation.tickServer(SubSlideSpaceAccess(level, sub))
+            }
             for (session in sessions.values.toList()) {
                 if (session.entity.level() != level) continue
                 tickSession(level, session)

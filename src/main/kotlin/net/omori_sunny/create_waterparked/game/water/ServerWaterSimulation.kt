@@ -7,6 +7,9 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlo
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.game.SlideAnchorIndex
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.physics.MainSlideSpaceAccess
+import net.omori_sunny.create_waterparked.game.physics.SlideSpace
+import net.omori_sunny.create_waterparked.game.physics.SlideSpaceAccess
 import net.omori_sunny.create_waterparked.network.WaterslideDebugTrajectoryPayload
 import net.omori_sunny.create_waterparked.network.WaterslideWaterSyncPayload
 import net.minecraft.core.BlockPos
@@ -137,12 +140,14 @@ object ServerWaterSimulation {
         }
     }
 
-    private val fields = HashMap<ResourceKey<Level>, Map<Pair<Long, Long>, CurveField>>()
-    private val dirty = mutableSetOf<ResourceKey<Level>>()
-    private val lastCalc = mutableMapOf<ResourceKey<Level>, Long>()
-    private val segCache = HashMap<ResourceKey<Level>, Pair<String, List<TubeSeg>>>()
-    private val lastSig = HashMap<ResourceKey<Level>, String>()
+    private val fields = HashMap<String, Map<Pair<Long, Long>, CurveField>>()
+    private val dirty = mutableSetOf<String>()
+    private val lastCalc = mutableMapOf<String, Long>()
+    private val segCache = HashMap<String, Pair<String, List<TubeSeg>>>()
+    private val lastSig = HashMap<String, String>()
     private val debugPlayers = mutableSetOf<UUID>()
+
+    private fun spaceKey(access: SlideSpaceAccess): String = access.space.cacheKey(access.level)
 
     // client debug toggle; recomputes once so trajectories get collected
     fun setDebug(player: ServerPlayer, enable: Boolean) {
@@ -156,19 +161,21 @@ object ServerWaterSimulation {
     }
 
     fun markDirty(level: Level) {
-        if (!level.isClientSide) dirty += level.dimension()
+        if (!level.isClientSide) dirty += SlideSpace.Main.cacheKey(level)
     }
 
     // force a recalculation + resend for a joined player
     fun resync(level: Level) {
         if (level.isClientSide) return
-        dirty += level.dimension()
-        lastSig.remove(level.dimension())
+        val key = SlideSpace.Main.cacheKey(level)
+        dirty += key
+        lastSig.remove(key)
     }
 
     // resend the current field to players who just joined
     fun resendTo(level: ServerLevel) {
-        val f = fields[level.dimension()] ?: return
+        val key = MainSlideSpaceAccess(level).space.cacheKey(level)
+        val f = fields[key] ?: return
         val payload = WaterslideWaterSyncPayload(toEntries(f))
         CreateWaterparked.LOGGER.info("Water resend entries={}", payload.entries.size)
         for (player in level.players()) {
@@ -186,15 +193,18 @@ object ServerWaterSimulation {
         }
 
     fun field(level: Level, a: BlockPos, b: BlockPos): CurveField? =
-        fields[level.dimension()]?.get(edgeKey(a, b))
+        fields[SlideSpace.Main.cacheKey(level)]?.get(edgeKey(a, b))
+
+    fun field(access: SlideSpaceAccess, a: BlockPos, b: BlockPos): CurveField? =
+        fields[spaceKey(access)]?.get(edgeKey(a, b))
 
     // water flow velocity (blocks/s) at a world position, for pushing players.
     // Returns null when the position isn't inside a simulated water tube.
     @JvmStatic
     fun waterVelocityAt(level: ServerLevel, pos: Vec3): Vec3? {
-        val fieldMap = fields[level.dimension()] ?: return null
+        val fieldMap = fields[SlideSpace.Main.cacheKey(level)] ?: return null
         if (fieldMap.isEmpty()) return null
-        val segs = allSegments(level, structureSignature(level))
+        val segs = allSegments(MainSlideSpaceAccess(level), structureSignature(MainSlideSpaceAccess(level)))
         var best: TubeSeg? = null
         var bestD = Double.MAX_VALUE
         var bestT = 0.0
@@ -221,57 +231,63 @@ object ServerWaterSimulation {
 
     // called every server tick; recalculates on demand with a cooldown guard
     fun tickServer(level: ServerLevel) {
-        val dim = level.dimension()
+        tickServer(MainSlideSpaceAccess(level))
+    }
+
+    fun tickServer(access: SlideSpaceAccess) {
+        val level = access.level
+        val key = spaceKey(access)
         // periodic structural/water check
-        if (level.gameTime % 100 == 0L && !dirty.contains(dim)) {
-            dirty += dim
+        if (level.gameTime % 100 == 0L && !dirty.contains(key)) {
+            dirty += key
         }
         if (level.gameTime % 100 == 0L) {
             CreateWaterparked.LOGGER.info(
-                "Water tick dim={} dirty={} fieldsNull={} last={} time={}",
-                dim.location(), dirty.contains(dim), fields[dim] == null,
-                lastCalc[dim] ?: "none", level.gameTime
+                "Water tick space={} dirty={} fieldsNull={} last={} time={}",
+                key, dirty.contains(key), fields[key] == null,
+                lastCalc[key] ?: "none", level.gameTime
             )
         }
-        if (!dirty.contains(dim) && fields[dim] != null) return
-        val last = lastCalc[dim]
+        if (!dirty.contains(key) && fields[key] != null) return
+        val last = lastCalc[key]
         if (last != null && level.gameTime - last < ModConfig.waterSimCooldownTicks()) return
-        dirty.remove(dim)
-        lastCalc[dim] = level.gameTime
+        dirty.remove(key)
+        lastCalc[key] = level.gameTime
         val sig = try {
-            structureSignature(level)
+            structureSignature(access)
         } catch (e: Exception) {
             CreateWaterparked.LOGGER.error("Water sig failed", e)
             return
         }
-        if (sig == lastSig[dim] && fields[dim] != null) return
-        val sigChanged = sig != lastSig[dim]
-        lastSig[dim] = sig
+        if (sig == lastSig[key] && fields[key] != null) return
+        val sigChanged = sig != lastSig[key]
+        lastSig[key] = sig
         // diagnostic: anchor/water counts on every calc attempt
         var anchors = 0
         var wet = 0
-        for (pos in SlideAnchorIndex.all(level)) {
-            val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
+        for (pos in SlideAnchorIndex.all(level, access.space)) {
+            val be = access.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
             anchors++
             if (be.hasWater()) wet++
         }
         CreateWaterparked.LOGGER.info(
-            "Water sim attempt sigChanged={} anchors={} wet={} time={}",
-            sigChanged, anchors, wet, level.gameTime
+            "Water sim attempt space={} sigChanged={} anchors={} wet={} time={}",
+            key, sigChanged, anchors, wet, level.gameTime
         )
-        calculate(level, sig)
+        calculate(access, sig)
     }
 
-    private fun calculate(level: ServerLevel, sig: String) {
-        val dim = level.dimension()
-        val sources = collectSources(level)
+    private fun calculate(access: SlideSpaceAccess, sig: String) {
+        val level = access.level
+        val key = spaceKey(access)
+        val sources = collectSources(access)
         if (sources.isEmpty()) {
-            fields[dim] = emptyMap()
+            fields[key] = emptyMap()
             CreateWaterparked.LOGGER.info("Water sim: no water sources")
             PacketDistributor.sendToPlayersInDimension(level, WaterslideWaterSyncPayload(emptyList()))
             return
         }
-        val segments = allSegments(level, sig)
+        val segments = allSegments(access, sig)
         val grid = SegGrid()
         for (s in segments) grid.add(s)
         val acc = HashMap<Pair<Long, Long>, HashMap<Int, SegmentAcc>>()
@@ -300,7 +316,7 @@ object ServerWaterSimulation {
             for (i in 0 until perLeg) {
                 val seed = sigSeed + sourceIndex * -7046029254386353131L + i * -2960836687051489901L
                 val rng = java.util.Random(seed)
-                integrate(level, src, grid, segments, acc, exits, debugOut,
+                integrate(access, src, grid, segments, acc, exits, debugOut,
                     rng.nextDouble(), rng.nextDouble())
                 if (++idx >= count * 2) break
             }
@@ -333,7 +349,7 @@ object ServerWaterSimulation {
                 key.first, key.second, segs.size, arcs.first(), arcs.last(), gaps, pos, segs.size - pos, spdMin, spdMax
             )
         }
-        fields[dim] = out
+        fields[key] = out
         val entries = out.map { (key, field) ->
             WaterslideWaterSyncPayload.Entry(
                 key.first, key.second, field.segments.map {
@@ -363,19 +379,20 @@ object ServerWaterSimulation {
         }
     }
 
-    private fun collectSources(level: ServerLevel): List<LegStart> {
+    private fun collectSources(access: SlideSpaceAccess): List<LegStart> {
+        val level = access.level
         val out = ArrayList<LegStart>()
-        for (pos in SlideAnchorIndex.all(level)) {
-            val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
+        for (pos in SlideAnchorIndex.all(level, access.space)) {
+            val be = access.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
             if (!be.hasWater()) continue
             for (raw in be.anchorPeerCurvesView.values) {
                 val bc = if (raw.isPrimary) raw else raw.secondary()
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
-                val r0 = SlideCurveGeometry.radiusAt(level, a)
-                val r1 = SlideCurveGeometry.radiusAt(level, b)
-                val frames = SlideCurveGeometry.sampleFrames(level, bc, r0, r1, 0.5, includeExtensions = false)
+                val r0 = SlideCurveGeometry.radiusAt(access, a)
+                val r1 = SlideCurveGeometry.radiusAt(access, b)
+                val frames = SlideCurveGeometry.sampleFrames(access, bc, r0, r1, 0.5, includeExtensions = false)
                 if (frames.size < 2) continue
                 val atFirst = a == pos
                 val f = if (atFirst) frames.first() else frames.last()
@@ -391,7 +408,7 @@ object ServerWaterSimulation {
     }
 
     private fun integrate(
-        level: ServerLevel,
+        access: SlideSpaceAccess,
         src: LegStart,
         grid: SegGrid,
         segments: List<TubeSeg>,
@@ -482,7 +499,7 @@ object ServerWaterSimulation {
                 }
                 if (!inTube) {
                     val bp = BlockPos.containing(pos)
-                    if (level.getBlockState(bp).isSolid || pos.y < level.minBuildHeight) break
+                    if (access.getBlockState(bp).isSolid || pos.y < access.level.minBuildHeight) break
                     if (lastKey != null) {
                         exits.putIfAbsent(lastKey!!, ExitInfo(lastInside ?: pos, vel))
                     }
@@ -491,20 +508,20 @@ object ServerWaterSimulation {
         }
     }
 
-    private fun allSegments(level: ServerLevel, sig: String): List<TubeSeg> {
-        val dim = level.dimension()
-        segCache[dim]?.let { if (it.first == sig) return it.second }
+    private fun allSegments(access: SlideSpaceAccess, sig: String): List<TubeSeg> {
+        val key = spaceKey(access)
+        segCache[key]?.let { if (it.first == sig) return it.second }
         val out = ArrayList<TubeSeg>()
-        for (pos in SlideAnchorIndex.all(level)) {
-            val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
+        for (pos in SlideAnchorIndex.all(access.level, access.space)) {
+            val be = access.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
             for (raw in be.anchorPeerCurvesView.values) {
                 val bc = if (raw.isPrimary) raw else raw.secondary()
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
-                val r0 = SlideCurveGeometry.radiusAt(level, a)
-                val r1 = SlideCurveGeometry.radiusAt(level, b)
-                val frames = SlideCurveGeometry.sampleFrames(level, bc, r0, r1, 0.5)
+                val r0 = SlideCurveGeometry.radiusAt(access, a)
+                val r1 = SlideCurveGeometry.radiusAt(access, b)
+                val frames = SlideCurveGeometry.sampleFrames(access, bc, r0, r1, 0.5)
                 var arc = 0.0
                 for (i in 0 until frames.size - 1) {
                     val fa = frames[i]
@@ -528,14 +545,14 @@ object ServerWaterSimulation {
             }
         }
         if (segCache.size > 8) segCache.clear()
-        segCache[dim] = sig to out
+        segCache[key] = sig to out
         return out
     }
 
-    private fun structureSignature(level: ServerLevel): String {
+    private fun structureSignature(access: SlideSpaceAccess): String {
         val sb = StringBuilder()
-        for (pos in SlideAnchorIndex.all(level).sortedBy { it.asLong() }) {
-            val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
+        for (pos in SlideAnchorIndex.all(access.level, access.space).sortedBy { it.asLong() }) {
+            val be = access.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
             sb.append(pos.asLong()).append(if (be.hasWater()) 'w' else '.').append('|')
             for (e in be.anchorPeerCurvesView.entries.sortedBy { it.key.asLong() }) {
                 val raw = e.value
@@ -551,8 +568,8 @@ object ServerWaterSimulation {
                     .append(bc.starts.getSecond().x).append(',')
                     .append(bc.starts.getSecond().y).append(',')
                     .append(bc.starts.getSecond().z).append(',')
-                    .append(SlideCurveGeometry.radiusAt(level, a)).append(',')
-                    .append(SlideCurveGeometry.radiusAt(level, b)).append(';')
+                    .append(SlideCurveGeometry.radiusAt(access, a)).append(',')
+                    .append(SlideCurveGeometry.radiusAt(access, b)).append(';')
             }
         }
         return sb.toString()
