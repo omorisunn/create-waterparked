@@ -41,13 +41,19 @@ class SubSlideSpaceAccess(
     val sub: ServerSubLevel
 ) : SlideSpaceAccess {
     override val space: SlideSpace = SlideSpace.SubLevel(sub.uniqueId)
-    private val embedded = sub.getPlot().getEmbeddedLevelAccessor()
 
-    override fun getBlockEntity(pos: BlockPos): BlockEntity? = embedded.getBlockEntity(pos)
-    override fun getBlockState(pos: BlockPos): BlockState = embedded.getBlockState(pos)
+    // Sable stores sub-level blocks at plot-global positions (plot center +
+    // local content coordinates). The slide graph stores those plot-global
+    // positions, so this accessor uses plot-global as its local space and
+    // converts through the plot center when talking to the logical pose.
+    private val plotCenter = Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock())
+
+    override fun getBlockEntity(pos: BlockPos): BlockEntity? = level.getBlockEntity(pos)
+    override fun getBlockState(pos: BlockPos): BlockState = level.getBlockState(pos)
 
     override fun toWorld(local: Vec3): Vec3 {
-        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
+        val content = JOMLConversion.toJOML(local.subtract(plotCenter))
+        val out = sub.logicalPose().transformPosition(content, Vector3d())
         return JOMLConversion.toMojang(out)
     }
 
@@ -57,8 +63,8 @@ class SubSlideSpaceAccess(
     }
 
     override fun worldToLocal(world: Vec3): Vec3 {
-        val out = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
-        return JOMLConversion.toMojang(out)
+        val content = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
+        return JOMLConversion.toMojang(content).add(plotCenter)
     }
 
     override fun worldNormalToLocal(world: Vec3): Vec3 {
@@ -67,5 +73,5 @@ class SubSlideSpaceAccess(
     }
 
     override fun worldVelocityAt(localPos: Vec3): Vec3 =
-        Sable.HELPER.getVelocity(level, sub, localPos)
+        Sable.HELPER.getVelocity(level, sub, localPos.subtract(plotCenter))
 }

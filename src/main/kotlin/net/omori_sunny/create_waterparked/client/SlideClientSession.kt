@@ -154,7 +154,7 @@ object SlideClientSession {
         )
         val local = corners.map { corner ->
             val out = pose.transformPositionInverse(JOMLConversion.toJOML(corner), Vector3d())
-            JOMLConversion.toMojang(out)
+            JOMLConversion.toMojang(out).add(Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock()))
         }
         return net.minecraft.world.phys.AABB(
             local.minOf { it.x }, local.minOf { it.y }, local.minOf { it.z },
@@ -480,7 +480,10 @@ object SlideClientSession {
 
     private fun toWorldPos(level: Level, session: Active, local: Vec3): Vec3 {
         val sub = session.subLevel(level) ?: return local
-        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
+        val plotCenter = Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock())
+        val out = sub.logicalPose().transformPosition(
+            JOMLConversion.toJOML(local.subtract(plotCenter)), Vector3d()
+        )
         return JOMLConversion.toMojang(out)
     }
 

@@ -91,6 +91,9 @@ object PlayerSlideController {
     private val curveFramesCache = HashMap<Pair<Long, Long>, CurveFrames>()
     private val entryCooldown = mutableMapOf<UUID, Long>()
     private var nextSessionId = 1L
+    private var perfEntryNs = 0L
+    private var perfSwitchNs = 0L
+    private var perfSamples = 0
 
     @JvmStatic
     fun onServerTick(event: ServerTickEvent.Post) {
@@ -133,8 +136,20 @@ object PlayerSlideController {
                 if (entity is SlideSitEntity) continue
                 val prev = lastPos.put(entity.uuid, entity.position())
                 if (!sessions.containsKey(entity.uuid) && prev != null) {
+                    val t0 = System.nanoTime()
                     tryStartSlide(level, entity)
+                    perfEntryNs += System.nanoTime() - t0
+                    perfSamples++
                 }
+            }
+            if (level.gameTime % 200 == 0L && perfSamples > 0) {
+                CreateWaterparked.LOGGER.info(
+                    "[SlidePerf] entryUs={} switchUs={} samples={}",
+                    perfEntryNs / perfSamples / 1000, perfSwitchNs / 200 / 1000, perfSamples
+                )
+                perfEntryNs = 0L
+                perfSwitchNs = 0L
+                perfSamples = 0
             }
             // water flow pushes players standing inside the tube (not while sliding)
             for (player in level.players()) {
@@ -486,7 +501,10 @@ object PlayerSlideController {
         }
         entity.fallDistance = 0f
 
-        if (trySwitchSpace(level, session, worldPos, worldVel)) {
+        val t0 = System.nanoTime()
+        val switched = trySwitchSpace(level, session, worldPos, worldVel)
+        perfSwitchNs += System.nanoTime() - t0
+        if (switched) {
             // restart playback in the new space immediately, same tick
             val first = session.trajectory.samples.first()
             val newWorld = toWorldPos(level, session, first.position)
@@ -586,7 +604,10 @@ object PlayerSlideController {
 
     private fun toWorldPos(level: ServerLevel, session: Session, local: Vec3): Vec3 {
         val sub = session.subLevel(level) ?: return local
-        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
+        val plotCenter = Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock())
+        val out = sub.logicalPose().transformPosition(
+            JOMLConversion.toJOML(local.subtract(plotCenter)), Vector3d()
+        )
         return JOMLConversion.toMojang(out)
     }
 
@@ -605,9 +626,10 @@ object PlayerSlideController {
         val sub = session.subLevel(level)
         if (sub == null) return localVel.scale(1.0 / 20.0)
 
+        val plotCenter = Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock())
         val out = sub.logicalPose().transformNormal(JOMLConversion.toJOML(localVel), Vector3d())
         val structure = Sable.HELPER.getVelocity(
-            level, sub, JOMLConversion.toJOML(localPos), Vector3d()
+            level, sub, JOMLConversion.toJOML(localPos.subtract(plotCenter)), Vector3d()
         )
         out.add(structure)
         return JOMLConversion.toMojang(out).scale(1.0 / 20.0)
@@ -659,8 +681,22 @@ object PlayerSlideController {
             }
         }
         val result = if (found) AABB(minX, minY, minZ, maxX, maxY, maxZ) else null
-        boundsCache[level.dimension()] = key to result
-        return result
+        // also scan entities inside sub-level world bounds, not just main-world
+        // slide geometry bounds
+        SubLevelContainer.getContainer(level)?.allSubLevels?.forEach { raw ->
+            val sub = raw as? ServerSubLevel ?: return@forEach
+            val b = sub.boundingBox()
+            if (result == null) {
+                minX = b.minX(); minY = b.minY(); minZ = b.minZ()
+                maxX = b.maxX(); maxY = b.maxY(); maxZ = b.maxZ()
+            } else {
+                minX = minOf(minX, b.minX()); minY = minOf(minY, b.minY()); minZ = minOf(minZ, b.minZ())
+                maxX = maxOf(maxX, b.maxX()); maxY = maxOf(maxY, b.maxY()); maxZ = maxOf(maxZ, b.maxZ())
+            }
+        }
+        val finalBounds = if (result != null || found) AABB(minX, minY, minZ, maxX, maxY, maxZ) else null
+        boundsCache[level.dimension()] = key to finalBounds
+        return finalBounds
     }
 
     // structural fingerprint: only rebuild the box when the slide graph changes
@@ -701,7 +737,7 @@ object PlayerSlideController {
 
     private fun toLocalPos(sub: ServerSubLevel, world: Vec3): Vec3 {
         val out = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
-        return JOMLConversion.toMojang(out)
+        return JOMLConversion.toMojang(out).add(Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock()))
     }
 
     private fun toLocalVel(sub: ServerSubLevel, world: Vec3): Vec3 {
