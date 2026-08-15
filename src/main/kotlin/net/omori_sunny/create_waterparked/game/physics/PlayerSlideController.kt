@@ -130,17 +130,31 @@ object PlayerSlideController {
                 tickSession(level, session)
             }
             val bounds = slideBounds(level)
-            if (bounds == null) continue
-            for (entity in level.getEntities(null, bounds)) {
-                if (entity.isRemoved) continue
-                if (entity is SlideSitEntity) continue
-                val prev = lastPos.put(entity.uuid, entity.position())
-                if (!sessions.containsKey(entity.uuid) && prev != null) {
-                    val t0 = System.nanoTime()
-                    tryStartSlide(level, entity)
-                    perfEntryNs += System.nanoTime() - t0
-                    perfSamples++
+            if (bounds != null) {
+                for (entity in level.getEntities(null, bounds)) {
+                    if (entity.isRemoved) continue
+                    if (entity is SlideSitEntity) continue
+                    if (entity is net.minecraft.world.entity.player.Player) continue
+                    val prev = lastPos.put(entity.uuid, entity.position())
+                    if (!sessions.containsKey(entity.uuid) && prev != null) {
+                        val t0 = System.nanoTime()
+                        tryStartSlide(level, entity)
+                        perfEntryNs += System.nanoTime() - t0
+                        perfSamples++
+                    }
                 }
+            }
+            // players are checked directly so entry detection also works while
+            // the player is inside a Sable sub-level (world AABB queries above
+            // use main-world slide geometry bounds only)
+            for (player in level.players()) {
+                if (player.isRemoved || sessions.containsKey(player.uuid)) continue
+                val prev = lastPos.put(player.uuid, player.position())
+                if (prev == null) continue
+                val t0 = System.nanoTime()
+                tryStartSlide(level, player)
+                perfEntryNs += System.nanoTime() - t0
+                perfSamples++
             }
             if (level.gameTime % 200 == 0L && perfSamples > 0) {
                 CreateWaterparked.LOGGER.info(
@@ -681,22 +695,8 @@ object PlayerSlideController {
             }
         }
         val result = if (found) AABB(minX, minY, minZ, maxX, maxY, maxZ) else null
-        // also scan entities inside sub-level world bounds, not just main-world
-        // slide geometry bounds
-        SubLevelContainer.getContainer(level)?.allSubLevels?.forEach { raw ->
-            val sub = raw as? ServerSubLevel ?: return@forEach
-            val b = sub.boundingBox()
-            if (result == null) {
-                minX = b.minX(); minY = b.minY(); minZ = b.minZ()
-                maxX = b.maxX(); maxY = b.maxY(); maxZ = b.maxZ()
-            } else {
-                minX = minOf(minX, b.minX()); minY = minOf(minY, b.minY()); minZ = minOf(minZ, b.minZ())
-                maxX = maxOf(maxX, b.maxX()); maxY = maxOf(maxY, b.maxY()); maxZ = maxOf(maxZ, b.maxZ())
-            }
-        }
-        val finalBounds = if (result != null || found) AABB(minX, minY, minZ, maxX, maxY, maxZ) else null
-        boundsCache[level.dimension()] = key to finalBounds
-        return finalBounds
+        boundsCache[level.dimension()] = key to result
+        return result
     }
 
     // structural fingerprint: only rebuild the box when the slide graph changes
