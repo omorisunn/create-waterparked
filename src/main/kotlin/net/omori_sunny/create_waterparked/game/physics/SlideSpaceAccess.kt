@@ -21,6 +21,7 @@ interface SlideSpaceAccess {
     fun toWorld(local: Vec3): Vec3
     fun toWorldNormal(local: Vec3): Vec3
     fun worldToLocal(world: Vec3): Vec3
+    fun worldNormalToLocal(world: Vec3): Vec3
     fun worldVelocityAt(localPos: Vec3): Vec3
 }
 
@@ -31,6 +32,7 @@ class MainSlideSpaceAccess(override val level: ServerLevel) : SlideSpaceAccess {
     override fun toWorld(local: Vec3): Vec3 = local
     override fun toWorldNormal(local: Vec3): Vec3 = local.normalize()
     override fun worldToLocal(world: Vec3): Vec3 = world
+    override fun worldNormalToLocal(world: Vec3): Vec3 = world
     override fun worldVelocityAt(localPos: Vec3): Vec3 = Vec3.ZERO
 }
 
@@ -56,6 +58,11 @@ class SubSlideSpaceAccess(
 
     override fun worldToLocal(world: Vec3): Vec3 {
         val out = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
+        return JOMLConversion.toMojang(out)
+    }
+
+    override fun worldNormalToLocal(world: Vec3): Vec3 {
+        val out = sub.logicalPose().transformNormalInverse(JOMLConversion.toJOML(world), Vector3d())
         return JOMLConversion.toMojang(out)
     }
 

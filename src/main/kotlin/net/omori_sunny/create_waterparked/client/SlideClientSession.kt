@@ -12,6 +12,7 @@ import net.omori_sunny.create_waterparked.game.physics.SLIDE_WALL_THICKNESS
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashSpawner
 import net.omori_sunny.create_waterparked.network.SlideCancelPayload
 import net.omori_sunny.create_waterparked.network.SlideEndPayload
+import net.omori_sunny.create_waterparked.network.SlideSegmentPayload
 import net.omori_sunny.create_waterparked.network.SlideSyncPayload
 import net.omori_sunny.create_waterparked.network.SlideTrajectoryPayload
 import net.minecraft.client.Minecraft
@@ -45,8 +46,8 @@ object SlideClientSession {
 
     private class Active(
         val sessionId: Long,
-        val trajectory: SlideTrajectory,
-        val subLevelId: UUID?,
+        var trajectory: SlideTrajectory,
+        var subLevelId: UUID?,
         val swimmingPose: Boolean,
         var startTick: Long
     ) {
@@ -339,6 +340,22 @@ object SlideClientSession {
                 mc, bodyCenter, velPerTick, first.speed, first.watered
             )
         }
+    }
+
+    @JvmStatic
+    fun appendSegment(payload: SlideSegmentPayload) {
+        val session = active ?: return
+        if (session.sessionId != payload.sessionId) return
+        session.trajectory = SlideTrajectory(
+            payload.samples.map { it.toSample() }, SlideEndReason.EXITED, true
+        )
+        session.subLevelId = payload.subLevelId
+        session.startTick = payload.startTick
+        session.timeOffsetTicks = 0.0
+        session.lastOffset = null
+        session.lastTrackYaw = null
+        session.lastSmoothedTrackPitch = null
+        session.lastSmoothedRoll = null
     }
 
     @JvmStatic

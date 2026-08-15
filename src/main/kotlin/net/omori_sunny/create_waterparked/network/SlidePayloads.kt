@@ -132,6 +132,73 @@ class SlideTrajectoryPayload(
     }
 }
 
+// Trajectory segment appended when the slide switches into another space.
+class SlideSegmentPayload(
+    val sessionId: Long,
+    val startTick: Long,
+    val subLevelId: UUID?,
+    val samples: List<SlideSampleWire>
+) : CustomPacketPayload {
+
+    override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
+
+    fun handleOnClient(ctx: IPayloadContext) {
+        ctx.enqueueWork { SlideClientSession.appendSegment(this) }
+    }
+
+    companion object {
+        val TYPE: CustomPacketPayload.Type<SlideSegmentPayload> = CustomPacketPayload.Type(
+            ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "slide_segment")
+        )
+
+        val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, SlideSegmentPayload> =
+            StreamCodec.of(
+                { buf, p ->
+                    buf.writeLong(p.sessionId)
+                    buf.writeLong(p.startTick)
+                    buf.writeBoolean(p.subLevelId != null)
+                    if (p.subLevelId != null) buf.writeUUID(p.subLevelId)
+                    buf.writeCollection(p.samples) { b, s ->
+                        b.writeFloat(s.time)
+                        b.writeFloat(s.cx)
+                        b.writeFloat(s.cy)
+                        b.writeFloat(s.cz)
+                        b.writeFloat(s.tcx)
+                        b.writeFloat(s.tcy)
+                        b.writeFloat(s.tcz)
+                        b.writeFloat(s.tx)
+                        b.writeFloat(s.ty)
+                        b.writeFloat(s.tz)
+                        b.writeFloat(s.ux)
+                        b.writeFloat(s.uy)
+                        b.writeFloat(s.uz)
+                        b.writeFloat(s.radius)
+                        b.writeFloat(s.speed)
+                        b.writeBoolean(s.inTube)
+                        b.writeBoolean(s.watered)
+                    }
+                },
+                { buf ->
+                    val sessionId = buf.readLong()
+                    val startTick = buf.readLong()
+                    val hasSub = buf.readBoolean()
+                    val subLevelId = if (hasSub) buf.readUUID() else null
+                    val samples = buf.readCollection({ ArrayList() }) { b ->
+                        SlideSampleWire(
+                            b.readFloat(), b.readFloat(), b.readFloat(), b.readFloat(),
+                            b.readFloat(), b.readFloat(), b.readFloat(),
+                            b.readFloat(), b.readFloat(), b.readFloat(),
+                            b.readFloat(), b.readFloat(), b.readFloat(),
+                            b.readFloat(), b.readFloat(),
+                            b.readBoolean(), b.readBoolean()
+                        )
+                    }
+                    SlideSegmentPayload(sessionId, startTick, subLevelId, samples)
+                }
+            )
+    }
+}
+
 // Client requests an early exit.
 class SlideCancelPayload(val sessionId: Long) : CustomPacketPayload {
 

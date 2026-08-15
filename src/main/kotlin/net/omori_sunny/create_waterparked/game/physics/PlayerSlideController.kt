@@ -24,6 +24,7 @@ import net.omori_sunny.create_waterparked.game.water.SlideWaterManager
 import net.omori_sunny.create_waterparked.network.SlideEndPayload
 import net.omori_sunny.create_waterparked.network.SlidePackets
 import net.omori_sunny.create_waterparked.network.SlideSampleWire
+import net.omori_sunny.create_waterparked.network.SlideSegmentPayload
 import net.omori_sunny.create_waterparked.network.SlideSyncPayload
 import net.omori_sunny.create_waterparked.network.SlideTrajectoryPayload
 import net.minecraft.core.BlockPos
@@ -485,12 +486,67 @@ object PlayerSlideController {
         }
         entity.fallDistance = 0f
 
+        if (trySwitchSpace(level, session, worldPos, worldVel)) {
+            // restart playback in the new space immediately, same tick
+            val first = session.trajectory.samples.first()
+            val newWorld = toWorldPos(level, session, first.position)
+            val newSitPos = if (sit != null) newWorld.subtract(0.0, SIT_HEIGHT, 0.0) else newWorld
+            val newWorldVel = toWorldVel(level, session, first.position, first.tangent.scale(first.speed))
+            entity.setPos(newSitPos)
+            entity.setDeltaMovement(newWorldVel)
+            sit?.setPos(newSitPos)
+            applyRotation(entity, toWorldNormal(level, session, first.tangent))
+            if (player != null) {
+                SlidePackets.sendTo(player, SlideSegmentPayload(
+                    session.id, level.gameTime, session.subLevelId,
+                    session.trajectory.samples.map { SlideSampleWire.from(it) }
+                ))
+            }
+            return
+        }
+
         if (player != null && level.gameTime - session.lastSyncTick >= 20) {
             session.lastSyncTick = level.gameTime
             SlidePackets.sendTo(player, SlideSyncPayload(
                 session.id, (session.elapsed * 20.0).toInt()
             ))
         }
+    }
+
+    private fun trySwitchSpace(
+        level: ServerLevel,
+        session: Session,
+        worldPos: Vec3,
+        worldVel: Vec3
+    ): Boolean {
+        val currentSub = session.subLevel(level)
+        val worldVelPerSecond = worldVel.scale(20.0)
+
+        fun tryTarget(access: SlideSpaceAccess): Boolean {
+            if (access.space == (currentSub?.let { SlideSpace.SubLevel(it.uniqueId) } ?: SlideSpace.Main)) return false
+            val localNow = access.worldToLocal(worldPos)
+            val entry = findSlideEntryInSpace(level, access, session.entity, requireSolid = false) ?: return false
+            val structure = access.worldVelocityAt(localNow)
+            val localVel = access.worldNormalToLocal(worldVelPerSecond.subtract(structure))
+            val dims = entityDimensions(session.entity)
+            val next = PhysicsSlideTrajectoryBuilder.build(
+                access, entry.curve, entry.towardSecond, entry.startT,
+                localNow, localVel, dims.width.toDouble(), dims.height.toDouble()
+            ) ?: return false
+            session.trajectory = next
+            session.subLevelId = (access.space as? SlideSpace.SubLevel)?.id
+            session.elapsed = 0.0
+            return true
+        }
+
+        if (currentSub != null && tryTarget(MainSlideSpaceAccess(level))) return true
+        val container = SubLevelContainer.getContainer(level) ?: return false
+        for (raw in container.allSubLevels) {
+            val sub = raw as? ServerSubLevel ?: continue
+            if (currentSub?.uniqueId == sub.uniqueId) continue
+            if (tryTarget(SubSlideSpaceAccess(level, sub))) return true
+        }
+        return false
     }
 
     private fun endSession(level: ServerLevel, session: Session, reason: SlideEndReason) {
