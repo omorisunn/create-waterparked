@@ -39,3 +39,6 @@ MODELING.md
 /.dsh/
 /.dshcraft-staging/
 /.gradle-home/
+
+# Design docs
+docs/
