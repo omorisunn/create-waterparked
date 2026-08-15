@@ -10,6 +10,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
+import net.omori_sunny.create_waterparked.game.physics.SlideSpaceAccess
 import net.minecraft.core.BlockPos
 import net.minecraft.core.registries.BuiltInRegistries
 import net.minecraft.util.Mth
@@ -37,6 +38,13 @@ object SlideCurveGeometry {
     fun radiusAt(level: Level, pos: BlockPos): Float =
         (level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity)?.radius
             ?: ModConfig.defaultSlideRadius()
+
+    fun radiusAt(access: SlideSpaceAccess, pos: BlockPos): Float =
+        (access.getBlockEntity(pos) as? WaterslideAnchorBlockEntity)?.radius
+            ?: ModConfig.defaultSlideRadius()
+
+    fun sectorConfig(access: SlideSpaceAccess, anchor: BlockPos, peer: BlockPos): WaterslideSectorConfig? =
+        (access.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity)?.sectorConfigFor(peer)
 
     // stable cross-section frame, world-up aligned, continuous across tracks
     fun stableFrame(tangent: Vec3): Pair<Vec3, Vec3> {
@@ -108,6 +116,70 @@ object SlideCurveGeometry {
             push(b)
         }
         return out
+    }
+
+    // Access-based variant used by sub-level slide computation.
+    fun sampleFrames(
+        access: SlideSpaceAccess,
+        bc: BezierConnection,
+        r0: Float,
+        r1: Float,
+        spacing: Double = 0.5,
+        includeExtensions: Boolean = true
+    ): List<Frame> {
+        val count = bc.getSegmentCount().coerceAtLeast(1)
+        val ts = FloatArray(count + 1) { i ->
+            if (i == 0) 0f else if (i == count) 1f else bc.getSegmentT(i)
+        }
+        val coarse = ArrayList<Frame>(count + 3)
+        val ext0 = if (includeExtensions) openEndExtension(access, bc, atFirst = true) else 0f
+        if (ext0 > 0.01f) {
+            val first = frameAt(access.level, bc, 0f, r0, r1)
+            coarse += Frame(0f, first.center.subtract(first.tangent.scale(ext0.toDouble())),
+                first.tangent, first.lateral, first.up, r0)
+        }
+        for (t in ts) coarse += frameAt(access.level, bc, t, r0, r1)
+        val ext1 = if (includeExtensions) openEndExtension(access, bc, atFirst = false) else 0f
+        if (ext1 > 0.01f) {
+            val last = frameAt(access.level, bc, 1f, r0, r1)
+            coarse += Frame(1f, last.center.add(last.tangent.scale(ext1.toDouble())),
+                last.tangent, last.lateral, last.up, r1)
+        }
+
+        if (coarse.size < 2) return coarse
+        val out = ArrayList<Frame>(coarse.size * 4)
+        var prevLat: Vec3? = null
+        fun push(f: Frame) {
+            var lat = f.lateral
+            var up = f.up
+            if (prevLat != null && lat.dot(prevLat!!) < 0.0) {
+                lat = lat.scale(-1.0)
+                up = up.scale(-1.0)
+            }
+            prevLat = lat
+            out += Frame(f.t, f.center, f.tangent, lat, up, f.radius)
+        }
+        push(coarse[0])
+        for (i in 0 until coarse.size - 1) {
+            val a = coarse[i]
+            val b = coarse[i + 1]
+            val dist = a.center.distanceTo(b.center)
+            val steps = max(1, ceil(dist / spacing).toInt())
+            for (j in 1 until steps) {
+                val f = j.toDouble() / steps
+                val t = a.t + (b.t - a.t) * f.toFloat()
+                push(frameAt(access.level, bc, t, r0, r1))
+            }
+            push(b)
+        }
+        return out
+    }
+
+    private fun openEndExtension(access: SlideSpaceAccess, bc: BezierConnection, atFirst: Boolean): Float {
+        val anchor = if (atFirst) bc.bePositions.getFirst() else bc.bePositions.getSecond()
+        val be = access.getBlockEntity(anchor) as? CoasterAnchorpointBlockEntity ?: return 0f
+        if (be.legCount() != 1) return 0f
+        return CoasterOpenEndExtension.extensionBlocks(access.level, anchor)
     }
 
     private fun frameAt(
