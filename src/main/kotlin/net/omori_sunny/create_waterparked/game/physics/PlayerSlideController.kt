@@ -106,6 +106,7 @@ object PlayerSlideController {
                 if (be != null) SlideWaterManager.tickServer(level, be)
                 else SlideAnchorIndex.unregister(level, anchorPos)
             }
+            SableCoordProbe.dump(level)
             ServerWaterSimulation.tickServer(level)
             for (session in sessions.values.toList()) {
                 if (session.entity.level() != level) continue
