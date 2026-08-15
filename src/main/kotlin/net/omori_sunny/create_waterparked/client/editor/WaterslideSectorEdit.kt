@@ -106,14 +106,28 @@ object WaterslideSectorEdit {
             if (mainBlockId != null && !player.isShiftKeyDown &&
                 event.level.getBlockState(event.pos).block is WaterslideAnchorBlock
             ) {
-                event.isCanceled = true
-                event.cancellationResult = InteractionResult.SUCCESS
+                val block = BuiltInRegistries.BLOCK.get(mainBlockId)
+                if (net.minecraft.world.level.block.Block.isShapeFullBlock(
+                        block.defaultBlockState().getShape(event.level, event.pos, net.minecraft.world.phys.shapes.CollisionContext.empty())
+                    )
+                ) {
+                    event.isCanceled = true
+                    event.cancellationResult = InteractionResult.SUCCESS
+                }
             }
             return
         }
 
-        // Two-step block add.
+        // Two-step block add: only full-cube blocks become sectors; every
+        // other block falls through to vanilla placement.
         if (mainBlockId != null) {
+            val block = BuiltInRegistries.BLOCK.get(mainBlockId)
+            if (!net.minecraft.world.level.block.Block.isShapeFullBlock(
+                    block.defaultBlockState().getShape(event.level, event.pos, net.minecraft.world.phys.shapes.CollisionContext.empty())
+                )
+            ) {
+                return
+            }
             handleAdd(event, player, mainBlockId)
             return
         }
