@@ -6,6 +6,7 @@ import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.game.physics.SlideEndReason
+import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import net.omori_sunny.create_waterparked.game.physics.SlideTrajectory
 import net.omori_sunny.create_waterparked.game.physics.SLIDE_WALL_THICKNESS
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashSpawner
@@ -94,6 +95,12 @@ object SlideClientSession {
         return (player.deltaMovement.length() * 20.0).toFloat()
     }
 
+    @JvmStatic
+    fun currentSpace(): SlideSpace {
+        val session = active ?: return SlideSpace.Main
+        return session.subLevelId?.let { SlideSpace.SubLevel(it) } ?: SlideSpace.Main
+    }
+
     // True while the player's actual collision box intersects a rendered
     // water band (in-tube) or a thrown stream polyline. This uses the entity
     // bounding box directly, not a single probe point.
@@ -106,11 +113,12 @@ object SlideClientSession {
         // trajectory inTube flag is NOT part of the gate: the player may be
         // in a free-fall sample between two tubes (or a stream arc) while the
         // box still slices a rendered water band, and the box is authoritative.
+        val space = currentSpace()
         val sub = session.subLevel(level)
         val localBox = if (sub != null) toLocalBox(level, session, playerBox) else null
-        val worldTube = WaterFlowSimulation.intersectsWateredTubeBox(level, playerBox)
+        val worldTube = WaterFlowSimulation.intersectsWateredTubeBox(level, playerBox, space)
         val subTube = sub != null && localBox != null &&
-            WaterFlowSimulation.intersectsWateredTubeBox(sub.getLevel(), localBox)
+            WaterFlowSimulation.intersectsWateredTubeBox(sub.getLevel(), localBox, space)
         val inStream = WaterFlowSimulation.intersectsStreamBox(level, playerBox, 0.45)
         val hit = worldTube || subTube || inStream
 

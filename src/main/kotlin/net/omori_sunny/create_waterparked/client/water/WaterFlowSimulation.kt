@@ -224,7 +224,7 @@ object WaterFlowSimulation {
     // closest point of the box (clamped sphere test), which is exact for a
     // box-vs-tube check and catches tubes passing through the box centre.
     @JvmStatic
-    fun intersectsWateredTubeBox(level: Level, box: AABB): Boolean {
+    fun intersectsWateredTubeBox(level: Level, box: AABB, space: SlideSpace? = null): Boolean {
         val seen = HashSet<Pair<Long, Long>>()
         for (be in WaterslideCurveRenderer.clientAnchors()) {
             if (be.level !== level || be.isRemoved) continue
@@ -233,8 +233,8 @@ object WaterFlowSimulation {
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val key = edgeKeyOf(bc)
                 if (!seen.add(key)) continue
-                val space = SlideSpace.ofLevelAndSub(level, be.blockPos)
-                if (fields[space.cacheKey(level)]?.get(key)?.exists != true) continue
+                val keySpace = space ?: SlideSpace.ofLevelAndSub(level, be.blockPos)
+                if (fields[keySpace.cacheKey(level)]?.get(key)?.exists != true) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
