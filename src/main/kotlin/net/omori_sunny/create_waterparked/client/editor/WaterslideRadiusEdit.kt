@@ -57,7 +57,7 @@ object WaterslideRadiusEdit {
         val level = mc.level ?: return false
         val player = mc.player ?: return false
         if (!BezierHandleEditMode.isActive()) return false
-        val anchor = BezierHandleEditMode.getActiveAnchor() ?: return false
+        val anchor = SubLevelEditFocus.activeAnchor(level) ?: return false
         val ctx = SableClientEdit.resolve(level, anchor) ?: return false
         val eye = if (ctx.sub == null) player.eyePosition else SableClientEdit.worldToPlot(ctx.sub!!, player.eyePosition)
         val view = if (ctx.sub == null) player.getViewVector(1f)
@@ -80,7 +80,7 @@ object WaterslideRadiusEdit {
         val level = mc.level ?: return clear()
         if (!BezierHandleEditMode.isActive()) return clear()
         if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
-        val anchor = BezierHandleEditMode.getActiveAnchor() ?: return clear()
+        val anchor = SubLevelEditFocus.activeAnchor(level) ?: return clear()
         val ctx = SableClientEdit.resolve(level, anchor) ?: return clear()
         val be = ctx.be
         if (WaterslideSectorEdit.isDraggingControlPoint() || BezierHandleDragManager.isDraggingHandle()) return
@@ -130,7 +130,7 @@ object WaterslideRadiusEdit {
     ) {
         val level = mc.level ?: return
         if (!BezierHandleEditMode.isActive()) return
-        val anchor = BezierHandleEditMode.getActiveAnchor() ?: return
+        val anchor = SubLevelEditFocus.activeAnchor(level) ?: return
         val ctx = SableClientEdit.resolve(level, anchor) ?: return
         val be = ctx.be
 
