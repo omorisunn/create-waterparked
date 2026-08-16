@@ -32,11 +32,11 @@ data class SlideSampleWire(
     val inTube: Boolean,
     val watered: Boolean
 ) {
-    fun toSample(): SlideSample =
+    fun toSample(offset: Vec3? = null): SlideSample =
         SlideSample(
             time.toDouble(),
-            Vec3(cx.toDouble(), cy.toDouble(), cz.toDouble()),
-            Vec3(tcx.toDouble(), tcy.toDouble(), tcz.toDouble()),
+            offsetOrZero(cx, cy, cz, offset),
+            offsetOrZero(tcx, tcy, tcz, offset),
             Vec3(tx.toDouble(), ty.toDouble(), tz.toDouble()),
             Vec3(ux.toDouble(), uy.toDouble(), uz.toDouble()),
             radius,
@@ -45,18 +45,29 @@ data class SlideSampleWire(
             watered
         )
 
+    private fun offsetOrZero(x: Float, y: Float, z: Float, offset: Vec3?): Vec3 =
+        if (offset == null) Vec3(x.toDouble(), y.toDouble(), z.toDouble())
+        else Vec3(x + offset.x, y + offset.y, z + offset.z)
+
     companion object {
-        fun from(s: SlideSample): SlideSampleWire = SlideSampleWire(
-            s.time.toFloat(),
-            s.center.x.toFloat(), s.center.y.toFloat(), s.center.z.toFloat(),
-            s.tubeCenter.x.toFloat(), s.tubeCenter.y.toFloat(), s.tubeCenter.z.toFloat(),
-            s.tangent.x.toFloat(), s.tangent.y.toFloat(), s.tangent.z.toFloat(),
-            s.up.x.toFloat(), s.up.y.toFloat(), s.up.z.toFloat(),
-            s.radius,
-            s.speed.toFloat(),
-            s.inTube,
-            s.watered
-        )
+        // positions are encoded RELATIVE to `offset` (the sub-level plot center)
+        // so they stay small enough for float32; tangents/up stay unit vectors
+        fun from(s: SlideSample, offset: Vec3? = null): SlideSampleWire =
+            SlideSampleWire(
+                s.time.toFloat(),
+                (s.center.x - (offset?.x ?: 0.0)).toFloat(),
+                (s.center.y - (offset?.y ?: 0.0)).toFloat(),
+                (s.center.z - (offset?.z ?: 0.0)).toFloat(),
+                (s.tubeCenter.x - (offset?.x ?: 0.0)).toFloat(),
+                (s.tubeCenter.y - (offset?.y ?: 0.0)).toFloat(),
+                (s.tubeCenter.z - (offset?.z ?: 0.0)).toFloat(),
+                s.tangent.x.toFloat(), s.tangent.y.toFloat(), s.tangent.z.toFloat(),
+                s.up.x.toFloat(), s.up.y.toFloat(), s.up.z.toFloat(),
+                s.radius,
+                s.speed.toFloat(),
+                s.inTube,
+                s.watered
+            )
     }
 }
 

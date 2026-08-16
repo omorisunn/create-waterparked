@@ -24,10 +24,4 @@ object ModItems {
         Supplier { ModBlocks.WATERSLIDE_ANCHOR },
         Item.Properties().stacksTo(64)
     )
-
-    val WATERSLIDE_ENTRANCE: BlockItem by REGISTRY.registerSimpleBlockItem(
-        "waterslide_entrance",
-        Supplier { ModBlocks.WATERSLIDE_ENTRANCE },
-        Item.Properties().stacksTo(64)
-    )
 }

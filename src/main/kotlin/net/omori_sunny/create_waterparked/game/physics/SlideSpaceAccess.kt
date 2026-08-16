@@ -23,10 +23,12 @@ interface SlideSpaceAccess {
     fun worldToLocal(world: Vec3): Vec3
     fun worldNormalToLocal(world: Vec3): Vec3
     fun worldVelocityAt(localPos: Vec3): Vec3
+    fun localGravity(): Vec3
 }
 
 class MainSlideSpaceAccess(override val level: ServerLevel) : SlideSpaceAccess {
     override val space: SlideSpace = SlideSpace.Main
+    private val gravity = Vec3(0.0, -32.0, 0.0)
     override fun getBlockEntity(pos: BlockPos): BlockEntity? = level.getBlockEntity(pos)
     override fun getBlockState(pos: BlockPos): BlockState = level.getBlockState(pos)
     override fun toWorld(local: Vec3): Vec3 = local
@@ -34,6 +36,7 @@ class MainSlideSpaceAccess(override val level: ServerLevel) : SlideSpaceAccess {
     override fun worldToLocal(world: Vec3): Vec3 = world
     override fun worldNormalToLocal(world: Vec3): Vec3 = world
     override fun worldVelocityAt(localPos: Vec3): Vec3 = Vec3.ZERO
+    override fun localGravity(): Vec3 = gravity
 }
 
 class SubSlideSpaceAccess(
@@ -41,19 +44,17 @@ class SubSlideSpaceAccess(
     val sub: ServerSubLevel
 ) : SlideSpaceAccess {
     override val space: SlideSpace = SlideSpace.SubLevel(sub.uniqueId)
+    private val gravity: Vec3 by lazy { worldNormalToLocal(Vec3(0.0, -32.0, 0.0)) }
 
-    // Sable stores sub-level blocks at plot-global positions (plot center +
-    // local content coordinates). The slide graph stores those plot-global
-    // positions, so this accessor uses plot-global as its local space and
-    // converts through the plot center when talking to the logical pose.
-    private val plotCenter = Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock())
-
+    // Sable stores sub-level blocks at plot-global positions and its logical
+    // pose maps those plot-global coordinates directly into world space, so
+    // this accessor treats plot-global as its local space with no extra
+    // plot-center offset.
     override fun getBlockEntity(pos: BlockPos): BlockEntity? = level.getBlockEntity(pos)
     override fun getBlockState(pos: BlockPos): BlockState = level.getBlockState(pos)
 
     override fun toWorld(local: Vec3): Vec3 {
-        val content = JOMLConversion.toJOML(local.subtract(plotCenter))
-        val out = sub.logicalPose().transformPosition(content, Vector3d())
+        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
         return JOMLConversion.toMojang(out)
     }
 
@@ -63,8 +64,8 @@ class SubSlideSpaceAccess(
     }
 
     override fun worldToLocal(world: Vec3): Vec3 {
-        val content = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
-        return JOMLConversion.toMojang(content).add(plotCenter)
+        val out = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
+        return JOMLConversion.toMojang(out)
     }
 
     override fun worldNormalToLocal(world: Vec3): Vec3 {
@@ -72,6 +73,8 @@ class SubSlideSpaceAccess(
         return JOMLConversion.toMojang(out)
     }
 
+    override fun localGravity(): Vec3 = gravity
+
     override fun worldVelocityAt(localPos: Vec3): Vec3 =
-        Sable.HELPER.getVelocity(level, sub, localPos.subtract(plotCenter))
+        Sable.HELPER.getVelocity(level, sub, localPos)
 }

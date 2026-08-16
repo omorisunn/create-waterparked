@@ -1,6 +1,9 @@
 package net.omori_sunny.create_waterparked.game.physics
 
 import com.simibubi.create.content.trains.track.BezierConnection
+import dev.ryanhcode.sable.Sable
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
+import dev.ryanhcode.sable.sublevel.ServerSubLevel
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.config.ModConfig
@@ -19,6 +22,7 @@ import net.minecraft.resources.ResourceKey
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.util.Mth
 import net.minecraft.world.level.Level
+import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -110,10 +114,15 @@ object PhysicsSlideTrajectoryBuilder {
         var totalLength = 0.0
         var lastSampleTime = 0.0
         var limitHit = false
+        var hardStop = false
         var inTubeState = true
         var tubeCenter = tube.frames.first().center
         var tubeUp = tube.frames.first().up
         var tubeRadius = tube.frames.first().radius
+        // slides from every OTHER coordinate space, in world coordinates;
+        // contact with one of these ends the trajectory (re-entering across
+        // Sable poses would require per-sample spaces in the payloads)
+        val worldSlideGrid = buildWorldSlideGrid(access)
 
         var hit = tube.hit(pos)
         fun clampBody(p: Vec3, h: TubeHit): Vec3 {
@@ -139,11 +148,18 @@ object PhysicsSlideTrajectoryBuilder {
             var leftTube = false
             var lastTraceTime = -1.0
             var lastProgress = 0.0
-            var lastProgressTime = 0.0
+            // Start the stall clock at THIS segment's start. It was 0.0, so any
+            // mid-ride re-entry (overall time > 2s) could be judged "stalled"
+            // on the very first physics step - before the wall reflection had
+            // any chance to turn the incoming fall velocity along the tube.
+            // The rider was then ejected again, immediately re-entered, and the
+            // camera roll chattered through the whole throw-and-catch sequence.
+            var lastProgressTime = segStart
             var endApproachTime = Double.MAX_VALUE
             var prevPos = pos
+            var step = 0
             while (time - segStart < TUBE_MAX_TIME && samples.size < maxSamples && !limitHit) {
-                vel = vel.add(0.0, -GRAVITY * DT, 0.0)
+                vel = vel.add(access.localGravity().scale(DT))
                 val newPos = pos.add(vel.scale(DT))
                 hit = tube.hit(newPos)
 
@@ -190,6 +206,19 @@ object PhysicsSlideTrajectoryBuilder {
                 prevPos = pos
                 if (totalLength > maxLength) {
                     limitHit = true
+                    break
+                }
+
+                // a real block (in any Sable space) overlapping the rider is
+                // an instant hard stop; check every 5 physics steps
+                if (++step % 5 == 0 &&
+                    worldBlocksCollide(access.level, access.toWorld(pos), poseWidth, poseHeight)
+                ) {
+                    hardStop = true
+                    CreateWaterparked.LOGGER.info(
+                        "[FallDiag] in-tube block hard stop t={} local={} world={}",
+                        time, pos, access.toWorld(pos)
+                    )
                     break
                 }
 
@@ -247,6 +276,7 @@ object PhysicsSlideTrajectoryBuilder {
                 }
             }
             if (samples.size >= maxSamples) break
+            if (hardStop) break
 
             tubeCenter = hit.center
             tubeUp = hit.up
@@ -281,8 +311,11 @@ object PhysicsSlideTrajectoryBuilder {
             // bounce straight back into the mouth they flew out of; other
             // slides catch the player immediately
             var wasClear = false
+            var prevLocal = pos
+            var lastWorldLog = -1.0
             while (time - fallStart < MAX_TIME && samples.size < maxSamples) {
-                vel = vel.add(0.0, -GRAVITY * DT, 0.0)
+                prevLocal = pos
+                vel = vel.add(access.localGravity().scale(DT))
                 pos = pos.add(vel.scale(DT))
                 totalLength += vel.length() * DT
                 if (totalLength > maxLength) {
@@ -290,11 +323,48 @@ object PhysicsSlideTrajectoryBuilder {
                     break
                 }
                 time += DT
+                // real blocks and slides from other Sable spaces are checked
+                // in world coordinates
+                val worldPos = access.toWorld(pos)
+                val collided = worldBlocksCollide(access.level, worldPos, poseWidth, poseHeight)
+                if (time - lastWorldLog >= 0.5) {
+                    lastWorldLog = time
+                    val feet = BlockPos.containing(
+                        worldPos.x, worldPos.y - poseHeight / 2.0 - 0.01, worldPos.z
+                    )
+                    CreateWaterparked.LOGGER.info(
+                        "[FallDiag] t={} local={} world={} collide={} feet={} state={} localGround={}",
+                        time, pos, worldPos, collided, feet, access.level.getBlockState(feet),
+                        hitsGround(access, pos, poseHeight)
+                    )
+                }
+                if (collided) {
+                    pos = prevLocal
+                    hardStop = true
+                    CreateWaterparked.LOGGER.info(
+                        "[FallDiag] main-world block hard stop t={} world={} prevLocal={}",
+                        time, worldPos, prevLocal
+                    )
+                    break
+                }
+                if (worldSlideGrid != null && worldSlideGrid.hit(worldPos) != null) {
+                    pos = prevLocal
+                    hardStop = true
+                    CreateWaterparked.LOGGER.info(
+                        "[FallDiag] other-space slide hard stop t={} world={}",
+                        time, worldPos
+                    )
+                    break
+                }
                 // landing wins over reentry so a pipe mouth sitting on the
                 // ground cannot pull the player back after they touched down
                 if (hitsGround(access, pos, poseHeight)) {
                     val surfaceY = groundSurfaceY(access, pos, poseHeight)
                     if (surfaceY != null) pos = Vec3(pos.x, surfaceY, pos.z)
+                    CreateWaterparked.LOGGER.info(
+                        "[FallDiag] local-space ground end t={} local={} world={} surfaceY={}",
+                        time, pos, access.toWorld(pos), surfaceY
+                    )
                     break
                 }
                 if (pos.y < access.level.minBuildHeight - 10) {
@@ -557,13 +627,172 @@ object PhysicsSlideTrajectoryBuilder {
         return null
     }
 
-    private val reentryCache = HashMap<ResourceKey<Level>, Pair<String, List<ReentrySegment>>>()
+    // AABB collision against the parent level's real block shapes at a world
+    // position. Works for trajectories in main space AND for trajectories
+    // computed inside a Sable sub-level, because the sub-level pose projects
+    // the local position back into world space first.
+    // Trajectory `pos` is the body CENTER (hitsGround/groundSurfaceY use
+    // pos.y - height/2), so the box must span [pos.y - height/2, pos.y + height/2].
+    fun worldBlocksCollide(level: ServerLevel, pos: Vec3, width: Double, height: Double): Boolean {
+        val halfH = height / 2.0
+        val box = AABB(
+            pos.x - width / 2.0, pos.y - halfH, pos.z - width / 2.0,
+            pos.x + width / 2.0, pos.y + halfH, pos.z + width / 2.0
+        ).inflate(0.05)
+        val minX = Mth.floor(box.minX)
+        val minY = Mth.floor(box.minY)
+        val minZ = Mth.floor(box.minZ)
+        val maxX = Mth.floor(box.maxX)
+        val maxY = Mth.floor(box.maxY)
+        val maxZ = Mth.floor(box.maxZ)
+        // precomputed trajectories can travel far ahead of the player, so make
+        // sure every chunk along the world path is actually loaded before we
+        // ask for block states (otherwise an unloaded chunk reads as air and
+        // the rider falls through main-world terrain)
+        for (cx in (minX shr 4)..(maxX shr 4)) {
+            for (cz in (minZ shr 4)..(maxZ shr 4)) {
+                level.getChunk(cx, cz)
+            }
+        }
+        for (x in minX..maxX) {
+            for (y in minY..maxY) {
+                for (z in minZ..maxZ) {
+                    val bp = BlockPos(x, y, z)
+                    val state = level.getBlockState(bp)
+                    if (state.isAir) continue
+                    val shape = state.getCollisionShape(level, bp)
+                    if (shape.isEmpty) continue
+                    // toAabbs() returns LOCAL [0..1] boxes; move them to the
+                    // block position before testing against the world AABB
+                    for (aabb in shape.toAabbs()) {
+                        if (aabb.move(bp).intersects(box)) return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    // World-space tube segments of every slide space other than the one the
+    // trajectory currently runs in. Used to detect "ran into another slide"
+    // during free fall.
+    private data class WorldTubeSeg(val a: Vec3, val b: Vec3, val radius: Double)
+
+    private fun buildWorldSlideGrid(access: SlideSpaceAccess): WorldSlideGrid? {
+        val level = access.level
+        val out = ArrayList<WorldTubeSeg>()
+
+        fun addSpace(spaceAccess: SlideSpaceAccess, toWorld: (Vec3) -> Vec3, radiusScale: Double) {
+            for (anchorPos in SlideAnchorIndex.all(level, spaceAccess.space)) {
+                val be = spaceAccess.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity ?: continue
+                for (raw in be.anchorPeerCurvesView.values) {
+                    val bc = if (raw.isPrimary) raw else raw.secondary()
+                    if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
+                    val a = bc.bePositions.getFirst()
+                    val b = bc.bePositions.getSecond()
+                    val r0 = SlideCurveGeometry.radiusAt(level, a)
+                    val r1 = SlideCurveGeometry.radiusAt(level, b)
+                    val frames = cachedFrames(spaceAccess, bc, r0, r1)
+                    for (i in 0 until frames.size - 1) {
+                        val fa = frames[i]
+                        val fb = frames[i + 1]
+                        out += WorldTubeSeg(
+                            toWorld(fa.center), toWorld(fb.center),
+                            (max(fa.radius, fb.radius).toDouble() + 0.25) * radiusScale
+                        )
+                    }
+                }
+            }
+        }
+
+        if (access.space != SlideSpace.Main) {
+            val main = MainSlideSpaceAccess(level)
+            addSpace(main, { it }, 1.0)
+        }
+        val container = SubLevelContainer.getContainer(level)
+        container?.allSubLevels?.forEach { raw ->
+            val sub = raw as? ServerSubLevel ?: return@forEach
+            if (access.space == SlideSpace.SubLevel(sub.uniqueId)) return@forEach
+            val subAccess = SubSlideSpaceAccess(level, sub)
+            val scale = sub.logicalPose().scale()
+            val s = maxOf(scale.x(), scale.y(), scale.z()).coerceAtLeast(0.1)
+            addSpace(subAccess, { subAccess.toWorld(it) }, s.toDouble())
+        }
+        if (out.isEmpty()) return null
+        val grid = WorldSlideGrid()
+        for (seg in out) grid.add(seg)
+        return grid
+    }
+
+    private class WorldSlideGrid {
+        private val buckets = HashMap<Long, MutableList<WorldTubeSeg>>()
+
+        fun add(seg: WorldTubeSeg) {
+            val r = seg.radius + 0.5
+            val minX = Mth.floor((minOf(seg.a.x, seg.b.x) - r) / GRID)
+            val maxX = Mth.floor((maxOf(seg.a.x, seg.b.x) + r) / GRID)
+            val minY = Mth.floor((minOf(seg.a.y, seg.b.y) - r) / GRID)
+            val maxY = Mth.floor((maxOf(seg.a.y, seg.b.y) + r) / GRID)
+            val minZ = Mth.floor((minOf(seg.a.z, seg.b.z) - r) / GRID)
+            val maxZ = Mth.floor((maxOf(seg.a.z, seg.b.z) + r) / GRID)
+            for (x in minX..maxX) {
+                for (y in minY..maxY) {
+                    for (z in minZ..maxZ) {
+                        buckets.getOrPut(key(x, y, z)) { ArrayList() } += seg
+                    }
+                }
+            }
+        }
+
+        fun hit(pos: Vec3): WorldTubeSeg? {
+            val cx = Mth.floor(pos.x / GRID)
+            val cy = Mth.floor(pos.y / GRID)
+            val cz = Mth.floor(pos.z / GRID)
+            var best: WorldTubeSeg? = null
+            var bestDist = Double.MAX_VALUE
+            for (x in cx - 1..cx + 1) {
+                for (y in cy - 1..cy + 1) {
+                    for (z in cz - 1..cz + 1) {
+                        val list = buckets[key(x, y, z)] ?: continue
+                        for (s in list) {
+                            val ab = s.b.subtract(s.a)
+                            val lenSq = ab.lengthSqr()
+                            if (lenSq < 1.0E-12) continue
+                            val t = ((pos.subtract(s.a)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
+                            val closest = s.a.lerp(s.b, t)
+                            val d = pos.distanceToSqr(closest)
+                            if (d < s.radius * s.radius && d < bestDist) {
+                                bestDist = d
+                                best = s
+                            }
+                        }
+                    }
+                }
+            }
+            return best
+        }
+
+        companion object {
+            const val GRID = 8.0
+
+            fun key(x: Int, y: Int, z: Int): Long =
+                ((x.toLong() and 0x1FFFFF) shl 42) or
+                    ((y.toLong() and 0x1FFFFF) shl 21) or
+                    (z.toLong() and 0x1FFFFF)
+        }
+    }
+
+    // Keyed per coordinate space: sub-level and main-world trajectories share
+    // the same ServerLevel dimension but must never share segment lists.
+    private val reentryCache =
+        HashMap<Pair<ResourceKey<Level>, SlideSpace>, Pair<String, List<ReentrySegment>>>()
 
     private fun allReentrySegments(access: SlideSpaceAccess): List<ReentrySegment> {
+        val cacheKey = access.level.dimension() to access.space
         val sig = structureSignature(access)
-        reentryCache[access.level.dimension()]?.let { if (it.first == sig) return it.second }
+        reentryCache[cacheKey]?.let { if (it.first == sig) return it.second }
         val out = ArrayList<ReentrySegment>()
-        for (anchorPos in SlideAnchorIndex.all(access.level)) {
+        for (anchorPos in SlideAnchorIndex.all(access.level, access.space)) {
             val be = access.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity ?: continue
             for (raw in be.anchorPeerCurvesView.values) {
                 val bc = if (raw.isPrimary) raw else raw.secondary()
@@ -584,12 +813,13 @@ object PhysicsSlideTrajectoryBuilder {
                 }
             }
         }
-        reentryCache[access.level.dimension()] = sig to out
+        reentryCache[cacheKey] = sig to out
         return out
     }
 
     private fun structureSignature(access: SlideSpaceAccess): String {
         val sb = StringBuilder()
+        sb.append(access.space.cacheKey(access.level)).append('|')
         for (pos in SlideAnchorIndex.all(access.level).sortedBy { it.asLong() }) {
             val be = access.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
             sb.append(pos.asLong()).append('|')
@@ -628,7 +858,7 @@ object PhysicsSlideTrajectoryBuilder {
         else b.asLong() to a.asLong()
         val h0 = bc.starts.getFirst()
         val h1 = bc.starts.getSecond()
-        val sig = "$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()}"
+        val sig = "${access.space.cacheKey(access.level)}|$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()}"
         frameCache[key]?.let { if (it.first == sig) return it.second }
         val frames = SlideCurveGeometry.sampleFrames(access.level, bc, r0, r1)
         if (frameCache.size > 1024) frameCache.clear()

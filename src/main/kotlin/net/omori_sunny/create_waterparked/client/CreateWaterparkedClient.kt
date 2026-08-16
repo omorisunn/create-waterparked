@@ -101,9 +101,9 @@ object CreateWaterparkedClient {
             // flush pipe batches
             RenderLevelStageEvent.Stage.AFTER_LEVEL ->
                 {
-                    WaterslideCurveRenderer.endBatches(buffers)
                     val mc = Minecraft.getInstance()
                     val camera = mc.gameRenderer.mainCamera
+                    WaterslideCurveRenderer.endBatches(buffers)
                     WaterslideDyeOutline.render(
                         mc, event.poseStack, buffers,
                         camera.position, event.modelViewMatrix

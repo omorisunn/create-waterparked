@@ -1,6 +1,5 @@
 package net.omori_sunny.create_waterparked.content.registry
 
-import net.omori_sunny.create_waterparked.content.entrance.WaterslideEntranceBlockEntity
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.minecraft.core.registries.Registries
@@ -34,10 +33,5 @@ object ModBlockEntities {
         ).build(null)
         resolvedType = type
         type
-    }
-
-    val WATERSLIDE_ENTRANCE_BE: BlockEntityType<WaterslideEntranceBlockEntity> by
-    REGISTRY.register("waterslide_entrance") { ->
-        BlockEntityType.Builder.of(::WaterslideEntranceBlockEntity, ModBlocks.WATERSLIDE_ENTRANCE).build(null)
     }
 }

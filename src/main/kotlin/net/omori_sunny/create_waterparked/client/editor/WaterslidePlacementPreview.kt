@@ -56,6 +56,28 @@ object WaterslidePlacementPreview {
         if (stack.item !is WaterslideTrackItem) return clearAll()
         val first = WaterslideTrackPlacement.readAnchorFirstSelection(stack) ?: return clearAll()
 
+        // Never touch the far sub-level anchor or build preview geometry when the hovered
+        // block lives in a different space (main world vs. sub-level): that is what froze
+        // the line-preview phase before.
+        val hit = mc.hitResult
+        val hovered = (hit as? BlockHitResult)?.takeIf { it.type == HitResult.Type.BLOCK }?.blockPos
+        if (hovered != null && hovered != first && WaterslideConnectionRules.acrossSubLevels(level, first, hovered)) {
+            clearAll()
+            player.displayClientMessage(
+                Component.translatable("create_waterparked.connect.cross_sublevel")
+                    .withStyle(ChatFormatting.RED),
+                true
+            )
+            return
+        }
+
+        // Also avoid querying the far plot-global anchor when the player has left its space
+        // (e.g. walked back into the main world while a sub-level selection is still active).
+        if (hovered == null && WaterslideConnectionRules.acrossSubLevels(level, first, player.blockPosition())) {
+            clearAll()
+            return
+        }
+
         // Clear stale selection.
         val firstState = level.getBlockState(first)
         val firstBe = level.getBlockEntity(first) as? WaterslideAnchorBlockEntity
@@ -67,13 +89,12 @@ object WaterslidePlacementPreview {
 
         showAnchorOutline(level, first, KEY_FIRST, COLOR_GREEN)
 
-        val hit = mc.hitResult
-        if (hit !is BlockHitResult || hit.type != HitResult.Type.BLOCK) {
+        if (hovered == null) {
             removeHoverAndCurve()
             Outliner.getInstance().remove(KEY_INVALID)
             return
         }
-        val target = hit.blockPos
+        val target = hovered
         if (target == first) {
             removeHoverAndCurve()
             Outliner.getInstance().remove(KEY_INVALID)
@@ -85,23 +106,34 @@ object WaterslidePlacementPreview {
             removeHoverAndCurve()
             clearNeighborPreviews()
             showTargetOutline(level, target, KEY_INVALID, COLOR_BAD)
-            // Invalid hover preview.
+            // Invalid hover preview. Skip geometry entirely across spaces / beyond max span;
+            // building a sub-level -> main-world preview used to hang the client.
             val virtualSecond = target.above()
             if (virtualSecond != first) {
-                val placement = CoasterAnchorBezierOptimizer.buildAnchorToVirtualPeerPlacement(
-                    level, first, virtualSecond, WaterslideTrackMaterials.WATERSLIDE, false
-                )
-                if (placement != null) {
-                    prevSegmentCount = CoasterTrackPlacement.drawCoasterCurveOutlinePreview(
-                        placement.primary(), KEY_CURVE, COLOR_BAD, previewLift, prevSegmentCount
+                if (WaterslideConnectionRules.shouldSkipPreview(level, first, virtualSecond)) {
+                    clearCurve()
+                    clearNeighborPreviews()
+                    player.displayClientMessage(
+                        Component.translatable("create_waterparked.connect.cross_sublevel")
+                            .withStyle(ChatFormatting.RED),
+                        true
+                    )
+                } else {
+                    val placement = CoasterAnchorBezierOptimizer.buildAnchorToVirtualPeerPlacement(
+                        level, first, virtualSecond, WaterslideTrackMaterials.WATERSLIDE, false
+                    )
+                    if (placement != null) {
+                        prevSegmentCount = CoasterTrackPlacement.drawCoasterCurveOutlinePreview(
+                            placement.primary(), KEY_CURVE, COLOR_BAD, previewLift, prevSegmentCount
+                        )
+                    }
+                    player.displayClientMessage(
+                        Component.translatable("create_waterparked.track.must_attach_to_slide_anchors")
+                            .withStyle(ChatFormatting.RED),
+                        true
                     )
                 }
             }
-            player.displayClientMessage(
-                Component.translatable("create_waterparked.track.must_attach_to_slide_anchors")
-                    .withStyle(ChatFormatting.RED),
-                true
-            )
             return
         }
 
@@ -109,23 +141,28 @@ object WaterslidePlacementPreview {
         val result = WaterslideConnectionRules.validate(level, first, target)
         showAnchorOutline(level, target, KEY_HOVER, if (result.valid) COLOR_GREEN else COLOR_BAD)
 
-        // Curve preview, red when invalid.
-        val placement = CoasterAnchorBezierOptimizer.buildAnchorAnchorPlacement(
-            level, first, target, WaterslideTrackMaterials.WATERSLIDE, false
-        )
-        if (placement != null) {
-            val color = if (result.valid) COLOR_OK else COLOR_BAD
-            val smoothing = WaterslideNeighborSmoothing.build(
-                level, first, target, placement.primary(), placement
-            )
-            val previewCurve = smoothing?.primary ?: placement.primary()
-            prevSegmentCount = CoasterTrackPlacement.drawCoasterCurveOutlinePreview(
-                previewCurve, KEY_CURVE, color, previewLift, prevSegmentCount
-            )
-            drawNeighborPreviews(level, smoothing?.neighbors ?: emptyList<Any>(), color)
-        } else {
+        // Curve preview, red when invalid. Skip entirely across spaces / beyond max span.
+        if (WaterslideConnectionRules.shouldSkipPreview(level, first, target)) {
             clearCurve()
             clearNeighborPreviews()
+        } else {
+            val placement = CoasterAnchorBezierOptimizer.buildAnchorAnchorPlacement(
+                level, first, target, WaterslideTrackMaterials.WATERSLIDE, false
+            )
+            if (placement != null) {
+                val color = if (result.valid) COLOR_OK else COLOR_BAD
+                val smoothing = WaterslideNeighborSmoothing.build(
+                    level, first, target, placement.primary(), placement
+                )
+                val previewCurve = smoothing?.primary ?: placement.primary()
+                prevSegmentCount = CoasterTrackPlacement.drawCoasterCurveOutlinePreview(
+                    previewCurve, KEY_CURVE, color, previewLift, prevSegmentCount
+                )
+                drawNeighborPreviews(level, smoothing?.neighbors ?: emptyList<Any>(), color)
+            } else {
+                clearCurve()
+                clearNeighborPreviews()
+            }
         }
 
         if (result.valid) {

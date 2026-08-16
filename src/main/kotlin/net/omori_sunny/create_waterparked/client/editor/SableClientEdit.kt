@@ -1,5 +1,6 @@
 package net.omori_sunny.create_waterparked.client.editor
 
+import dev.ryanhcode.sable.Sable
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
 import dev.ryanhcode.sable.companion.math.JOMLConversion
 import dev.ryanhcode.sable.sublevel.ClientSubLevel
@@ -21,8 +22,13 @@ object SableClientEdit {
     )
 
     fun resolve(level: Level, anchor: BlockPos): AnchorCtx? {
-        (level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity)?.let {
-            return AnchorCtx(null, anchor, it)
+        // Plot-global positions resolve directly against the parent level, but
+        // still have to keep their containing sub-level so render/hit code can
+        // transform the plot geometry into world space.
+        val direct = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity
+        if (direct != null) {
+            val sub = Sable.HELPER.getContaining(level, anchor) as? ClientSubLevel
+            return AnchorCtx(sub, anchor, direct)
         }
         val container = SubLevelContainer.getContainer(level) ?: return null
         for (raw in container.allSubLevels) {
@@ -34,11 +40,11 @@ object SableClientEdit {
         return null
     }
 
-    fun plotCenter(sub: ClientSubLevel): Vec3 = Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock())
-
+    // Sable's logical pose already maps the parent level's plot-global block
+    // coordinates straight into world space; there is no extra plot-center
+    // offset to apply.
     fun toWorld(sub: ClientSubLevel, plotGlobal: Vec3): Vec3 {
-        val local = plotGlobal.subtract(plotCenter(sub))
-        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
+        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(plotGlobal), Vector3d())
         return JOMLConversion.toMojang(out)
     }
 
@@ -48,7 +54,7 @@ object SableClientEdit {
     }
 
     fun worldToPlot(sub: ClientSubLevel, world: Vec3): Vec3 {
-        val local = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
-        return JOMLConversion.toMojang(local).add(plotCenter(sub))
+        val out = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
+        return JOMLConversion.toMojang(out)
     }
 }

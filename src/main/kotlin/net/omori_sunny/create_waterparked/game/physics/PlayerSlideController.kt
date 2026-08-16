@@ -6,6 +6,9 @@ import com.simibubi.create.content.trains.track.BezierConnection
 import dev.ryanhcode.sable.Sable
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
 import dev.ryanhcode.sable.companion.math.JOMLConversion
+import dev.ryanhcode.sable.mixinterface.entity.entities_stick_sublevels.EntityStickExtension
+import dev.ryanhcode.sable.mixinterface.entity.entity_sublevel_collision.EntityMovementExtension
+import dev.ryanhcode.sable.mixinterface.entity.entity_sublevel_collision.LivingEntityMovementExtension
 import dev.ryanhcode.sable.sublevel.ServerSubLevel
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
 import net.omori_sunny.create_waterparked.CreateWaterparked
@@ -28,7 +31,9 @@ import net.omori_sunny.create_waterparked.network.SlideSegmentPayload
 import net.omori_sunny.create_waterparked.network.SlideSyncPayload
 import net.omori_sunny.create_waterparked.network.SlideTrajectoryPayload
 import net.minecraft.core.BlockPos
+import net.minecraft.core.registries.BuiltInRegistries
 import net.minecraft.resources.ResourceKey
+import net.minecraft.resources.ResourceLocation
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.util.Mth
@@ -36,6 +41,7 @@ import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.EntityDimensions
 import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.entity.Pose
+import net.minecraft.world.item.ItemStack
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
@@ -44,12 +50,22 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent
 import org.joml.Vector3d
 import java.util.UUID
 import kotlin.math.atan2
+import kotlin.math.max
 import kotlin.math.sqrt
 
 // Server-side slide sessions.
 object PlayerSlideController {
 
     private const val SIT_HEIGHT = 0.7
+    private const val RIDER_SIG_CACHE_TICKS = 5L
+    // How long a rider stays locked to the exit point of a sub-level slide
+    // after the ride ends. The lock gives Sable one or two ticks to register
+    // the landing, then it MUST be released: leaving sable$plotPosition set
+    // makes EntityMixin keep teleporting the player back to that point every
+    // tick, which blocks normal movement and item pickup.
+    private const val POST_RIDE_STICK_TICKS = 10L
+    private val CREATIVE_PHYSICS_STAFF =
+        ResourceLocation.fromNamespaceAndPath("simulated", "creative_physics_staff")
 
     private class Session(
         val id: Long,
@@ -87,6 +103,7 @@ object PlayerSlideController {
     )
 
     private val sessions = mutableMapOf<UUID, Session>()
+    private val postRideRelease = mutableMapOf<UUID, Pair<ResourceKey<Level>, Long>>()
     private val lastPos = mutableMapOf<UUID, Vec3>()
     private val curveFramesCache = HashMap<Pair<Long, Long>, CurveFrames>()
     private val entryCooldown = mutableMapOf<UUID, Long>()
@@ -105,6 +122,18 @@ object PlayerSlideController {
             }
         }
         for (level in event.server.allLevels) {
+            val releaseIt = postRideRelease.entries.iterator()
+            while (releaseIt.hasNext()) {
+                val (uuid, release) = releaseIt.next()
+                if (release.first != level.dimension()) continue
+                val entity = level.getEntity(uuid)
+                if (entity == null) {
+                    releaseIt.remove()
+                } else if (level.gameTime >= release.second) {
+                    clearStick(entity)
+                    releaseIt.remove()
+                }
+            }
             for (anchorPos in SlideAnchorIndex.all(level, SlideSpace.Main).toList()) {
                 val be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
                 if (be != null) SlideWaterManager.tickServer(level, be)
@@ -119,12 +148,7 @@ object PlayerSlideController {
                     else SlideAnchorIndex.unregister(level, anchorPos)
                 }
             }
-            SableCoordProbe.dump(level)
-            ServerWaterSimulation.tickServer(level)
-            SubLevelContainer.getContainer(level)?.allSubLevels?.forEach { raw ->
-                val sub = raw as? ServerSubLevel ?: return@forEach
-                ServerWaterSimulation.tickServer(SubSlideSpaceAccess(level, sub))
-            }
+            ServerWaterSimulation.tickAll(level)
             for (session in sessions.values.toList()) {
                 if (session.entity.level() != level) continue
                 tickSession(level, session)
@@ -168,6 +192,10 @@ object PlayerSlideController {
             // water flow pushes players standing inside the tube (not while sliding)
             for (player in level.players()) {
                 if (player.isRemoved || sessions.containsKey(player.uuid)) continue
+                // The Simulated physics staff drags a sub-level to the holder's
+                // eye position. Pushing the holder here would make the dragged
+                // sub-level chase that movement every tick and fly around.
+                if (isHoldingCreativePhysicsStaff(player)) continue
                 val center = player.position().add(0.0, player.bbHeight / 2.0, 0.0)
                 val waterVel = ServerWaterSimulation.waterVelocityAt(level, center) ?: continue
                 // push scales with the player's velocity relative to the water
@@ -182,6 +210,7 @@ object PlayerSlideController {
         sessions.remove(event.entity.uuid)?.sit?.discard()
         lastPos.remove(event.entity.uuid)
         entryCooldown.remove(event.entity.uuid)
+        postRideRelease.remove(event.entity.uuid)
     }
 
     @JvmStatic
@@ -220,6 +249,7 @@ object PlayerSlideController {
         player.setPos(worldPos)
         player.setDeltaMovement(worldVel)
         restoreEntity(player)
+        releaseStickAfterRide(level, player, session.subLevel(level))
         sessions.remove(player.uuid)
         entryCooldown[player.uuid] = level.gameTime + ModConfig.slideCancelCooldownTicks()
         SlidePackets.sendTo(player, SlideEndPayload(
@@ -240,6 +270,21 @@ object PlayerSlideController {
         }
         val entry = findSlideEntry(level, entity) ?: return
 
+        // Never auto-capture a player holding the Simulated creative physics
+        // staff into a sub-level slide. The staff makes the dragged sub-level
+        // follow the holder's eye, so moving the player along the slide would
+        // feed back into the staff target and send the sub-level flying.
+        if (entity is ServerPlayer && isHoldingCreativePhysicsStaff(entity) &&
+            Sable.HELPER.getContaining(level, entry.anchorPos) is ServerSubLevel
+        ) {
+            if (level.gameTime % 200 == 0L) {
+                CreateWaterparked.LOGGER.info(
+                    "[StaffGuard] skipped sub-level slide entry for staff holder {}", entity.uuid
+                )
+            }
+            return
+        }
+
         val swimming = (entity as? LivingEntity)?.getPose() == Pose.SWIMMING
         if (entity is LivingEntity) {
             entity.setPose(if (swimming) Pose.SWIMMING else Pose.SITTING)
@@ -256,9 +301,32 @@ object PlayerSlideController {
         }
 
         val dims = entityDimensions(entity)
+        // Sable moves tracked living entities by a separate `inheritedVelocity`
+        // (the sub-level's motion, blocks/tick) applied to position during
+        // travel(). entity.deltaMovement alone does NOT contain the structure
+        // motion, so include both before subtracting the structure velocity
+        // below. The result is the player's own velocity relative to the slide.
+        val inherited = (entity as? LivingEntityMovementExtension)?.`sable$getInheritedVelocity`()
+        val playerVelPerTick = if (inherited == null) entity.deltaMovement
+        else entity.deltaMovement.add(inherited.x, inherited.y, inherited.z)
         // real per-tick velocity, blocks/tick -> blocks/sec
-        val velWorld = entity.deltaMovement.scale(20.0)
+        val rawVelWorld = playerVelPerTick.scale(20.0)
         val entryTanWorld = entryTangentWorld(level, entry)
+        val subLevel = Sable.HELPER.getContaining(level, entry.anchorPos) as? ServerSubLevel
+        val access = if (subLevel != null) SubSlideSpaceAccess(level, subLevel) else MainSlideSpaceAccess(level)
+        val startPos = access.worldToLocal(entity.position())
+        // On a Sable sub-level the entity can follow the structure in two ways:
+        // 1. plot tracking: Sable repositions the entity from sable$plotPosition
+        //    through the logical pose each tick. The structure velocity is then
+        //    OUTSIDE deltaMovement/inherited, so subtracting it again gave a
+        //    standing player a huge backwards velocity and bounced them out of
+        //    the entrance.
+        // 2. collision inheritance: Sable adds collisionInfo.inheritedMotion on
+        //    top of deltaMovement; then the structure velocity must be removed.
+        val structureVel = access.worldVelocityAt(startPos)
+        val plotTracked = (entity as? EntityStickExtension)?.`sable$getPlotPosition`() != null
+        val velWorld = if (plotTracked) rawVelWorld
+        else rawVelWorld.subtract(structureVel)
         val along = velWorld.dot(entryTanWorld)
         if (along < -0.5) return
         // preserve the player's actual 3D velocity (direction AND magnitude)
@@ -270,10 +338,12 @@ object PlayerSlideController {
         if (startVelWorld.lengthSqr() > maxSpeed * maxSpeed) {
             startVelWorld = startVelWorld.normalize().scale(maxSpeed)
         }
-        val subLevel = Sable.HELPER.getContaining(level, entry.anchorPos) as? ServerSubLevel
-        val access = if (subLevel != null) SubSlideSpaceAccess(level, subLevel) else MainSlideSpaceAccess(level)
-        val startPos = if (subLevel != null) toLocalPos(subLevel, entity.position()) else entity.position()
-        val startVel = if (subLevel != null) toLocalVel(subLevel, startVelWorld) else startVelWorld
+        val startVel = access.worldNormalToLocal(startVelWorld)
+        CreateWaterparked.LOGGER.info(
+            "[EntryVel] sub={} delta={} inherited={} rawWorld={} structure={} relative={} along={} tangentWorld={} startWorld={} startLocal={} gravity={} plotTracked={}",
+            subLevel?.uniqueId, entity.deltaMovement, inherited, rawVelWorld, structureVel, velWorld, along,
+            entryTanWorld, startVelWorld, startVel, access.localGravity(), plotTracked
+        )
         val trajectory = PhysicsSlideTrajectoryBuilder.build(
             access, entry.curve, entry.towardSecond, entry.startT,
             startPos, startVel, dims.width.toDouble(), dims.height.toDouble()
@@ -283,8 +353,16 @@ object PlayerSlideController {
             return
         }
 
+        // No realtime state: main-branch style precomputed trajectory playback.
         val sit = if (player != null && !swimming) spawnSit(level, player) else null
         if (sit != null && player != null) player.startRiding(sit, true)
+        postRideRelease.remove(entity.uuid)
+        // A sub-level rider must be tracked into the sub-level BEFORE the next
+        // vanilla movement pass, otherwise Sable's inclusive entity getter
+        // observes AABBs that span main-world and plot-global coordinates.
+        bindToSpace(entity, sit, subLevel, startPos)
+        entity.setPos(access.toWorld(startPos))
+        sit?.setPos(access.toWorld(startPos))
         val session = Session(
             nextSessionId++, entity, player, trajectory,
             subLevel?.uniqueId, swimming, sit, level.gameTime
@@ -300,7 +378,7 @@ object PlayerSlideController {
         if (player != null) {
             SlidePackets.sendTo(player, SlideTrajectoryPayload(
                 session.id, session.startTick, swimming, session.subLevelId,
-                trajectory.samples.map { SlideSampleWire.from(it) }
+                trajectory.samples.map { SlideSampleWire.from(it, wireOffset(level, session)) }
             ))
         }
     }
@@ -487,13 +565,37 @@ object PlayerSlideController {
             onCancel(player, session.id)
             return
         }
+        // Taking out the physics staff mid-ride on a sub-level slide would
+        // otherwise let the staff chase the player along the trajectory.
+        if (player != null && session.subLevelId != null && isHoldingCreativePhysicsStaff(player)) {
+            CreateWaterparked.LOGGER.info(
+                "[StaffGuard] cancelling sub-level slide session {} for staff holder {}",
+                session.id, player.uuid
+            )
+            onCancel(player, session.id)
+            return
+        }
         val sit = session.sit
         if (sit != null && (sit.isRemoved || entity.vehicle !== sit)) {
             endSession(level, session, SlideEndReason.CANCELLED)
             return
         }
+
         session.elapsed += 1.0 / 20.0
         if (session.elapsed >= session.trajectory.duration) {
+            // Main-branch behavior: one precomputed trajectory per space. At
+            // the end of a trajectory, try a single cross-space handoff into
+            // another space before declaring the ride finished.
+            val end = session.trajectory.sampleAt(session.trajectory.duration)
+            val endWorldPos = toWorldPos(level, session, end.sample.position)
+            val endWorldVel = toWorldVel(level, session, end.sample.position, session.trajectory.exitVelocity)
+            val t0 = System.nanoTime()
+            val switched = trySwitchSpace(level, session, endWorldPos, endWorldVel)
+            perfSwitchNs += System.nanoTime() - t0
+            if (switched) {
+                startPlaybackSegment(level, session)
+                return
+            }
             endSession(level, session, SlideEndReason.EXITED)
             return
         }
@@ -504,6 +606,9 @@ object PlayerSlideController {
         val worldTan = toWorldNormal(level, session, at.sample.tangent)
         val worldVel = toWorldVel(level, session, at.sample.position, at.sample.tangent.scale(at.sample.speed))
 
+        // keep Sable's tracking/plot state in sync so the rider collides with
+        // the sub-level's own blocks instead of the main-world void below
+        bindToSpace(entity, sit, session.subLevel(level), at.sample.position)
         entity.setPos(sitPos)
         entity.setDeltaMovement(worldVel)
         sit?.setPos(sitPos)
@@ -515,28 +620,6 @@ object PlayerSlideController {
         }
         entity.fallDistance = 0f
 
-        val t0 = System.nanoTime()
-        val switched = trySwitchSpace(level, session, worldPos, worldVel)
-        perfSwitchNs += System.nanoTime() - t0
-        if (switched) {
-            // restart playback in the new space immediately, same tick
-            val first = session.trajectory.samples.first()
-            val newWorld = toWorldPos(level, session, first.position)
-            val newSitPos = if (sit != null) newWorld.subtract(0.0, SIT_HEIGHT, 0.0) else newWorld
-            val newWorldVel = toWorldVel(level, session, first.position, first.tangent.scale(first.speed))
-            entity.setPos(newSitPos)
-            entity.setDeltaMovement(newWorldVel)
-            sit?.setPos(newSitPos)
-            applyRotation(entity, toWorldNormal(level, session, first.tangent))
-            if (player != null) {
-                SlidePackets.sendTo(player, SlideSegmentPayload(
-                    session.id, level.gameTime, session.subLevelId,
-                    session.trajectory.samples.map { SlideSampleWire.from(it) }
-                ))
-            }
-            return
-        }
-
         if (player != null && level.gameTime - session.lastSyncTick >= 20) {
             session.lastSyncTick = level.gameTime
             SlidePackets.sendTo(player, SlideSyncPayload(
@@ -544,6 +627,30 @@ object PlayerSlideController {
             ))
         }
     }
+
+    // Applies the first sample of a freshly started segment (including after a
+    // cross-space handoff) and tells the client to swap to the new trajectory.
+    private fun startPlaybackSegment(level: ServerLevel, session: Session) {
+        val entity = session.entity
+        val player = session.player
+        val sit = session.sit
+        val first = session.trajectory.samples.first()
+        val newWorld = toWorldPos(level, session, first.position)
+        val newSitPos = if (sit != null) newWorld.subtract(0.0, SIT_HEIGHT, 0.0) else newWorld
+        val newWorldVel = toWorldVel(level, session, first.position, first.tangent.scale(first.speed))
+        bindToSpace(entity, sit, session.subLevel(level), first.position)
+        entity.setPos(newSitPos)
+        entity.setDeltaMovement(newWorldVel)
+        sit?.setPos(newSitPos)
+        applyRotation(entity, toWorldNormal(level, session, first.tangent))
+        if (player != null) {
+            SlidePackets.sendTo(player, SlideSegmentPayload(
+                session.id, level.gameTime, session.subLevelId,
+                session.trajectory.samples.map { SlideSampleWire.from(it, wireOffset(level, session)) }
+            ))
+        }
+    }
+
 
     private fun trySwitchSpace(
         level: ServerLevel,
@@ -585,25 +692,77 @@ object PlayerSlideController {
         val entity = session.entity
         val player = session.player
         val at = session.trajectory.sampleAt(session.trajectory.duration)
-        val worldPos = toWorldPos(level, session, at.sample.position)
+        val localPos = at.sample.position
+        val localVel = session.trajectory.exitVelocity
+        val worldPos = toWorldPos(level, session, localPos)
         val worldVel = if (reason == SlideEndReason.STOPPED) Vec3.ZERO
-        else toWorldVel(level, session, at.sample.position, session.trajectory.exitVelocity)
+        else toWorldVel(level, session, localPos, localVel)
         CreateWaterparked.LOGGER.info(
             "Slide end {} reason {} pos {} vel {}",
             session.id, reason, worldPos, worldVel
         )
 
         cleanupSit(session, entity)
+        // The rider lands with the exit velocity, then the plot lock is
+        // released after a short grace period (see releaseStickAfterRide).
         entity.setPos(worldPos)
         entity.setDeltaMovement(worldVel)
         restoreEntity(entity)
+        releaseStickAfterRide(level, entity, session.subLevel(level))
         sessions.remove(entity.uuid)
         if (player != null) {
+            // The end position is a WORLD-space respawn point (setPos on both
+            // sides). Do not send the local/plot-global trajectory position:
+            // on sub-levels it is ~2e7 magnitude (float32 ulp ~ 2 blocks) and
+            // would require the client to re-derive world coords via the pose.
+            // World coords are small enough for float32. This matches the
+            // cancel path (onCancel), which already sends worldPos.
             SlidePackets.sendTo(player, SlideEndPayload(
                 session.id, reason.ordinal.toByte(),
                 worldPos.x.toFloat(), worldPos.y.toFloat(), worldPos.z.toFloat(),
                 worldVel.x.toFloat(), worldVel.y.toFloat(), worldVel.z.toFloat()
             ))
+        }
+    }
+
+    private fun wireOffset(level: ServerLevel, session: Session): Vec3? =
+        session.subLevel(level)?.let { Vec3.atLowerCornerOf(it.getPlot().getCenterBlock()) }
+
+    private fun bindToSpace(
+        entity: Entity,
+        sit: SlideSitEntity?,
+        sub: ServerSubLevel?,
+        localPos: Vec3
+    ) {
+        if (sub == null) return
+        (entity as? EntityStickExtension)?.`sable$setPlotPosition`(localPos)
+        (entity as? EntityMovementExtension)?.`sable$setTrackingSubLevel`(sub)
+        if (sit != null) {
+            (sit as? EntityStickExtension)?.`sable$setPlotPosition`(localPos)
+            (sit as? EntityMovementExtension)?.`sable$setTrackingSubLevel`(sub)
+        }
+    }
+
+    private fun clearStick(entity: Entity) {
+        (entity as? EntityStickExtension)?.`sable$setPlotPosition`(null)
+        (entity as? EntityMovementExtension)?.`sable$setTrackingSubLevel`(null)
+    }
+
+    // After a sub-level ride, release the plot lock either immediately (the
+    // rider is already inside a sub-level and Sable collision can take over)
+    // or after a short grace period that lets the rider land on sub-level
+    // terrain instead of falling through into the main-world void.
+    private fun releaseStickAfterRide(level: ServerLevel, entity: Entity, sub: ServerSubLevel?) {
+        if (sub == null) {
+            clearStick(entity)
+            return
+        }
+        val contained = Sable.HELPER.getContaining(level, entity.position()) != null
+        if (contained) {
+            clearStick(entity)
+        } else {
+            postRideRelease[entity.uuid] =
+                level.dimension() to (level.gameTime + POST_RIDE_STICK_TICKS)
         }
     }
 
@@ -618,10 +777,7 @@ object PlayerSlideController {
 
     private fun toWorldPos(level: ServerLevel, session: Session, local: Vec3): Vec3 {
         val sub = session.subLevel(level) ?: return local
-        val plotCenter = Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock())
-        val out = sub.logicalPose().transformPosition(
-            JOMLConversion.toJOML(local.subtract(plotCenter)), Vector3d()
-        )
+        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
         return JOMLConversion.toMojang(out)
     }
 
@@ -640,10 +796,9 @@ object PlayerSlideController {
         val sub = session.subLevel(level)
         if (sub == null) return localVel.scale(1.0 / 20.0)
 
-        val plotCenter = Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock())
         val out = sub.logicalPose().transformNormal(JOMLConversion.toJOML(localVel), Vector3d())
         val structure = Sable.HELPER.getVelocity(
-            level, sub, JOMLConversion.toJOML(localPos.subtract(plotCenter)), Vector3d()
+            level, sub, JOMLConversion.toJOML(localPos), Vector3d()
         )
         out.add(structure)
         return JOMLConversion.toMojang(out).scale(1.0 / 20.0)
@@ -663,7 +818,7 @@ object PlayerSlideController {
         var maxZ = -Double.MAX_VALUE
         var found = false
         val seen = mutableSetOf<Pair<Long, Long>>()
-        for (pos in SlideAnchorIndex.all(level)) {
+        for (pos in SlideAnchorIndex.all(level, SlideSpace.Main)) {
             val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
             found = true
             for (raw in be.anchorPeerCurvesView.values) {
@@ -702,7 +857,7 @@ object PlayerSlideController {
     // structural fingerprint: only rebuild the box when the slide graph changes
     private fun boundsKey(level: ServerLevel): Int {
         var key = 0
-        for (pos in SlideAnchorIndex.all(level)) {
+        for (pos in SlideAnchorIndex.all(level, SlideSpace.Main)) {
             key = key * 31 + pos.hashCode()
             val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
             for (raw in be.anchorPeerCurvesView.values) {
@@ -731,13 +886,26 @@ object PlayerSlideController {
         return !worn.isEmpty && worn.item === AllItems.COPPER_DIVING_BOOTS.get()
     }
 
+    // Detected by registry id so the mod works identically with Aeronautics
+    // (and therefore the whole Simulated library) absent from the mod list.
+    private fun isHoldingCreativePhysicsStaff(entity: Entity): Boolean {
+        if (entity !is LivingEntity) return false
+        return isCreativePhysicsStaff(entity.mainHandItem) ||
+            isCreativePhysicsStaff(entity.offhandItem)
+    }
+
+    private fun isCreativePhysicsStaff(stack: ItemStack): Boolean {
+        if (stack.isEmpty) return false
+        return BuiltInRegistries.ITEM.getKey(stack.item) == CREATIVE_PHYSICS_STAFF
+    }
+
     private fun entityDimensions(entity: Entity): EntityDimensions =
         if (entity is LivingEntity) entity.getDimensions(entity.getPose())
         else entity.getDimensions(Pose.STANDING)
 
     private fun toLocalPos(sub: ServerSubLevel, world: Vec3): Vec3 {
         val out = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
-        return JOMLConversion.toMojang(out).add(Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock()))
+        return JOMLConversion.toMojang(out)
     }
 
     private fun toLocalVel(sub: ServerSubLevel, world: Vec3): Vec3 {

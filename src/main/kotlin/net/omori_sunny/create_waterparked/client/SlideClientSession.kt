@@ -16,7 +16,6 @@ import net.omori_sunny.create_waterparked.network.SlideSegmentPayload
 import net.omori_sunny.create_waterparked.network.SlideSyncPayload
 import net.omori_sunny.create_waterparked.network.SlideTrajectoryPayload
 import net.minecraft.client.Minecraft
-import net.minecraft.client.player.LocalPlayer
 import net.minecraft.network.chat.Component
 import net.minecraft.util.Mth
 import net.minecraft.world.entity.Pose
@@ -70,6 +69,7 @@ object SlideClientSession {
         var lastSmoothedTrackDelta: Float? = null
         var lastSmoothedTrackPitch: Float? = null
         var lastSmoothedRoll: Float? = null
+        var thrownRollLock: Float? = null
         var lastFrameYaw: Float? = null
         var lastFramePitch: Float? = null
         var lastAppliedPos: Vec3? = null
@@ -154,7 +154,7 @@ object SlideClientSession {
         )
         val local = corners.map { corner ->
             val out = pose.transformPositionInverse(JOMLConversion.toJOML(corner), Vector3d())
-            JOMLConversion.toMojang(out).add(Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock()))
+            JOMLConversion.toMojang(out)
         }
         return net.minecraft.world.phys.AABB(
             local.minOf { it.x }, local.minOf { it.y }, local.minOf { it.z },
@@ -227,6 +227,12 @@ object SlideClientSession {
         val vNext = toWorldNormal(level, session, atNext.sample.tangent).scale(atNext.sample.speed)
         val felt = vNext.subtract(vPrev).scale(10.0).add(0.0, 32.0, 0.0)
         val right = worldTanNow.cross(Vec3(0.0, 1.0, 0.0))
+        // Roll is locked while the player is flying OUTSIDE any tube. The lock
+        // value is the roll from the last in-tube frame, so the throw does not
+        // spin the camera, and it is released as soon as the trajectory sample
+        // is inside the next tube again.
+        val thrownNow = !atNow.sample.inTube
+        val preThrownRoll = session.lastSmoothedRoll
         var roll: Float
         if (right.lengthSqr() < 1.0E-9) {
             val prev = session.lastRoll ?: 0f
@@ -253,6 +259,19 @@ object SlideClientSession {
                 .coerceIn(-MAX_CAMERA_ROLL_STEP, MAX_CAMERA_ROLL_STEP)
             session.lastSmoothedRoll = smoothedRoll
             roll = smoothedRoll.coerceIn(-30f, 30f)
+        }
+        if (thrownNow) {
+            // First airborne sample: freeze at the last in-tube smoothed roll.
+            if (session.thrownRollLock == null) {
+                session.thrownRollLock = preThrownRoll ?: roll
+            }
+            val locked = session.thrownRollLock!!
+            session.lastRoll = locked
+            session.lastSmoothedRoll = locked
+            roll = locked
+        } else {
+            // Back inside a tube (possibly a later tube that caught the throw).
+            session.thrownRollLock = null
         }
         val smoothing = ModClientConfig.cameraSmoothing()
         val k = 1f - smoothing
@@ -296,19 +315,20 @@ object SlideClientSession {
     @JvmStatic
     fun start(payload: SlideTrajectoryPayload) {
         SlideSableOrientation.clearAll()
+        val level = Minecraft.getInstance().level
+        val origin = plotOffset(level, payload.subLevelId) ?: Vec3.ZERO
         val session = Active(
             payload.sessionId,
-            SlideTrajectory(payload.samples.map { it.toSample() }, SlideEndReason.EXITED, true),
+            SlideTrajectory(payload.samples.map { it.toSample(origin) }, SlideEndReason.EXITED, true),
             payload.subLevelId,
             payload.swimmingPose,
             payload.startTick
         )
         active = session
         val mc = Minecraft.getInstance()
-        val level = mc.level
         val player = mc.player
         if (level != null && payload.samples.isNotEmpty()) {
-            val first = payload.samples.first().toSample()
+            val first = payload.samples.first().toSample(origin)
             val tan = toWorldNormal(level, session, first.tangent)
             session.startTrackYaw = yawOf(tan)
             session.startTrackPitch = pitchOf(tan)
@@ -346,16 +366,16 @@ object SlideClientSession {
     fun appendSegment(payload: SlideSegmentPayload) {
         val session = active ?: return
         if (session.sessionId != payload.sessionId) return
+        val level = Minecraft.getInstance().level ?: return
+        if (payload.samples.isEmpty()) return
+        val origin = plotOffset(level, payload.subLevelId)
         session.trajectory = SlideTrajectory(
-            payload.samples.map { it.toSample() }, SlideEndReason.EXITED, true
+            payload.samples.map { it.toSample(origin) }, SlideEndReason.EXITED, true
         )
         session.subLevelId = payload.subLevelId
         session.startTick = payload.startTick
         session.timeOffsetTicks = 0.0
-        session.lastOffset = null
-        session.lastTrackYaw = null
-        session.lastSmoothedTrackPitch = null
-        session.lastSmoothedRoll = null
+        session.targetOffsetTicks = 0.0
     }
 
     @JvmStatic
@@ -424,7 +444,6 @@ object SlideClientSession {
         val player = mc.player ?: return
         val level = mc.level ?: return
         val session = active ?: return
-        if (player !is LocalPlayer) return
 
         session.timeOffsetTicks += (session.targetOffsetTicks - session.timeOffsetTicks).coerceIn(-1.0, 1.0)
         val elapsed = (level.gameTime - session.startTick + session.timeOffsetTicks) / 20.0
@@ -478,12 +497,16 @@ object SlideClientSession {
         WaterslideSplashSpawner.tickSliding(mc)
     }
 
+    private fun plotOffset(level: Level?, subLevelId: UUID?): Vec3? {
+        if (level == null || subLevelId == null) return null
+        val container = SubLevelContainer.getContainer(level) ?: return null
+        val sub = container.getSubLevel(subLevelId) as? dev.ryanhcode.sable.sublevel.ClientSubLevel ?: return null
+        return Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock())
+    }
+
     private fun toWorldPos(level: Level, session: Active, local: Vec3): Vec3 {
         val sub = session.subLevel(level) ?: return local
-        val plotCenter = Vec3.atLowerCornerOf(sub.getPlot().getCenterBlock())
-        val out = sub.logicalPose().transformPosition(
-            JOMLConversion.toJOML(local.subtract(plotCenter)), Vector3d()
-        )
+        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
         return JOMLConversion.toMojang(out)
     }
 
