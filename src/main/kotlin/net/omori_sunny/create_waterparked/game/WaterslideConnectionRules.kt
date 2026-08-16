@@ -14,19 +14,30 @@ object WaterslideConnectionRules {
 
     data class Result(val valid: Boolean, val messageKey: String? = null)
 
+    // Cheap checks; do these before touching block entities / building preview geometry.
+    // anchorConnectionExceedsMaxSpan only looks up block entities when the raw distance is
+    // inside the allowed span, so acrossSubLevels short-circuits the far-coordinate case.
+    fun acrossSubLevels(level: Level, a: BlockPos, b: BlockPos): Boolean =
+        CoasterTrackPlacement.anchorConnectionAcrossSubLevels(level, a, b)
+
+    fun shouldSkipPreview(level: Level, a: BlockPos, b: BlockPos): Boolean =
+        acrossSubLevels(level, a, b) || CoasterTrackPlacement.anchorConnectionExceedsMaxSpan(level, a, b)
+
     fun validate(level: Level, a: BlockPos, b: BlockPos): Result {
         if (a == b) return Result(false, "create.track.second_point")
 
-        val beA = level.getBlockEntity(a) as? WaterslideAnchorBlockEntity
-        val beB = level.getBlockEntity(b) as? WaterslideAnchorBlockEntity
-        if (beA == null || beB == null) return Result(false, "create.track.original_missing")
-
+        // These run before any block-entity lookup: querying a far plot-global sub-level
+        // anchor from the main world can force-load chunks and hang the client.
         if (CoasterTrackPlacement.anchorConnectionAcrossSubLevels(level, a, b)) {
-            return Result(false, "simulatedcoasters.track.anchor_sublevel_connection")
+            return Result(false, "create_waterparked.connect.cross_sublevel")
         }
         if (CoasterTrackPlacement.anchorConnectionExceedsMaxSpan(level, a, b)) {
             return Result(false, "create.track.too_far")
         }
+
+        val beA = level.getBlockEntity(a) as? WaterslideAnchorBlockEntity
+        val beB = level.getBlockEntity(b) as? WaterslideAnchorBlockEntity
+        if (beA == null || beB == null) return Result(false, "create.track.original_missing")
 
         val peersA = beA.viewAnchorPeerCurvesSnapshot()
         val peersB = beB.viewAnchorPeerCurvesSnapshot()

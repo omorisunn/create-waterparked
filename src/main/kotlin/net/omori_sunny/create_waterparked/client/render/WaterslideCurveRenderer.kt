@@ -8,12 +8,14 @@ import dev.engine_room.flywheel.api.visualization.VisualizationManager
 import net.createmod.catnip.animation.AnimationTickHolder
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
+import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
 import dev.silvergold.simulatedcoasters.track.CoasterOpenEndExtension
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
 import net.omori_sunny.create_waterparked.mixin.client.LevelRendererAccessor
+import net.omori_sunny.create_waterparked.client.editor.WaterslideEditorRenderTypes
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRadiusEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
@@ -44,6 +46,7 @@ import net.minecraft.util.Mth
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.Vec3
 import net.neoforged.neoforge.client.model.data.ModelData
+import org.joml.Matrix4f
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -137,6 +140,117 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             renderDebugTrajectories(poseStack, bufferSource)
 // flush pipe batches
             endBatches(bufferSource)
+        }
+
+        // Sub-level thrown water, drawn in main-world coordinates after every
+        // level/sub-level geometry has written depth. The Flywheel visual owns
+        // the prediction; this pass only triangulates the cached world polylines
+        // so the sheet is depth-tested against sub-levels in the correct order.
+        @JvmStatic
+        fun renderWorldStreams(
+            poseStack: PoseStack,
+            bufferSource: MultiBufferSource,
+            cameraPos: Vec3,
+            cameraRotation: Matrix4f
+        ) {
+            val mc = Minecraft.getInstance()
+            val level = mc.level ?: return
+            val sheets = WaterslideTubeVisual.worldStreamSheets()
+            if (sheets.isEmpty()) return
+            val sprite = mc.getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
+                .apply(ResourceLocation.withDefaultNamespace("block/water_still"))
+            val consumer = bufferSource.getBuffer(TUBE_STREAM_TRANSLUCENT)
+            // AFTER_LEVEL hands us an identity PoseStack and a camera-rotation
+            // matrix (no translation). Convert every world point to eye space
+            // ourselves, exactly like the editor outlines do; then the vertex
+            // pose stays identity.
+            val pose = poseStack.last()
+            val flow = -AnimationTickHolder.getRenderTime(level) * STREAM_FLOW_SPEED
+            for ((outer, inner) in sheets) {
+                val outerEye = outer.map { ray ->
+                    ray.map { toEye(cameraPos, cameraRotation, it) }
+                }
+                val innerEye = inner.map { ray ->
+                    ray.map { toEye(cameraPos, cameraRotation, it) }
+                }
+                renderWorldSheet(level, outerEye, innerEye, pose, consumer, sprite, flow)
+            }
+            if (bufferSource is MultiBufferSource.BufferSource) {
+                bufferSource.endBatch(TUBE_STREAM_TRANSLUCENT)
+            }
+        }
+
+        private fun toEye(cameraPos: Vec3, cameraRotation: Matrix4f, world: Vec3): Vec3 {
+            val eye = WaterslideEditorRenderTypes.worldToEye(cameraPos, cameraRotation, world)
+            return Vec3(eye.x().toDouble(), eye.y().toDouble(), eye.z().toDouble())
+        }
+
+        private fun renderWorldSheet(
+            level: Level,
+            outer: List<List<Vec3>>,
+            inner: List<List<Vec3>>,
+            pose: PoseStack.Pose,
+            consumer: VertexConsumer,
+            sprite: net.minecraft.client.renderer.texture.TextureAtlasSprite,
+            flow: Float
+        ) {
+            if (outer.size < 2 || inner.size != outer.size) return
+            val samples = minOf(
+                outer.minOfOrNull { it.size } ?: return,
+                inner.minOfOrNull { it.size } ?: return
+            )
+            if (samples < 2) return
+            val cum = FloatArray(samples)
+            for (k in 1 until samples) {
+                cum[k] = cum[k - 1] + outer[0][k - 1].distanceTo(outer[0][k]).toFloat()
+            }
+            val maxSegments = max(4, (48 * ModClientConfig.polygonScale()).roundToInt())
+            val stride = max(1, (samples - 1) / maxSegments)
+
+            fun vAt(k: Int): Float = mod(
+                cum[k] * WaterFlowSimulation.WATER_V_CYCLES_PER_BLOCK + flow, 1f
+            )
+
+            fun sheet(
+                a: List<Vec3>,
+                b: List<Vec3>,
+                u0: Float,
+                u1: Float,
+                tint: FloatArray,
+                alpha: Float,
+                flip: Boolean
+            ) {
+                for (k in 0 until samples - 1 step stride) {
+                    val k1 = minOf(k + stride, samples - 1)
+                    val a0 = a[k]
+                    val a1 = a[k1]
+                    val b1 = b[k1]
+                    val b0 = b[k]
+                    val edge1 = a1.subtract(a0)
+                    val edge2 = b0.subtract(a0)
+                    var normal = edge1.cross(edge2).normalize()
+                    if (flip) normal = normal.scale(-1.0)
+                    // actual block/sky light instead of FULL_BRIGHT; the old
+                    // full-bright version made the sheet glow
+                    val light = LevelRenderer.getLightColor(level, BlockPos.containing(a0))
+                    vertex(consumer, pose, sprite, a0, normal, u0 to vAt(k), light, 0.7f, alpha, tint)
+                    vertex(consumer, pose, sprite, a1, normal, u0 to vAt(k1), light, 0.7f, alpha, tint)
+                    vertex(consumer, pose, sprite, b1, normal, u1 to vAt(k1), light, 0.7f, alpha, tint)
+                    vertex(consumer, pose, sprite, b0, normal, u1 to vAt(k), light, 0.7f, alpha, tint)
+                }
+            }
+
+            val n = outer.size
+            val colArc = FloatArray(n)
+            for (i in 1 until n) {
+                colArc[i] = colArc[i - 1] + outer[i - 1][0].distanceTo(outer[i][0]).toFloat()
+            }
+            for (i in 0 until n - 1) {
+                val u0 = mod(colArc[i], 1f)
+                val u1 = mod(colArc[i + 1], 1f)
+                sheet(outer[i], outer[i + 1], u0, u1, WATER_TINT, 0.75f, false)
+                sheet(inner[i], inner[i + 1], u0, u1, WATER_SURFACE_TINT, 0.95f, true)
+            }
         }
 
         // water simulation trajectory debug overlay

@@ -186,14 +186,17 @@ object WaterslideTubeMesh {
             .length()
     }
 
-// frames (with extensions)
+// frames (with extensions). `useRailFrames` makes the cross-section follow
+// Coaster's actual rail banking; Sable sub-levels use this so a rotated plot
+// pose cannot twist the wall between neighbouring curve segments.
     @JvmStatic
     fun sampleSegments(
         level: Level,
         bc: BezierConnection,
         r0: Float,
         r1: Float,
-        origin: Vec3
+        origin: Vec3,
+        useRailFrames: Boolean = false
     ): List<TubeSegmentFrame> {
         val count = bc.getSegmentCount().coerceAtLeast(1)
         val ts = FloatArray(count + 1) { i ->
@@ -214,7 +217,23 @@ object WaterslideTubeMesh {
             }
             tangent = tangent.normalize()
 
-            var (lat, up) = SlideCurveGeometry.stableFrame(tangent)
+            var lat: Vec3
+            var up: Vec3
+            if (useRailFrames) {
+                lat = CoasterBezierRailFrames.lateralAt(bc, ts[i], level)
+                if (lat.lengthSqr() < 1.0E-12) {
+                    val (fallbackLat, fallbackUp) = SlideCurveGeometry.stableFrame(tangent)
+                    lat = fallbackLat
+                    up = fallbackUp
+                } else {
+                    lat = lat.normalize()
+                    up = tangent.cross(lat).normalize()
+                }
+            } else {
+                val (stableLat, stableUp) = SlideCurveGeometry.stableFrame(tangent)
+                lat = stableLat
+                up = stableUp
+            }
             if (prevLat != null && lat.dot(prevLat) < 0.0) {
                 lat = lat.scale(-1.0)
                 up = up.scale(-1.0)
@@ -475,7 +494,7 @@ object WaterslideTubeMesh {
             for (f in vertsB) append((f * 20f).roundToInt()).append(',')
         }
         return waterModelCache.getOrPut(key) {
-            buildWaterModel(vertsA, vertsB, radius)
+            buildWaterModel(vertsA, vertsB, radius, STREAM_TRANSLUCENT_MATERIAL)
         }
     }
 
@@ -487,7 +506,8 @@ object WaterslideTubeMesh {
     private fun buildWaterModel(
         vertsA: List<Float>,
         vertsB: List<Float>,
-        radius: Float
+        radius: Float,
+        material: Material
     ): Model {
         val nA = vertsA.size / 2
         val nB = vertsB.size / 2
@@ -564,7 +584,7 @@ object WaterslideTubeMesh {
                 waterVerts += ringVerts[topBase + s * nB + i + 1]
             }
         }
-        return SingleMeshModel(meshOf(waterVerts, "waterslide_tube_water"), STREAM_TRANSLUCENT_MATERIAL)
+        return SingleMeshModel(meshOf(waterVerts, "waterslide_tube_water"), material)
     }
 
     // band ring vertices on the same angular grid as the tube wall:

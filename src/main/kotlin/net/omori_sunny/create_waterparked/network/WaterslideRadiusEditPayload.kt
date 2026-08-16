@@ -22,9 +22,23 @@ class WaterslideRadiusEditPayload(val anchorPos: BlockPos, val radius: Float) : 
             val player = ctx.player() ?: return@enqueueWork
             if (player !is ServerPlayer) return@enqueueWork
             val level = player.serverLevel()
-            val be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity ?: return@enqueueWork
+            var be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
+            var globalPos = anchorPos
+            if (be == null) {
+                val container = dev.ryanhcode.sable.api.sublevel.SubLevelContainer.getContainer(level)
+                container?.allSubLevels?.forEach { raw ->
+                    val sub = raw as? dev.ryanhcode.sable.sublevel.ServerSubLevel ?: return@forEach
+                    val candidate = anchorPos.offset(sub.getPlot().getCenterBlock())
+                    val found = level.getBlockEntity(candidate) as? WaterslideAnchorBlockEntity
+                    if (found != null) {
+                        be = found
+                        globalPos = candidate
+                    }
+                }
+            }
+            if (be == null) return@enqueueWork
             val range = CoasterTrackGauge.maxCoasterCurvePacketInteractionRangeBlocks().toDouble()
-            if (!player.canInteractWithBlock(anchorPos, range)) {
+            if (!player.canInteractWithBlock(globalPos, range)) {
                 return@enqueueWork
             }
             be.setRadius(radius)

@@ -1,6 +1,5 @@
 package net.omori_sunny.create_waterparked.content.registry
 
-import net.omori_sunny.create_waterparked.content.entrance.WaterslideEntranceBlock
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlock
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackBlock
 import net.omori_sunny.create_waterparked.CreateWaterparked
@@ -31,10 +30,5 @@ object ModBlocks {
     // slide anchor
     val WATERSLIDE_ANCHOR: WaterslideAnchorBlock by REGISTRY.register("waterslide_anchor") { ->
         WaterslideAnchorBlock(WaterslideAnchorBlock.defaultProperties())
-    }
-
-    // slide entrance
-    val WATERSLIDE_ENTRANCE: WaterslideEntranceBlock by REGISTRY.register("waterslide_entrance") { ->
-        WaterslideEntranceBlock(WaterslideEntranceBlock.defaultProperties())
     }
 }

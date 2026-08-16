@@ -46,11 +46,13 @@ class WaterslideSectorEditPayload(
             val player = ctx.player() ?: return@enqueueWork
             if (player !is ServerPlayer) return@enqueueWork
             val level = player.serverLevel()
-            if (!player.canInteractWithBlock(curveA, CoasterTrackGauge.maxCoasterCurvePacketInteractionRangeBlocks().toDouble())) {
+            val globalA = resolveSubPos(level, curveA)
+            val globalB = resolveSubPos(level, curveB)
+            if (!player.canInteractWithBlock(globalA, CoasterTrackGauge.maxCoasterCurvePacketInteractionRangeBlocks().toDouble())) {
                 return@enqueueWork
             }
 
-            val curve = findCurve(level, curveA, curveB) ?: return@enqueueWork
+            val curve = findCurve(level, globalA, globalB) ?: return@enqueueWork
             val storageBe = level.getBlockEntity(curve.bePositions.getFirst()) as? WaterslideAnchorBlockEntity
                 ?: return@enqueueWork
             val peer = curve.bePositions.getSecond()
@@ -107,6 +109,20 @@ class WaterslideSectorEditPayload(
             (level.getBlockEntity(b) as? WaterslideAnchorBlockEntity)
                 ?.let { player.connection.send(ClientboundBlockEntityDataPacket.create(it)) }
         }
+    }
+
+    private fun resolveSubPos(
+        level: net.minecraft.server.level.ServerLevel,
+        pos: BlockPos
+    ): BlockPos {
+        if (level.getBlockEntity(pos) != null) return pos
+        val container = dev.ryanhcode.sable.api.sublevel.SubLevelContainer.getContainer(level)
+        container?.allSubLevels?.forEach { raw ->
+            val sub = raw as? dev.ryanhcode.sable.sublevel.ServerSubLevel ?: return@forEach
+            val candidate = pos.offset(sub.getPlot().getCenterBlock())
+            if (level.getBlockEntity(candidate) != null) return candidate
+        }
+        return pos
     }
 
     private fun findCurve(

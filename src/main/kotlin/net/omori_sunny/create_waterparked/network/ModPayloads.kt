@@ -47,6 +47,11 @@ object ModPayloads {
             SlideTrajectoryPayload::handleOnClient
         )
         registrar.playToClient(
+            SlideSegmentPayload.TYPE,
+            SlideSegmentPayload.STREAM_CODEC,
+            SlideSegmentPayload::handleOnClient
+        )
+        registrar.playToClient(
             SlideEndPayload.TYPE,
             SlideEndPayload.STREAM_CODEC,
             SlideEndPayload::handleOnClient

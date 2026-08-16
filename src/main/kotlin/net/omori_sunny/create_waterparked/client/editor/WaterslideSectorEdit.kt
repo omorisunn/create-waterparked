@@ -13,6 +13,10 @@ import dev.silvergold.simulatedcoasters.client.track.EndpointHandleTextures
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleTangentTextures
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
+import dev.silvergold.simulatedcoasters.track.graph.CoasterPathGraphManager
+import dev.ryanhcode.sable.Sable
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
+import dev.ryanhcode.sable.sublevel.ClientSubLevel
 import net.createmod.catnip.outliner.Outliner
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
@@ -65,8 +69,11 @@ import kotlin.math.max
 @OnlyIn(Dist.CLIENT)
 object WaterslideSectorEdit {
 
-    private const val PICK_RADIUS = 0.3
-    private const val CONTROL_RING_SCALE = 1.35f
+    private const val PICK_RADIUS = 0.2
+    // control rings sit OUTSIDE the tube rim so they never cover the opening
+    // radius handle that sits on the rim itself
+    private const val CONTROL_RING_OFFSET = 0.75f
+    private const val BOUNDARY_RING_GAP = 0.55f
     private const val WALL_SEGMENTS = 24
     private const val BOUNDARY_ALIGN_RANGE = 3f
     private const val KEY_PENDING = "waterslide_sector_pending"
@@ -106,14 +113,28 @@ object WaterslideSectorEdit {
             if (mainBlockId != null && !player.isShiftKeyDown &&
                 event.level.getBlockState(event.pos).block is WaterslideAnchorBlock
             ) {
-                event.isCanceled = true
-                event.cancellationResult = InteractionResult.SUCCESS
+                val block = BuiltInRegistries.BLOCK.get(mainBlockId)
+                if (net.minecraft.world.level.block.Block.isShapeFullBlock(
+                        block.defaultBlockState().getShape(event.level, event.pos, net.minecraft.world.phys.shapes.CollisionContext.empty())
+                    )
+                ) {
+                    event.isCanceled = true
+                    event.cancellationResult = InteractionResult.SUCCESS
+                }
             }
             return
         }
 
-        // Two-step block add.
+        // Two-step block add: only full-cube blocks become sectors; every
+        // other block falls through to vanilla placement.
         if (mainBlockId != null) {
+            val block = BuiltInRegistries.BLOCK.get(mainBlockId)
+            if (!net.minecraft.world.level.block.Block.isShapeFullBlock(
+                    block.defaultBlockState().getShape(event.level, event.pos, net.minecraft.world.phys.shapes.CollisionContext.empty())
+                )
+            ) {
+                return
+            }
             handleAdd(event, player, mainBlockId)
             return
         }
@@ -122,6 +143,8 @@ object WaterslideSectorEdit {
             handleAdd(event, player, null)
             return
         }
+// axe + sneak deletes via the use-key handler's single ray (no wrench needed)
+        if (player.mainHandItem.item is AxeItem) return
 
 // add open / delete sector
         if (!AllItems.WRENCH.isIn(player.offhandItem)) return
@@ -311,39 +334,75 @@ object WaterslideSectorEdit {
         hitVec: Vec3,
         requireAnchor: BlockPos? = null
     ): WallHit? {
+        // Block hits inside a Sable sub-level come back in plot-global
+        // coordinates already (Sable raycasts inward), while our own ray
+        // marching feeds world-space points that must be projected inward.
+        // Build one candidate per plausible coordinate space and only compare
+        // curves that actually live in that space.
+        val player = Minecraft.getInstance().player
+        val containing = Sable.HELPER.getContaining(level, hitVec) as? ClientSubLevel
+        val tracking = player?.let { Sable.HELPER.getTrackingSubLevel(it) as? ClientSubLevel }
+        val candidates = ArrayList<Pair<ClientSubLevel?, Vec3>>()
+        if (containing != null) candidates += containing to hitVec
+        if (tracking != null && tracking !== containing) {
+            candidates += tracking to SableClientEdit.worldToPlot(tracking, hitVec)
+        }
+        // a world-space point is ALWAYS also a candidate in main space, even
+        // when sub-level projections exist (otherwise normal main-world
+        // sectors stop being hittable as soon as any Sable plot exists)
+        if (containing == null) candidates += null to hitVec
+        val container = SubLevelContainer.getContainer(level)
+        container?.allSubLevels?.forEach { raw ->
+            val sub = raw as? ClientSubLevel ?: return@forEach
+            if (sub === tracking || sub === containing) return@forEach
+            val plot = SableClientEdit.worldToPlot(sub, hitVec)
+            // only keep the projection if it really lands inside this
+            // sub-level's own plot
+            if (Sable.HELPER.getContaining(level, plot) === sub) candidates += sub to plot
+        }
+        if (candidates.isEmpty()) candidates += null to hitVec
+
+        val resolvedRequire = requireAnchor?.let { SableClientEdit.resolve(level, it)?.globalPos ?: it }
         var best: WallHit? = null
         var bestScore = Double.MAX_VALUE
         val seen = mutableSetOf<Pair<Long, Long>>()
-        for (be in WaterslideCurveRenderer.clientAnchors()) {
-            if (be.level !== level || be.isRemoved) continue
-            for ((peer, raw) in be.anchorPeerCurvesView) {
-                val primary = if (raw.isPrimary) raw else raw.secondary()
-                if (!WaterslideTrackMaterials.isWaterslide(primary)) continue
-                val key = curveKey(primary.bePositions.getFirst(), primary.bePositions.getSecond())
-                if (!seen.add(key)) continue
-                if (requireAnchor != null &&
-                    primary.bePositions.getFirst() != requireAnchor &&
-                    primary.bePositions.getSecond() != requireAnchor
-                ) continue
+        for ((candidateSub, localHit) in candidates) {
+            for (be in WaterslideCurveRenderer.clientAnchors()) {
+                if (be.isRemoved) continue
+                for ((peer, raw) in be.anchorPeerCurvesView) {
+                    val primary = if (raw.isPrimary) raw else raw.secondary()
+                    if (!WaterslideTrackMaterials.isWaterslide(primary)) continue
+                    val key = curveKey(primary.bePositions.getFirst(), primary.bePositions.getSecond())
+                    // keep each curve in its own coordinate space so a plot
+                    // hit can never accidentally match a different sub-level
+                    val curveSub = Sable.HELPER.getContaining(level, primary.bePositions.getFirst())
+                        as? ClientSubLevel
+                    if (curveSub !== candidateSub) continue
+                    if (!seen.add(key)) continue
+                    if (resolvedRequire != null &&
+                        primary.bePositions.getFirst() != resolvedRequire &&
+                        primary.bePositions.getSecond() != resolvedRequire
+                    ) continue
 
-                val r0 = radiusAt(level, primary.bePositions.getFirst())
-                val r1 = radiusAt(level, primary.bePositions.getSecond())
-                val samples = max(64, primary.getSegmentCount() * 4)
-                for (i in 0..samples) {
-                    val t = i.toFloat() / samples
-                    val center = primary.getPosition(t.toDouble())
-                    val rel = hitVec.subtract(center)
-                    val dist = rel.length()
-                    val radius = Mth.lerp(t, r0, r1)
+                    val r0 = radiusAt(level, primary.bePositions.getFirst())
+                    val r1 = radiusAt(level, primary.bePositions.getSecond())
+                    val samples = max(64, primary.getSegmentCount() * 4)
+                    for (i in 0..samples) {
+                        val t = i.toFloat() / samples
+                        val center = primary.getPosition(t.toDouble())
+                        val rel = localHit.subtract(center)
+                        val dist = rel.length()
+                        val radius = Mth.lerp(t, r0, r1)
 // wall surface
-                    if (dist > radius + 0.4) continue
-                    val score = abs(dist - radius)
-                    if (score >= bestScore) continue
-                    bestScore = score
-                    val lateral = CoasterBezierRailFrames.lateralAt(primary, t, level)
-                    val up = CoasterBezierRailFrames.faceUpAt(primary, t, level)
-                    val degrees = Math.toDegrees(Math.atan2(rel.dot(up), rel.dot(lateral)))
-                    best = WallHit(primary, t, WaterslideSectorLayout.normalize(degrees.toFloat()))
+                        if (dist > radius + 0.4) continue
+                        val score = abs(dist - radius)
+                        if (score >= bestScore) continue
+                        bestScore = score
+                        val lateral = CoasterBezierRailFrames.lateralAt(primary, t, level)
+                        val up = CoasterBezierRailFrames.faceUpAt(primary, t, level)
+                        val degrees = Math.toDegrees(Math.atan2(rel.dot(up), rel.dot(lateral)))
+                        best = WallHit(primary, t, WaterslideSectorLayout.normalize(degrees.toFloat()))
+                    }
                 }
             }
         }
@@ -351,15 +410,16 @@ object WaterslideSectorEdit {
     }
 
     private fun radiusAt(level: Level, pos: BlockPos): Float =
-        (level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity)?.radius ?: ModConfig.defaultSlideRadius()
+        SableClientEdit.resolve(level, pos)?.be?.radius ?: ModConfig.defaultSlideRadius()
 
     private fun findCurveByAnchors(level: Level, a: BlockPos, b: BlockPos): BezierConnection? {
         return findCurveOneWay(level, a, b) ?: findCurveOneWay(level, b, a)
     }
 
     private fun findCurveOneWay(level: Level, a: BlockPos, b: BlockPos): BezierConnection? {
-        val be = level.getBlockEntity(a) as? WaterslideAnchorBlockEntity ?: return null
-        val raw = be.getAnchorPeerCurvesView()[b] ?: return null
+        val ctx = SableClientEdit.resolve(level, a) ?: return null
+        val peer = SableClientEdit.resolve(level, b)?.globalPos ?: b
+        val raw = ctx.be.getAnchorPeerCurvesView()[peer] ?: return null
         val primary = if (raw.isPrimary) raw else raw.secondary()
         return if (WaterslideTrackMaterials.isWaterslide(primary)) primary else null
     }
@@ -558,7 +618,14 @@ object WaterslideSectorEdit {
     }
 
     private fun trySendAxeDelete(mc: Minecraft): Boolean {
-        val hit = sectorUnderCursor(mc) ?: return false
+        val hit = sectorUnderCursor(mc)
+        if (hit == null) {
+            CreateWaterparked.LOGGER.debug(
+                "axe delete: no sector under cursor eye={} view={}",
+                mc.player?.eyePosition, mc.player?.getViewVector(1f)
+            )
+            return false
+        }
         val level = mc.level ?: return false
         val key = curveKey(hit.curve.bePositions.getFirst(), hit.curve.bePositions.getSecond())
         val config = configForCurve(level, key)
@@ -654,14 +721,23 @@ object WaterslideSectorEdit {
     fun mixinClientTick(mc: Minecraft) {
         val player = mc.player ?: return clear()
         val level = mc.level ?: return clear()
-        if (!BezierHandleEditMode.isActive()) return clear()
+        if (!SubLevelEditFocus.isActive(level)) return clear()
         if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
-        val anchor = BezierHandleEditMode.getActiveAnchor() ?: return clear()
-        val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return clear()
+        val anchor = SubLevelEditFocus.activeAnchor(level) ?: return clear()
+        val ctx = SableClientEdit.resolve(level, anchor) ?: return clear()
+        // all sector math happens in plot-global coordinates
+        val anchorGlobal = ctx.globalPos
+        val be = ctx.be
         if (WaterslideRadiusEdit.isDragging() || BezierHandleDragManager.isDraggingHandle()) return
+        // the opening radius handle wins any shared pick space
+        if (WaterslideRadiusEdit.isHoveringOrDragging(mc)) return
         tickPointAnimation(level, be)
 
         val useDown = mc.options.keyUse.isDown
+        val eye = CoasterAnchorClientSpace.toPlotLocal(level, anchorGlobal, player.eyePosition)
+        val view = CoasterAnchorClientSpace.toPlotLocalDirection(
+            level, anchorGlobal, player.getViewVector(1f)
+        ).normalize()
         if (dragging || draggingBoundary) {
             val key = dragCurveKey ?: return clear()
             val curve = findCurve(level, key) ?: return clear()
@@ -674,9 +750,9 @@ object WaterslideSectorEdit {
                     true
                 )
             }
-            var targetAngle = angleFromDrag(mc, level, anchor, curve) ?: return clear()
+            var targetAngle = angleFromDrag(level, anchorGlobal, curve, eye, view) ?: return clear()
             if (!AllKeys.ALT_MODIFIER.isPressed()) {
-                targetAngle = alignedBoundaryAngle(level, anchor, curve, key, targetAngle) ?: targetAngle
+                targetAngle = alignedBoundaryAngle(level, anchorGlobal, curve, key, targetAngle) ?: targetAngle
             }
             val config = previewConfigs[key] ?: return clear()
             if (draggingBoundary) {
@@ -707,8 +783,7 @@ object WaterslideSectorEdit {
                 dragBoundarySectorId = -1
             }
         } else if (useDown) {
-            val pick = pickControlPoint(mc, level, be)
-            if (pick == null) return
+            val pick = pickControlPoint(mc, level, anchorGlobal, be) ?: return
             val config = configForCurve(level, pick.key) ?: return
             previewConfigs[pick.key] = config.copyOf()
             dragCurveKey = pick.key
@@ -762,33 +837,44 @@ object WaterslideSectorEdit {
         cameraRotation: Matrix4f
     ) {
         val level = mc.level ?: return
-        if (!BezierHandleEditMode.isActive()) return
-        val anchor = BezierHandleEditMode.getActiveAnchor() ?: return
-        val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return
+        if (!SubLevelEditFocus.isActive(level)) return
+        val anchor = SubLevelEditFocus.activeAnchor(level) ?: return
+        val ctx = SableClientEdit.resolve(level, anchor) ?: return
+        val anchorGlobal = ctx.globalPos
+        val be = ctx.be
 
         poseStack.pushPose()
 
-        val live = anchorOpeningFrame(level, anchor)
-        val center = live?.center ?: CoasterAnchorpointBlockEntity.worldCenter(level, anchor)
-        val frame = live?.let { CircleFrame(it.lateral, it.up) } ?: anchorFrame(level, be)
-        val radius = be.radius * CONTROL_RING_SCALE
+        val live = anchorOpeningFrame(level, anchorGlobal)
+        val centerPlot = live?.center ?: CoasterAnchorpointBlockEntity.worldCenter(level, anchorGlobal)
+        val framePlot = live?.let { CircleFrame(it.lateral, it.up) } ?: anchorFrame(level, be)
+        val ringRadius = be.radius + CONTROL_RING_OFFSET
         val strips = bufferSource.getBuffer(WaterslideEditorRenderTypes.COLORED_QUADS)
-        drawCircle(poseStack, strips, cameraPos, cameraRotation, center, frame, radius, 0.15f, 0.85f, 1.0f, 1.0f)
+        val center = CoasterAnchorClientSpace.toRenderWorld(level, anchorGlobal, centerPlot)
+        val frame = CircleFrame(
+            CoasterAnchorClientSpace.toRenderDirection(level, anchorGlobal, framePlot.lateral),
+            CoasterAnchorClientSpace.toRenderDirection(level, anchorGlobal, framePlot.up)
+        )
+        drawCircle(poseStack, strips, cameraPos, cameraRotation, center, frame, ringRadius, 0.15f, 0.85f, 1.0f, 1.0f)
 
         for (cp in controlPoints(level, be)) {
             val draggingThis =
                 (dragging && dragCurveKey == cp.key && dragSectorId == cp.sectorId && !cp.boundary) ||
                     (draggingBoundary && dragCurveKey == cp.key && dragBoundarySectorId == cp.sectorId && cp.boundary)
-            val hover = if (!draggingThis) pickControlPoint(mc, level, be) else null
+            val hover = if (!draggingThis) pickControlPoint(mc, level, anchorGlobal, be) else null
             val hoveringThis = hover != null && hover.key == cp.key && hover.sectorId == cp.sectorId
+            val world = CoasterAnchorClientSpace.toRenderWorld(level, anchorGlobal, cp.world)
             if (cp.boundary) {
                 val tex = boundaryHandleTexture(mc, draggingThis, hoveringThis)
+                val normal = cp.normal?.let {
+                    CoasterAnchorClientSpace.toRenderDirection(level, anchorGlobal, it)
+                } ?: Vec3(0.0, 1.0, 0.0)
 // radial normal alignment
                 WaterslideEditorRenderTypes.billboardOrientedTexturedQuad(
                     poseStack,
                     bufferSource.getBuffer(WaterslideEditorRenderTypes.boundaryHandleBillboard(tex)),
-                    cameraPos, cameraRotation, cp.world,
-                    cp.normal ?: Vec3(0.0, 1.0, 0.0),
+                    cameraPos, cameraRotation, world,
+                    normal,
                     0.11f, 0.11f
                 )
             } else {
@@ -800,7 +886,7 @@ object WaterslideSectorEdit {
                 drawHandleTexturedQuad(
                     poseStack,
                     bufferSource.getBuffer(BezierHandleOverlayRenderTypes.tangentHandleBillboard(tex)),
-                    cameraPos, cameraRotation, cp.world
+                    cameraPos, cameraRotation, world
                 )
             }
         }
@@ -812,10 +898,10 @@ object WaterslideSectorEdit {
     fun isHoveringOrDraggingControlPoint(mc: Minecraft): Boolean {
         if (dragging || draggingBoundary) return true
         val level = mc.level ?: return false
-        if (!BezierHandleEditMode.isActive()) return false
-        val anchor = BezierHandleEditMode.getActiveAnchor() ?: return false
-        val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return false
-        return pickControlPoint(mc, level, be) != null
+        if (!SubLevelEditFocus.isActive(level)) return false
+        val anchor = SubLevelEditFocus.activeAnchor(level) ?: return false
+        val ctx = SableClientEdit.resolve(level, anchor) ?: return false
+        return pickControlPoint(mc, level, ctx.globalPos, ctx.be) != null
     }
 
     // Dragging state for the Flywheel visual.
@@ -842,7 +928,7 @@ object WaterslideSectorEdit {
             val center = live?.center ?: CoasterAnchorpointBlockEntity.worldCenter(level, anchor)
             val lateral = live?.lateral ?: CoasterBezierRailFrames.lateralAt(primary, t, level)
             val up = live?.up ?: CoasterBezierRailFrames.faceUpAt(primary, t, level)
-            val ringRadius = be.radius * CONTROL_RING_SCALE
+            val ringRadius = be.radius + CONTROL_RING_OFFSET
             val key = curveKey(anchor, peer)
             for (p in placed) {
                 val pointKey = key to p.sector.id
@@ -860,14 +946,17 @@ object WaterslideSectorEdit {
             }
 // junction control points
             if (placed.size < 2) continue
+            // fixed radial gap from the center ring so boundary handles stay
+            // pickable even at the smallest slide radius
+            val boundaryRadius = ringRadius + BOUNDARY_RING_GAP
             val seenBoundaries = HashSet<Float>()
             for (p in placed) {
                 val angle = WaterslideSectorLayout.normalize(p.endAngle)
                 if (!seenBoundaries.add(angle)) continue
                 val rad = Math.toRadians(angle.toDouble())
                 val pos = center
-                    .add(lateral.scale(Math.cos(rad) * ringRadius))
-                    .add(up.scale(Math.sin(rad) * ringRadius))
+                    .add(lateral.scale(Math.cos(rad) * boundaryRadius))
+                    .add(up.scale(Math.sin(rad) * boundaryRadius))
                 val normal = lateral.scale(Math.cos(rad)).add(up.scale(Math.sin(rad))).normalize()
                 out += ControlPoint(key, p.sector.id, pos, boundary = true, normal = normal)
             }
@@ -875,19 +964,29 @@ object WaterslideSectorEdit {
         return out
     }
 
-    private fun pickControlPoint(mc: Minecraft, level: Level, be: WaterslideAnchorBlockEntity): ControlPoint? {
+    private fun pickControlPoint(
+        mc: Minecraft,
+        level: Level,
+        anchorGlobal: BlockPos,
+        be: WaterslideAnchorBlockEntity
+    ): ControlPoint? {
         val player = mc.player ?: return null
-        val eye = player.eyePosition
-        val view = player.getViewVector(1f)
+        val eye = CoasterAnchorClientSpace.toPlotLocal(level, anchorGlobal, player.eyePosition)
+        val view = CoasterAnchorClientSpace.toPlotLocalDirection(
+            level, anchorGlobal, player.getViewVector(1f)
+        ).normalize()
         return controlPoints(level, be)
             .filter { raySphere(eye, view, it.world, PICK_RADIUS) }
             .minByOrNull { it.world.distanceToSqr(eye) }
     }
 
-    private fun angleFromDrag(mc: Minecraft, level: Level, anchor: BlockPos, curve: BezierConnection): Float? {
-        val player = mc.player ?: return null
-        val eye = player.eyePosition
-        val view = player.getViewVector(1f)
+    private fun angleFromDrag(
+        level: Level,
+        anchor: BlockPos,
+        curve: BezierConnection,
+        eye: Vec3,
+        view: Vec3
+    ): Float? {
         val center = CoasterAnchorpointBlockEntity.worldCenter(level, anchor)
         val t = if (curve.bePositions.getFirst() == anchor) 0f else 1f
         val lateral = CoasterBezierRailFrames.lateralAt(curve, t, level)
@@ -990,7 +1089,7 @@ object WaterslideSectorEdit {
         return CircleFrame(up.cross(ref).normalize(), up)
     }
 
-// live preview frame
+// live preview frame (plot-global space; converted to render space by the callers)
     @JvmStatic
     fun liveAnchorFrame(level: Level, anchor: BlockPos): LiveAnchorFrame? {
         val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return null
@@ -1002,13 +1101,9 @@ object WaterslideSectorEdit {
             val first = preview.bePositions.getFirst() == anchor
             val t = if (first) 0f else 1f
             val centerLocal = if (first) preview.starts.getFirst() else preview.starts.getSecond()
-            val center = CoasterAnchorClientSpace.pathCenterlineRenderWorld(level, anchor, centerLocal)
-            var lateral = CoasterAnchorClientSpace.toRenderDirection(
-                level, anchor, CoasterBezierRailFrames.lateralAt(preview, t, level)
-            )
-            var up = CoasterAnchorClientSpace.toRenderDirection(
-                level, anchor, CoasterBezierRailFrames.faceUpAt(preview, t, level)
-            )
+            val center = CoasterPathGraphManager.pathCenterlineWorld(centerLocal)
+            var lateral = CoasterBezierRailFrames.lateralAt(preview, t, level)
+            var up = CoasterBezierRailFrames.faceUpAt(preview, t, level)
             if (lateral.lengthSqr() < 1.0E-12 || up.lengthSqr() < 1.0E-12) continue
             lateral = lateral.normalize()
             up = up.normalize()

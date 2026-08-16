@@ -1,13 +1,21 @@
 package net.omori_sunny.create_waterparked.client.water
 
 import com.simibubi.create.content.trains.track.BezierConnection
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
+import dev.ryanhcode.sable.companion.math.JOMLConversion
+import dev.ryanhcode.sable.sublevel.ClientSubLevel
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
+import net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial
+import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
+import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation
 import net.omori_sunny.create_waterparked.network.WaterslideWaterSyncPayload
+import net.minecraft.client.Minecraft
 import net.minecraft.core.BlockPos
 import net.minecraft.resources.ResourceKey
 import net.minecraft.util.Mth
@@ -16,6 +24,7 @@ import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
+import org.joml.Vector3d
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -39,11 +48,14 @@ object WaterFlowSimulation {
         val a: Vec3,
         val b: Vec3,
         val r0: Float,
-        val r1: Float
+        val r1: Float,
+        val edge: Pair<Long, Long>,
+        val lat: Vec3,
+        val up: Vec3
     )
 
-    private val fields = HashMap<Pair<Long, Long>, CurveWater>()
-    private val segCache = HashMap<ResourceKey<Level>, Pair<String, List<TubeSeg>>>()
+    private val fields = HashMap<String, HashMap<Pair<Long, Long>, CurveWater>>()
+    private val segCache = HashMap<Pair<ResourceKey<Level>, String>, Pair<String, List<TubeSeg>>>()
     private var version = 0
     private var debugPolylines: List<List<Vec3>> = emptyList()
     // cooldown cache: thrown-stream trajectories recompute only on a sync refresh
@@ -73,10 +85,13 @@ object WaterFlowSimulation {
 
     @JvmStatic
     fun applySync(payload: WaterslideWaterSyncPayload) {
+        val level = Minecraft.getInstance().level ?: return
+        val space = if (payload.subLevelId == null) SlideSpace.Main else SlideSpace.SubLevel(payload.subLevelId)
+        val key = space.cacheKey(level)
         net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
-            "Water sync received entries={}", payload.entries.size
+            "Water sync received space={} entries={}", key, payload.entries.size
         )
-        fields.clear()
+        val target = HashMap<Pair<Long, Long>, CurveWater>()
         for (e in payload.entries) {
             if (e.segments.isEmpty()) continue
             var sum = 0.0
@@ -88,19 +103,38 @@ object WaterFlowSimulation {
             val exit = if (e.exitPos != null) {
                 ServerWaterSimulation.ExitInfo(e.exitPos, e.exitVel ?: Vec3.ZERO)
             } else null
-            fields[edgeKey(e.edgeA, e.edgeB)] = CurveWater(true, flowSign, segments, exit)
+            target[edgeKey(e.edgeA, e.edgeB)] = CurveWater(true, flowSign, segments, exit)
         }
+        fields[key] = target
         bumpVersion()
         WaterslideTubeVisual.refreshAll()
     }
 
     @JvmStatic
-    fun resultFor(level: Level, bc: BezierConnection): CurveWater? =
-        fields[edgeKeyOf(bc)]
+    fun resultFor(level: Level, space: SlideSpace, bc: BezierConnection): CurveWater? =
+        fields[space.cacheKey(level)]?.get(edgeKeyOf(bc))
 
     @JvmStatic
-    fun fieldFor(level: Level, a: BlockPos, b: BlockPos): CurveWater? =
-        fields[edgeKey(a.asLong(), b.asLong())]
+    fun resultFor(level: Level, bc: BezierConnection): CurveWater? {
+        val edge = edgeKeyOf(bc)
+        for (map in fields.values) {
+            map[edge]?.let { return it }
+        }
+        return null
+    }
+
+    @JvmStatic
+    fun fieldFor(level: Level, space: SlideSpace, a: BlockPos, b: BlockPos): CurveWater? =
+        fields[space.cacheKey(level)]?.get(edgeKey(a.asLong(), b.asLong()))
+
+    @JvmStatic
+    fun fieldFor(level: Level, a: BlockPos, b: BlockPos): CurveWater? {
+        val edge = edgeKey(a.asLong(), b.asLong())
+        for (map in fields.values) {
+            map[edge]?.let { return it }
+        }
+        return null
+    }
 
     // Client-side contact check against the RENDERED water data: true when the
     // position is inside the tube cylinder of a curve that has a synced water
@@ -116,7 +150,8 @@ object WaterFlowSimulation {
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val key = edgeKeyOf(bc)
                 if (!seen.add(key)) continue
-                if (fields[key]?.exists != true) continue
+                val space = SlideSpace.ofLevelAndSub(level, be.blockPos)
+                if (fields[space.cacheKey(level)]?.get(key)?.exists != true) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
@@ -136,7 +171,7 @@ object WaterFlowSimulation {
     // all cached thrown-stream polylines (world coordinates), exposed for the
     // player splash spawner so flying through the thrown water also counts
     @JvmStatic
-    fun hasAnyWaterFields(): Boolean = fields.values.any { it.exists }
+    fun hasAnyWaterFields(): Boolean = fields.values.any { map -> map.values.any { it.exists } }
 
     @JvmStatic
     fun allStreamPolylines(): List<List<Vec3>> {
@@ -199,7 +234,7 @@ object WaterFlowSimulation {
     // closest point of the box (clamped sphere test), which is exact for a
     // box-vs-tube check and catches tubes passing through the box centre.
     @JvmStatic
-    fun intersectsWateredTubeBox(level: Level, box: AABB): Boolean {
+    fun intersectsWateredTubeBox(level: Level, box: AABB, space: SlideSpace? = null): Boolean {
         val seen = HashSet<Pair<Long, Long>>()
         for (be in WaterslideCurveRenderer.clientAnchors()) {
             if (be.level !== level || be.isRemoved) continue
@@ -208,7 +243,8 @@ object WaterFlowSimulation {
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val key = edgeKeyOf(bc)
                 if (!seen.add(key)) continue
-                if (fields[key]?.exists != true) continue
+                val keySpace = space ?: SlideSpace.ofLevelAndSub(level, be.blockPos)
+                if (fields[keySpace.cacheKey(level)]?.get(key)?.exists != true) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
@@ -269,7 +305,8 @@ object WaterFlowSimulation {
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val key = edgeKeyOf(bc)
                 if (!seen.add(key)) continue
-                if (fields[key]?.exists != true) continue
+                val space = SlideSpace.ofLevelAndSub(level, be.blockPos)
+                if (fields[space.cacheKey(level)]?.get(key)?.exists != true) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
@@ -322,10 +359,12 @@ object WaterFlowSimulation {
             }
         }
 
-        fun hit(p: Vec3): Boolean {
+        fun hit(p: Vec3): TubeSeg? {
             val cx = Mth.floor(p.x / GRID_SIZE)
             val cy = Mth.floor(p.y / GRID_SIZE)
             val cz = Mth.floor(p.z / GRID_SIZE)
+            var best: TubeSeg? = null
+            var bestD = Double.MAX_VALUE
             for (x in cx - 1..cx + 1) {
                 for (y in cy - 1..cy + 1) {
                     for (z in cz - 1..cz + 1) {
@@ -337,12 +376,16 @@ object WaterFlowSimulation {
                             val t = ((p.subtract(s.a)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
                             val r = (s.r0 + (s.r1 - s.r0) * t).toDouble()
                             val closest = s.a.add(ab.scale(t))
-                            if (p.distanceToSqr(closest) < r * r) return true
+                            val d = p.distanceToSqr(closest)
+                            if (d < r * r && d < bestD) {
+                                bestD = d
+                                best = s
+                            }
                         }
                     }
                 }
             }
-            return false
+            return best
         }
 
         companion object {
@@ -368,19 +411,21 @@ object WaterFlowSimulation {
         rSurf: Float,
         coverStart: Float,
         coverEnd: Float,
-        ownFrames: List<Vec3>
+        ownFrames: List<Vec3>,
+        gravity: Vec3 = Vec3(0.0, -32.0, 0.0),
+        sourceSpace: SlideSpace = SlideSpace.Main
     ): Pair<List<List<Vec3>>, List<List<Vec3>>>? {
         // cooldown: only recompute after a sync refresh (version bump)
         if (streamCacheVersion != version) {
             streamCacheVersion = version
             streamCache.clear()
         }
-        val cacheKey = "${center.x},${center.y},${center.z}|${exitVel.x},${exitVel.y},${exitVel.z}|$rIn|$rSurf|$coverStart|$coverEnd"
+        val cacheKey = "${sourceSpace.cacheKey(level)}|${center.x},${center.y},${center.z}|${exitVel.x},${exitVel.y},${exitVel.z}|$rIn|$rSurf|$coverStart|$coverEnd|${gravity.x},${gravity.y},${gravity.z}"
         streamCache[cacheKey]?.let { return it }
 
         val own = ownCenterHash(ownFrames)
         val grid = SegGrid()
-        for (s in allTubeSegments(level)) {
+        for (s in allTubeSegments(level, sourceSpace)) {
             if (own.contains(hashVec(s.a)) || own.contains(hashVec(s.b))) continue
             grid.add(s)
         }
@@ -398,8 +443,8 @@ object WaterFlowSimulation {
             val s = sin(theta)
             val outerPos = center.add(lat.scale(c * rIn)).add(up.scale(s * rIn))
             val innerPos = center.add(lat.scale(c * rSurf)).add(up.scale(s * rSurf))
-            outer += traceStream(level, outerPos, exitVel, grid)
-            inner += traceStream(level, innerPos, exitVel, grid)
+            outer += traceStream(level, outerPos, exitVel, grid, gravity)
+            inner += traceStream(level, innerPos, exitVel, grid, gravity)
         }
         // keep every ray's full length (no shortest-ray truncation); the end
         // fades out instead of cutting mid-air
@@ -415,9 +460,10 @@ object WaterFlowSimulation {
         level: Level,
         pos: Vec3,
         vel: Vec3,
-        grid: SegGrid
+        grid: SegGrid,
+        gravity: Vec3
     ): List<Vec3> {
-        // strict physics: dt in seconds, v in blocks/s, gravity 32 blocks/s^2
+        // strict physics: dt in seconds, v in blocks/s, gravity in blocks/s^2
         val dt = 0.05
         val poly = ArrayList<Vec3>()
         var p = pos
@@ -425,26 +471,75 @@ object WaterFlowSimulation {
         poly += p
         var grace = 0
         for (step in 0 until 240) {
-            p = p.add(v.scale(dt))
-            v = v.add(0.0, -32.0 * dt, 0.0)
-            val bp = BlockPos.containing(p)
-            if (level.getBlockState(bp).isSolid || p.y < level.minBuildHeight) break
-            if (grid.hit(p)) {
-                // keep flying a short stretch past the pipe before cutting, so
-                // the water doesn't vanish right at the flywheel/BE surface
-                grace++
-                if (grace >= 8) break
-            } else {
-                grace = 0
+            val v0 = v
+            val delta = v0.scale(dt)
+            // Fast streams move 1-2 blocks per fixed step, which used to
+            // tunnel straight through other slides between two point samples.
+            // Sweep the same ballistic step in <=0.25-block sub-samples and
+            // stop at the first collision so the sheet is actually cut by
+            // every tube it touches. The p/v updates below are byte-for-byte
+            // the original integration; only the collision probe is denser.
+            val subSteps = max(1, Math.ceil(delta.length() / 0.25).toInt())
+            var hitFrac: Double? = null
+            for (j in 1..subSteps) {
+                val f = j.toDouble() / subSteps
+                val q = p.add(delta.scale(f))
+                val bp = BlockPos.containing(q)
+                if (level.getBlockState(bp).isSolid || q.y < level.minBuildHeight) {
+                    hitFrac = f
+                    break
+                }
+                val hitSeg = grid.hit(q)
+                if (hitSeg != null && streamHitsWall(level, hitSeg, q)) {
+                    // keep flying a short stretch past the pipe before cutting,
+                    // so the water doesn't vanish right at the flywheel/BE surface
+                    grace++
+                    if (grace >= 8) {
+                        hitFrac = f
+                        break
+                    }
+                } else {
+                    grace = 0
+                }
             }
+            v = v0.add(gravity.scale(dt))
+            val stepEnd = p.add(delta)
+            p = if (hitFrac != null) p.add(delta.scale(hitFrac)) else stepEnd
             poly += p
+            if (hitFrac != null) break
         }
         return poly
     }
 
-    private fun allTubeSegments(level: Level): List<TubeSeg> {
-        val sig = structureSignature(level)
-        segCache[level.dimension()]?.let { if (it.first == sig) return it.second }
+    // A thrown-water ray only cuts when the contact lands on a BLOCK sector
+    // wall. Entering through an OPEN sector (the blank opening of the slide)
+    // must keep flying instead of cutting the sheet.
+    private fun streamHitsWall(level: Level, seg: TubeSeg, p: Vec3): Boolean {
+        val a = BlockPos.of(seg.edge.first)
+        val b = BlockPos.of(seg.edge.second)
+        val config = SlideCurveGeometry.sectorConfig(level, a, b)
+            ?: WaterslideSectorConfig.defaultConfig()
+        val ab = seg.b.subtract(seg.a)
+        val lenSq = ab.lengthSqr()
+        if (lenSq < 1.0E-12) return false
+        val t = ((p.subtract(seg.a)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
+        val closest = seg.a.add(ab.scale(t))
+        val radial = p.subtract(closest)
+        if (radial.lengthSqr() < 1.0E-12) return false
+        val lat = seg.lat.normalize()
+        val up = seg.up.normalize()
+        val angle = Math.toDegrees(
+            kotlin.math.atan2(radial.dot(up), radial.dot(lat))
+        ).toFloat()
+        val placed = WaterslideSectorLayout.place(config)
+        val sector = WaterslideSectorLayout.sectorAt(placed, angle)
+        return sector != null && sector.sector.material != SectorMaterial.OPEN
+    }
+
+    private fun allTubeSegments(level: Level, sourceSpace: SlideSpace): List<TubeSeg> {
+        val sig = structureSignature(level, sourceSpace)
+        val cacheKey = level.dimension() to sourceSpace.cacheKey(level)
+        segCache[cacheKey]?.let { if (it.first == sig) return it.second }
         val out = ArrayList<TubeSeg>()
         for (be in WaterslideCurveRenderer.clientAnchors()) {
             if (be.level !== level || be.isRemoved) continue
@@ -458,22 +553,91 @@ object WaterFlowSimulation {
                 // reuse the exact same sampling as the flywheel renderer
                 // (interpolated radius + open-end extensions) so the collision
                 // surface equals the visible tube, not a fat collision box
+                val segmentSpace = SlideSpace.ofLevelAndSub(level, be.blockPos)
                 val frames = WaterslideTubeMesh.sampleSegments(level, bc, r0, r1, Vec3.ZERO)
+                val radiusScale = radiusScaleBetween(level, segmentSpace, sourceSpace)
                 for (f in frames) {
-                    out += TubeSeg(f.prevSpine, f.currSpine, f.prevRadius, f.currRadius)
+                    val fa = mapToSpace(level, f.prevSpine, segmentSpace, sourceSpace)
+                    val fb = mapToSpace(level, f.currSpine, segmentSpace, sourceSpace)
+                    val latMid = f.prevLateral.lerp(f.currLateral, 0.5).normalize()
+                    val tanMid = f.prevTangent.lerp(f.currTangent, 0.5).normalize()
+                    val upMid = tanMid.cross(latMid).normalize()
+                    val lat = mapNormalToSpace(level, latMid, segmentSpace, sourceSpace)
+                    val up = mapNormalToSpace(level, upMid, segmentSpace, sourceSpace)
+                    out += TubeSeg(
+                        fa, fb,
+                        (f.prevRadius * radiusScale), (f.currRadius * radiusScale),
+                        edgeKeyOf(bc), lat, up
+                    )
                 }
             }
         }
         if (segCache.size > 8) segCache.clear()
-        segCache[level.dimension()] = sig to out
+        segCache[cacheKey] = sig to out
         return out
     }
 
-    private fun structureSignature(level: Level): String {
+    // Collision grid segments are expressed in the SOURCE slide's coordinate
+    // space. Tubes belonging to another Sable space are mapped through their
+    // poses, so a sub-level mouth can cut a main-world thrown sheet and vice
+    // versa.
+    private fun mapToSpace(level: Level, local: Vec3, from: SlideSpace, to: SlideSpace): Vec3 {
+        if (from == to) return local
+        val world = spaceToWorld(level, from, local)
+        return worldToSpace(level, to, world)
+    }
+
+    private fun mapNormalToSpace(level: Level, local: Vec3, from: SlideSpace, to: SlideSpace): Vec3 {
+        if (from == to) return local
+        val world = spaceToWorldNormal(level, from, local)
+        return worldNormalToSpace(level, to, world)
+    }
+
+    private fun spaceToWorldNormal(level: Level, space: SlideSpace, local: Vec3): Vec3 {
+        val sub = clientSubLevel(level, space) ?: return local
+        val out = sub.logicalPose().transformNormal(JOMLConversion.toJOML(local), Vector3d())
+        return JOMLConversion.toMojang(out)
+    }
+
+    private fun worldNormalToSpace(level: Level, space: SlideSpace, world: Vec3): Vec3 {
+        val sub = clientSubLevel(level, space) ?: return world
+        val out = sub.logicalPose().transformNormalInverse(JOMLConversion.toJOML(world), Vector3d())
+        return JOMLConversion.toMojang(out)
+    }
+
+    private fun spaceToWorld(level: Level, space: SlideSpace, local: Vec3): Vec3 {
+        val sub = clientSubLevel(level, space) ?: return local
+        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
+        return JOMLConversion.toMojang(out)
+    }
+
+    private fun worldToSpace(level: Level, space: SlideSpace, world: Vec3): Vec3 {
+        val sub = clientSubLevel(level, space) ?: return world
+        val out = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
+        return JOMLConversion.toMojang(out)
+    }
+
+    private fun clientSubLevel(level: Level, space: SlideSpace): ClientSubLevel? {
+        val id = (space as? SlideSpace.SubLevel)?.id ?: return null
+        val container = SubLevelContainer.getContainer(level) ?: return null
+        return container.getSubLevel(id) as? ClientSubLevel
+    }
+
+    private fun radiusScaleBetween(level: Level, from: SlideSpace, to: SlideSpace): Float {
+        fun scaleOf(space: SlideSpace): Float {
+            val sub = clientSubLevel(level, space) ?: return 1f
+            val s = sub.logicalPose().scale()
+            return maxOf(s.x(), s.y(), s.z()).coerceAtLeast(0.1).toFloat()
+        }
+        return scaleOf(from) / scaleOf(to)
+    }
+
+    private fun structureSignature(level: Level, sourceSpace: SlideSpace): String {
         val anchors = WaterslideCurveRenderer.clientAnchors()
             .filter { it.level === level && !it.isRemoved }
             .sortedBy { it.blockPos.asLong() }
         val sb = StringBuilder()
+        sb.append(sourceSpace.cacheKey(level)).append('|')
         for (be in anchors) {
             sb.append(be.blockPos.asLong()).append('|')
             for (e in be.anchorPeerCurvesView.entries.sortedBy { it.key.asLong() }) {

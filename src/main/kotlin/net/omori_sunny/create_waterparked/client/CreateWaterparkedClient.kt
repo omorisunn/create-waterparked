@@ -101,9 +101,9 @@ object CreateWaterparkedClient {
             // flush pipe batches
             RenderLevelStageEvent.Stage.AFTER_LEVEL ->
                 {
-                    WaterslideCurveRenderer.endBatches(buffers)
                     val mc = Minecraft.getInstance()
                     val camera = mc.gameRenderer.mainCamera
+                    WaterslideCurveRenderer.endBatches(buffers)
                     WaterslideDyeOutline.render(
                         mc, event.poseStack, buffers,
                         camera.position, event.modelViewMatrix
@@ -127,6 +127,7 @@ object CreateWaterparkedClient {
             )
         }
         WaterslideTubeVisual.tickVisibility()
+        net.omori_sunny.create_waterparked.client.editor.SubLevelEditFocus.tick(mc)
         WaterSlideSoundManager.tick()
         WaterslideSplashSpawner.tickStanding(mc)
         val debug = ModClientConfig.waterSimDebug()

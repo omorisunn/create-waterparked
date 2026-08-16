@@ -2,6 +2,7 @@ package net.omori_sunny.create_waterparked.client.editor
 
 import com.mojang.blaze3d.vertex.PoseStack
 import com.simibubi.create.content.trains.track.BezierConnection
+import dev.silvergold.simulatedcoasters.client.track.CoasterAnchorClientSpace
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
 import dev.silvergold.simulatedcoasters.track.CoasterOpenEndExtension
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
@@ -43,10 +44,21 @@ object WaterslideDyeOutline {
         }
 
         val bc = hit.curve
-        val r0 = (level.getBlockEntity(bc.bePositions.getFirst()) as? net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity)
-            ?.radius ?: net.omori_sunny.create_waterparked.config.ModConfig.defaultSlideRadius()
-        val r1 = (level.getBlockEntity(bc.bePositions.getSecond()) as? net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity)
-            ?.radius ?: net.omori_sunny.create_waterparked.config.ModConfig.defaultSlideRadius()
+        val spaceAnchor = bc.bePositions.getFirst()
+        val ctx = SableClientEdit.resolve(level, spaceAnchor)
+        val sub = ctx?.sub
+        val worldScale = sub?.let {
+            val sc = it.logicalPose().scale()
+            maxOf(sc.x(), sc.y(), sc.z()).toFloat().coerceAtLeast(0.1f)
+        } ?: 1f
+        fun worldPos(v: Vec3): Vec3 =
+            if (sub == null) v else CoasterAnchorClientSpace.toRenderWorld(level, spaceAnchor, v)
+        fun worldDir(v: Vec3): Vec3 =
+            if (sub == null) v else CoasterAnchorClientSpace.toRenderDirection(level, spaceAnchor, v)
+        val r0 = (SableClientEdit.resolve(level, bc.bePositions.getFirst())?.be?.radius
+            ?: net.omori_sunny.create_waterparked.config.ModConfig.defaultSlideRadius())
+        val r1 = (SableClientEdit.resolve(level, bc.bePositions.getSecond())?.be?.radius
+            ?: net.omori_sunny.create_waterparked.config.ModConfig.defaultSlideRadius())
         val rgb = dye?.dyeColor?.getTextureDiffuseColor() ?: 0xFF3030
         val r = ((rgb shr 16) and 255) / 255f
         val g = ((rgb shr 8) and 255) / 255f
@@ -57,14 +69,13 @@ object WaterslideDyeOutline {
         val ts = FloatArray(count + 1) { i ->
             if (i == 0) 0f else if (i == count) 1f else bc.getSegmentT(i)
         }
-        val centers = Array(count + 1) { bc.getPosition(ts[it].toDouble()) }
-        val tangents = Array(count + 1) { CoasterBezierRailFrames.unitTangentAt(bc, ts[it]) }
+        val centers = Array(count + 1) { worldPos(bc.getPosition(ts[it].toDouble())) }
         val lats = arrayOfNulls<Vec3>(count + 1)
         val ups = arrayOfNulls<Vec3>(count + 1)
         var prevLat: Vec3? = null
         for (i in 0..count) {
-            var lat = CoasterBezierRailFrames.lateralAt(bc, ts[i], level)
-            var up = CoasterBezierRailFrames.faceUpAt(bc, ts[i], level)
+            var lat = worldDir(CoasterBezierRailFrames.lateralAt(bc, ts[i], level))
+            var up = worldDir(CoasterBezierRailFrames.faceUpAt(bc, ts[i], level))
             if (lat.lengthSqr() < 1.0E-12 || up.lengthSqr() < 1.0E-12) return
             lat = lat.normalize()
             up = up.normalize()
@@ -76,7 +87,7 @@ object WaterslideDyeOutline {
             ups[i] = up
             prevLat = lat
         }
-        val radii = FloatArray(count + 1) { Mth.lerp(ts[it], r0, r1) }
+        val radii = FloatArray(count + 1) { Mth.lerp(ts[it], r0, r1) * worldScale }
 
 // include the open-end extensions
         val ext0 = openEndExtension(level, bc, atFirst = true)
@@ -88,7 +99,9 @@ object WaterslideDyeOutline {
         val ra = FloatArray(pointCount)
         var idx = 0
         if (ext0 > 0.01f) {
-            c[idx] = centers[0].subtract(tangents[0].scale(ext0.toDouble()))
+            c[idx] = worldPos(bc.getPosition(0.0).subtract(
+                CoasterBezierRailFrames.unitTangentAt(bc, 0f).scale(ext0.toDouble())
+            ))
             la[idx] = lats[0]!!
             u[idx] = ups[0]!!
             ra[idx] = radii[0]
@@ -102,7 +115,9 @@ object WaterslideDyeOutline {
             idx++
         }
         if (ext1 > 0.01f) {
-            c[idx] = centers[count].add(tangents[count].scale(ext1.toDouble()))
+            c[idx] = worldPos(bc.getPosition(1.0).add(
+                CoasterBezierRailFrames.unitTangentAt(bc, 1f).scale(ext1.toDouble())
+            ))
             la[idx] = lats[count]!!
             u[idx] = ups[count]!!
             ra[idx] = radii[count]

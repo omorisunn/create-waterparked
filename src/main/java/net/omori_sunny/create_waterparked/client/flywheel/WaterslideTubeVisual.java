@@ -10,6 +10,9 @@ import dev.engine_room.flywheel.api.visual.ShaderLightVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.lib.visual.AbstractVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
+import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.companion.math.JOMLConversion;
+import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager;
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode;
 import dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames;
@@ -30,6 +33,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation;
 import net.omori_sunny.create_waterparked.CreateWaterparked;
+import net.omori_sunny.create_waterparked.client.editor.SubLevelEditFocus;
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRadiusEdit;
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit;
 import net.omori_sunny.create_waterparked.config.ModClientConfig;
@@ -38,24 +42,30 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlo
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig;
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials;
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry;
+import net.omori_sunny.create_waterparked.game.physics.SlideSpace;
 import net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Vector3d;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 // one visual per anchor
 public class WaterslideTubeVisual extends AbstractVisual
     implements BlockEntityVisual<WaterslideAnchorBlockEntity>, ShaderLightVisual, SimpleDynamicVisual {
 
-    private static final Set<WaterslideTubeVisual> ACTIVE =
-        Collections.newSetFromMap(new IdentityHashMap<>());
+    // Sable dispatches sub-level visual creation/deletion to Flywheel worker
+    // threads, so this registry is touched off the render thread while
+    // tickVisibility/refreshAnchor iterate it from the client tick -> must be
+    // concurrent (an IdentityHashMap-backed set threw ConcurrentModificationException).
+    // No equals/hashCode override on this class, so CHM keys keep identity semantics.
+    private static final Set<WaterslideTubeVisual> ACTIVE = ConcurrentHashMap.newKeySet();
     private static final float WALL_THICKNESS = 0.1f;
     // fixed cross-section fractions so every segment shares the SAME water model;
     // using a per-segment radius made adjacent segments' bed radius jump -> cracks
@@ -69,11 +79,34 @@ public class WaterslideTubeVisual extends AbstractVisual
 
     // same light sampling as Coasters Simulated's flywheel/BER renderers, with
     // a +3 brightness boost for the translucent water surfaces
+    private int tubeLight(Level level, Vec3 pos) {
+        return LevelRenderer.getLightColor(level, BlockPos.containing(toWorldPos(pos)));
+    }
+
+    private Vec3 toWorldPos(Vec3 plotGlobal) {
+        if (subLevel == null) return plotGlobal;
+        Vector3d out = subLevel.logicalPose().transformPosition(
+            JOMLConversion.toJOML(plotGlobal), new Vector3d()
+        );
+        return JOMLConversion.toMojang(out);
+    }
+
     private int waterLight(Level level, Vec3 pos) {
-        BlockPos bp = BlockPos.containing(pos);
+        Vec3 world = toWorldPos(pos);
+        BlockPos bp = BlockPos.containing(world);
         int block = level.getBrightness(LightLayer.BLOCK, bp) + 3;
         int sky = level.getBrightness(LightLayer.SKY, bp) + 3;
         return LightTexture.pack(Mth.clamp(block, 0, 15), Mth.clamp(sky, 0, 15));
+    }
+
+    // World gravity expressed in the curve's local coordinate space, so thrown
+    // water follows the rotated shape of a Sable sub-level.
+    private Vec3 localGravity() {
+        if (subLevel == null) return new Vec3(0.0, -32.0, 0.0);
+        Vector3d out = subLevel.logicalPose().transformNormalInverse(
+            JOMLConversion.toJOML(new Vec3(0.0, -32.0, 0.0)), new Vector3d()
+        );
+        return JOMLConversion.toMojang(out);
     }
 
 
@@ -83,8 +116,12 @@ public class WaterslideTubeVisual extends AbstractVisual
     private static float lastPolygonScale = -1f;
 
     private final WaterslideAnchorBlockEntity be;
-    private final List<TubeCurve> curves = new ArrayList<>();
+    private final SubLevel subLevel;
+    // CopyOnWrite: collect() can rebuild this from a Flywheel worker thread
+    // while the client tick snapshots it (same race as ACTIVE above).
+    private final List<TubeCurve> curves = new CopyOnWriteArrayList<>();
     private String lastDataSig = "";
+    private String lastStreamPoseSig = "";
     private float lastWaterTime = -1f;
     @Nullable
     private SectionCollector lightSections;
@@ -92,6 +129,7 @@ public class WaterslideTubeVisual extends AbstractVisual
     public WaterslideTubeVisual(VisualizationContext ctx, WaterslideAnchorBlockEntity be, float partialTick) {
         super(ctx, be.getLevel(), partialTick);
         this.be = be;
+        this.subLevel = Sable.HELPER.getContaining(be);
         collect();
         ACTIVE.add(this);
     }
@@ -102,6 +140,18 @@ public class WaterslideTubeVisual extends AbstractVisual
         if (scale != lastPolygonScale) {
             lastPolygonScale = scale;
             WaterslideTubeMesh.INSTANCE.clearModels();
+        }
+        if (subLevel != null) {
+            String poseSig = subLevel.logicalPose().position().x + "," + subLevel.logicalPose().position().y +
+                "," + subLevel.logicalPose().position().z + "|" + subLevel.logicalPose().orientation().x +
+                "," + subLevel.logicalPose().orientation().y + "," + subLevel.logicalPose().orientation().z +
+                "," + subLevel.logicalPose().orientation().w;
+            if (!poseSig.equals(lastStreamPoseSig)) {
+                lastStreamPoseSig = poseSig;
+                for (TubeCurve c : curves) {
+                    c.refreshStream();
+                }
+            }
         }
         String sig = dataSignature();
         if (sig.equals(lastDataSig)) return;
@@ -243,8 +293,8 @@ public class WaterslideTubeVisual extends AbstractVisual
             lastEditAnchor = null;
             return;
         }
-        boolean edit = BezierHandleEditMode.isActive();
-        BlockPos editAnchor = edit ? BezierHandleEditMode.getActiveAnchor() : null;
+        boolean edit = BezierHandleEditMode.isActive() || SubLevelEditFocus.isActive(mc.level);
+        BlockPos editAnchor = edit ? SubLevelEditFocus.INSTANCE.activeAnchor(mc.level) : null;
         boolean editingNow = edit && editAnchor != null;
         boolean editExited = wasEditing && !editingNow;
         boolean showSkeleton = ModClientConfig.INSTANCE.showSkeletonWhenTranslucent();
@@ -331,6 +381,26 @@ public class WaterslideTubeVisual extends AbstractVisual
         }
     }
 
+    // World-space outer/inner polylines for every thrown sheet (main-world AND
+    // sub-level). These are rendered in the AFTER_LEVEL main-world pass so they
+    // depth-test correctly against every sub-level instead of being drawn
+    // inside the Flywheel batch, which Sable's sub-level chunks then overwrite.
+    public static List<Pair<List<List<Vec3>>, List<List<Vec3>>>> worldStreamSheets() {
+        Minecraft mc = Minecraft.getInstance();
+        Level level = mc == null ? null : mc.level;
+        if (level == null) return List.of();
+        List<Pair<List<List<Vec3>>, List<List<Vec3>>>> out = new ArrayList<>();
+        for (WaterslideTubeVisual visual : new ArrayList<>(ACTIVE)) {
+            if (visual.be.getLevel() != level || visual.be.isRemoved()) continue;
+            for (TubeCurve c : visual.curves) {
+                if (c.streamWorldOuter == null || c.streamWorldInner == null) continue;
+                if (c.streamWorldOuter.isEmpty() || c.streamWorldInner.isEmpty()) continue;
+                out.add(new Pair<>(c.streamWorldOuter, c.streamWorldInner));
+            }
+        }
+        return out;
+    }
+
     private void refreshAnchorCurves(BlockPos anchor) {
         for (TubeCurve c : new ArrayList<>(curves)) {
             if (!curves.contains(c)) continue;
@@ -369,6 +439,16 @@ public class WaterslideTubeVisual extends AbstractVisual
         private boolean showSkeleton = false;
         private float mirror = 1f;
         private WaterFlowSimulation.CurveWater water;
+        // World-space polylines of the thrown sheet, frozen at the moment the
+        // stream was predicted. Sub-level streams are rendered through the
+        // sub-level's embedded transform, so every rebuild maps these world
+        // points back into the CURRENT plot-global instance space; that keeps
+        // the falling water fixed in the main world while the sub-level moves.
+        @Nullable
+        private List<List<Vec3>> streamWorldOuter;
+        @Nullable
+        private List<List<Vec3>> streamWorldInner;
+        private boolean streamNeedsRebuild = false;
 
         TubeCurve(BlockPos peer, BezierConnection bc) {
             this.curve = bc;
@@ -384,10 +464,31 @@ public class WaterslideTubeVisual extends AbstractVisual
             );
             this.origin = Vec3.atLowerCornerOf(renderOrigin());
             this.frames = WaterslideTubeMesh.INSTANCE.sampleSegments(
-                this.level, bc, r0, r1, this.origin
+                this.level, bc, r0, r1, this.origin, subLevel != null
             );
             this.waterFrames = buildWaterFrames(r0, r1);
             rebuildWaterArcs();
+            if (subLevel != null) {
+                Vec3 raw0 = curve.getPosition(0);
+                Vec3 raw1 = curve.getPosition(1);
+                Vec3 loc0 = raw0.subtract(origin);
+                Vec3 loc1 = raw1.subtract(origin);
+                double err = Math.max(
+                    Math.abs((float) loc0.x - loc0.x),
+                    Math.max(Math.abs((float) loc0.y - loc0.y),
+                        Math.max(Math.abs((float) loc0.z - loc0.z),
+                            Math.max(Math.abs((float) loc1.x - loc1.x),
+                                Math.max(Math.abs((float) loc1.y - loc1.y),
+                                    Math.abs((float) loc1.z - loc1.z))))));
+                CreateWaterparked.INSTANCE.getLOGGER().debug(
+                    "[TubeDiag] sub={} plotCenter={} renderOrigin={} pose={} curve={}->{} raw0={} raw1={} loc0={} loc1={} floatErr={} frames={}",
+                    subLevel.getUniqueId(), subLevel.getPlot().getCenterBlock(), renderOrigin(),
+                    subLevel.logicalPose(),
+                    curve.bePositions.getFirst(), curve.bePositions.getSecond(),
+                    raw0, raw1, loc0, loc1, err,
+                    frames.isEmpty() ? "empty" : frames.get(0).getPrevSpine() + "->" + frames.get(0).getCurrSpine()
+                );
+            }
             logJunctionDiagnostics();
             this.config = be.sectorConfigFor(peer);
             this.models = WaterslideTubeMesh.INSTANCE.modelsFor(
@@ -406,7 +507,9 @@ public class WaterslideTubeVisual extends AbstractVisual
             float r1 = WaterslideRadiusEdit.INSTANCE.radiusAt(
                 level, b, ModConfig.INSTANCE.defaultSlideRadius()
             );
-            this.frames = WaterslideTubeMesh.INSTANCE.sampleSegments(level, curve, r0, r1, origin);
+            this.frames = WaterslideTubeMesh.INSTANCE.sampleSegments(
+                level, curve, r0, r1, origin, subLevel != null
+            );
             this.waterFrames = buildWaterFrames(r0, r1);
             rebuildWaterArcs();
             logJunctionDiagnostics();
@@ -439,8 +542,18 @@ public class WaterslideTubeVisual extends AbstractVisual
             if (segCount < 1) segCount = 1;
 
             Vec3 prevCenter = sf.get(0).getCenter();
-            Vec3 prevTan = sf.get(0).getTangent();
-            Vec3 prevLat = sf.get(0).getLateral();
+            // Start the continuity chain from the REAL rail frame at the first
+            // sample, not from SlideCurveGeometry's stable frame. A sub-level's
+            // rotated pose can make the stable lateral point the opposite way,
+            // flipping the first water band 180° and putting the bed arc on
+            // the ceiling for the whole curve.
+            float firstT = sf.get(0).getT();
+            Vec3 prevTan = CoasterBezierRailFrames.unitTangentAt(curve, firstT);
+            if (prevTan.lengthSqr() < 1.0E-9) prevTan = sf.get(0).getTangent();
+            prevTan = prevTan.normalize();
+            Vec3 prevLat = CoasterBezierRailFrames.lateralAt(curve, firstT, level);
+            if (prevLat.lengthSqr() < 1.0E-9) prevLat = sf.get(0).getLateral();
+            prevLat = prevLat.normalize();
             float prevRadius = sf.get(0).getRadius();
             int scan = 1;
             for (int s = 1; s <= segCount; s++) {
@@ -483,7 +596,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 double chordLen = chord.length();
                 double tangentDot = chordLen < 1.0E-9 ? 1.0 : chord.normalize().dot(tan);
                 if (tangentDot < 0.25) {
-                    CreateWaterparked.INSTANCE.getLOGGER().info(
+                    CreateWaterparked.INSTANCE.getLOGGER().debug(
                         "[WaterFrame] edge=({},{}) idx={} t={} dot={} chord={} tan={} lat={} r0={} r1={}",
                         curve.bePositions.getFirst().asLong(), curve.bePositions.getSecond().asLong(),
                         out.size() - 1, t, tangentDot, chord, tan, lat, prevRadius, radius
@@ -535,7 +648,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 Vec3 nbAway = nbAtFirst ? nbFrame.getTangent() : nbFrame.getTangent().scale(-1.0);
                 Vec3 nbLatAway = nbAtFirst ? nbFrame.getLateral() : nbFrame.getLateral().scale(-1.0);
                 float ownR = atFirst ? f.getPrevRadius() : f.getCurrRadius();
-                CreateWaterparked.INSTANCE.getLOGGER().info(
+                CreateWaterparked.INSTANCE.getLOGGER().debug(
                     "[WaterJunction] edge=({},{}) side={} anchor={} tanDot={} latDot={} rDiff={} ownTan={} nbTan={} ownLat={} nbLat={}",
                     curve.bePositions.getFirst().asLong(), curve.bePositions.getSecond().asLong(),
                     atFirst ? "first" : "last", anchor,
@@ -575,14 +688,45 @@ public class WaterslideTubeVisual extends AbstractVisual
             return (xa == ya && xb == yb) || (xa == yb && xb == ya);
         }
 
+        private List<List<Vec3>> toWorldPolylines(List<List<Vec3>> src) {
+            List<List<Vec3>> out = new ArrayList<>(src.size());
+            for (List<Vec3> poly : src) {
+                List<Vec3> converted = new ArrayList<>(poly.size());
+                for (Vec3 p : poly) converted.add(WaterslideTubeVisual.this.toWorldPos(p));
+                out.add(converted);
+            }
+            return out;
+        }
+
+        // Map a WORLD-space stream point into this visual's embedded instance
+        // space: plot-global, minus the render origin. For sub-levels this is
+        // inverse-pose transformed with the CURRENT pose each rebuild, which is
+        // what keeps the stream world-fixed while the sub-level moves.
+        private Vec3 toStreamInstancePos(Vec3 world) {
+            if (subLevel == null) return world.subtract(origin);
+            Vector3d plotGlobal = subLevel.logicalPose().transformPositionInverse(
+                JOMLConversion.toJOML(world), new Vector3d()
+            );
+            return JOMLConversion.toMojang(plotGlobal).subtract(origin);
+        }
+
         @Nullable
         private List<StreamSegment> buildStreamSegments() {
             ServerWaterSimulation.ExitInfo exit = water.getExit();
             if (exit == null) return null;
+            if (waterFrames.isEmpty()) return null;
             boolean forward = water.getFlowSign() < 0f;
+            // Use the in-tube WATER frame at the curve endpoint, not the tube
+            // frame: `frames` includes the open-end extension past the mouth
+            // (thrown water only exists at legCount==1 anchors, which always
+            // have an extension), so frames.get(last/first) would start the
+            // sheet one extension length beyond the visible mouth. waterFrames
+            // end exactly at the curve endpoints and are the exact frames the
+            // in-tube band renders with, so the thrown ring lines up with the
+            // band's outlet ring.
             WaterslideTubeMesh.TubeSegmentFrame outlet = forward
-                ? frames.get(frames.size() - 1)
-                : frames.get(0);
+                ? waterFrames.get(waterFrames.size() - 1)
+                : waterFrames.get(0);
             Vec3 outletCenter = forward ? outlet.getCurrSpine() : outlet.getPrevSpine();
             Vec3 outletTan = forward
                 ? outlet.getCurrTangent()
@@ -613,24 +757,67 @@ public class WaterslideTubeVisual extends AbstractVisual
                 own.add(f.getPrevSpine().add(origin));
                 own.add(f.getCurrSpine().add(origin));
             }
-            // initial throw direction follows the outlet tangent (strict physics);
-            // magnitude taken from the simulated exit velocity
-            Vec3 throwVel = outletTan.scale(exit.getVel().length());
+            // Main-world slides keep the original behavior exactly: full exit
+            // speed along the outlet tangent. On sub-levels, take only the
+            // TANGENTIAL component of the simulated exit velocity - using the
+            // full magnitude there fired the sheet too high when gravity had
+            // already added a big normal (down/tilted) component before the
+            // mouth.
+            double throwSpeed;
+            if (subLevel != null) {
+                throwSpeed = Math.max(0.25, exit.getVel().dot(outletTan));
+            } else {
+                throwSpeed = exit.getVel().length();
+            }
+            Vec3 throwVel = outletTan.scale(throwSpeed);
+            if (subLevel != null) {
+                CreateWaterparked.INSTANCE.getLOGGER().debug(
+                    "[StreamThrow] sub={} edge=({},{}) forward={} flowSign={} mouth={} tan={} lat={} up={} r={} exitPos={} exitVel={} throwSpeed={}",
+                    subLevel.getUniqueId(),
+                    curve.bePositions.getFirst().asLong(), curve.bePositions.getSecond().asLong(),
+                    forward, water.getFlowSign(), outletCenter, outletTan, lat0, up0, radius,
+                    exit.getPos(), exit.getVel(), throwSpeed
+                );
+            }
+            SlideSpace streamSpace = subLevel == null
+                ? SlideSpace.Main.INSTANCE
+                : new SlideSpace.SubLevel(subLevel.getUniqueId());
             Pair<List<List<Vec3>>, List<List<Vec3>>> res =
                 WaterFlowSimulation.INSTANCE.predictStreams(
                     level, exit.getPos(), throwVel, outletCenter.add(origin), lat0, up0,
-                    rIn, rSurf, c0, c1, own
+                    rIn, rSurf, c0, c1, own, localGravity(), streamSpace
                 );
             if (res == null) return null;
             List<List<Vec3>> outer = res.getFirst();
             List<List<Vec3>> inner = res.getSecond();
             if (outer.isEmpty() || inner.isEmpty()) return null;
-            // use the longest ray as the centerline so the sheet extends to the
-            // farthest reach instead of cutting mid-air at the shortest ray
-            List<Vec3> o = outer.get(0);
-            for (List<Vec3> ray : outer) if (ray.size() > o.size()) o = ray;
-            List<Vec3> in = inner.get(0);
-            for (List<Vec3> ray : inner) if (ray.size() > in.size()) in = ray;
+            // Freeze the predicted polylines in WORLD space the first time
+            // this water field builds a stream. On every later pose-refresh
+            // rebuild we reuse these frozen points and only remap them into
+            // the current instance space, so a moving sub-level no longer
+            // drags the falling sheet around with it.
+            if (streamWorldOuter == null || streamWorldInner == null) {
+                streamWorldOuter = toWorldPolylines(outer);
+                streamWorldInner = toWorldPolylines(inner);
+            }
+            List<List<Vec3>> outerW = streamWorldOuter;
+            List<List<Vec3>> innerW = streamWorldInner;
+            if (outerW.isEmpty() || innerW.isEmpty()) return null;
+            // Pick ONE ray pair (longest outer ray and the matching inner ray).
+            // Choosing the longest outer and longest inner independently
+            // pairs two different angular positions, so o[0]-in[0] is no longer
+            // a pure radial vector and the reconstructed centerline starts at
+            // the rim instead of the tube center.
+            int bestRay = 0;
+            int bestLen = outerW.get(0).size();
+            for (int i = 1; i < outerW.size(); i++) {
+                if (outerW.get(i).size() > bestLen) {
+                    bestRay = i;
+                    bestLen = outerW.get(i).size();
+                }
+            }
+            List<Vec3> o = outerW.get(bestRay);
+            List<Vec3> in = innerW.get(bestRay);
             if (o.size() < 2 || in.size() < 2) return null;
 
             int samples = o.size();
@@ -643,12 +830,15 @@ public class WaterslideTubeVisual extends AbstractVisual
             }
             int desired = Math.max(streamMaxSegments, (int) Math.ceil(streamLen / 0.5));
             int stride = Math.max(1, (samples - 1) / desired);
-            Vec3 dir = o.get(0).subtract(in.get(0)).normalize();
+            // radial offset happens in WORLD space, then the resulting
+            // centerline is mapped into instance space per point
+            Vec3 dirWorld = o.get(0).subtract(in.get(0)).normalize();
             float tubeRadius = radius;
 
             List<Vec3> centers = new ArrayList<>();
             for (int k = 0; k < samples; k += stride) {
-                centers.add(o.get(k).subtract(dir.scale(rIn)).subtract(origin));
+                Vec3 worldCenter = o.get(k).subtract(dirWorld.scale(rIn));
+                centers.add(toStreamInstancePos(worldCenter));
             }
             if (centers.size() < 2) return null;
 
@@ -837,6 +1027,9 @@ public class WaterslideTubeVisual extends AbstractVisual
             if (water == null || !water.getExists() || water.getExit() == null) {
                 streamWater = null;
                 streamSegments = null;
+                streamWorldOuter = null;
+                streamWorldInner = null;
+                streamNeedsRebuild = false;
                 return;
             }
             // only throw from a true open end (legCount==1); a junction (legCount==2)
@@ -848,18 +1041,28 @@ public class WaterslideTubeVisual extends AbstractVisual
             if (!isOpenEnd(outletAnchor)) {
                 streamWater = null;
                 streamSegments = null;
+                streamWorldOuter = null;
+                streamWorldInner = null;
+                streamNeedsRebuild = false;
                 return;
             }
             if (streamWater != water) {
                 streamWater = water;
+                streamWorldOuter = null;
+                streamWorldInner = null;
+                streamNeedsRebuild = false;
+                streamSegments = buildStreamSegments();
+            } else if (streamNeedsRebuild) {
+                streamNeedsRebuild = false;
                 streamSegments = buildStreamSegments();
             }
             List<StreamSegment> segs = streamSegments;
             if (segs == null) return;
             // thrown-water cross-section must match the in-tube band at the
             // outlet so the bed and surface rings line up (no hardcoded fraction)
+            if (waterFrames.isEmpty()) return;
             WaterslideTubeMesh.TubeSegmentFrame outletF = streamForward
-                ? frames.get(frames.size() - 1) : frames.get(0);
+                ? waterFrames.get(waterFrames.size() - 1) : waterFrames.get(0);
             float outletRadius = Math.max(0.1f,
                 streamForward ? outletF.getCurrRadius() : outletF.getPrevRadius());
             float rInFrac = WATER_IN_FRAC;
@@ -926,6 +1129,15 @@ public class WaterslideTubeVisual extends AbstractVisual
             }
         }
 
+        void refreshStream() {
+            if (streamWater == null && streamSegments == null) return;
+            // Rebuild only the instance-space positions from the FROZEN
+            // world-space stream polylines so the thrown water stays fixed in
+            // the main world while the sub-level pose keeps moving.
+            streamNeedsRebuild = true;
+            rebuildInstances();
+        }
+
         void setTranslucent(boolean value) {
             if (this.translucent == value) return;
             this.translucent = value;
@@ -954,7 +1166,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             for (int i = 0; i < wall.length; i++) {
                 WaterslideTubeMesh.TubeSegmentFrame f = frames.get(i);
                 Vec3 mid = f.getPrevSpine().add(f.getCurrSpine()).scale(0.5).add(origin);
-                int light = LevelRenderer.getLightColor(level, BlockPos.containing(mid));
+                int light = tubeLight(level, mid);
                 wall[i]
                     .setSegment(
                         f.getPrevSpine(), f.getCurrSpine(),
@@ -987,7 +1199,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 WaterslideTubeInstance startCap = startCapInstancer.createInstance();
                 Vec3 startTip = first.getPrevSpine();
                 Vec3 startTan = first.getPrevTangent();
-                int startLight = LevelRenderer.getLightColor(level, BlockPos.containing(startTip.add(origin)));
+                int startLight = tubeLight(level, startTip.add(origin));
                 startCap
                     .setSegment(
                         startTip, startTip.add(startTan.scale(0.001)),
@@ -1014,7 +1226,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 WaterslideTubeInstance endCap = endCapInstancer.createInstance();
                 Vec3 endTip = last.getCurrSpine();
                 Vec3 endTan = last.getCurrTangent();
-                int endLight = LevelRenderer.getLightColor(level, BlockPos.containing(endTip.add(origin)));
+                int endLight = tubeLight(level, endTip.add(origin));
                 endCap
                     .setSegment(
                         endTip, endTip.add(endTan.scale(0.001)),

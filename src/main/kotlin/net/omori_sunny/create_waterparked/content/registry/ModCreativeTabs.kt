@@ -20,7 +20,6 @@ object ModCreativeTabs {
             .displayItems { _, output ->
                 output.accept(ModItems.WATERSLIDE_TRACK)
                 output.accept(ModItems.WATERSLIDE_ANCHOR)
-                output.accept(ModItems.WATERSLIDE_ENTRANCE)
             }
             .build()
     }

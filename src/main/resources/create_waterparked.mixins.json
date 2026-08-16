@@ -17,9 +17,11 @@
     "CoasterOpenEndExtensionMixin",
     "CoasterPathGraphManagerMixin",
     "CoasterPeerCurveHandleLengthsMixin",
-    "CoasterTrackPlacementMixin"
+    "CoasterTrackPlacementMixin",
+    "CreativeModeTabWaterparkedLayoutMixin"
   ],
   "client": [
+    "client.AbstractContainerScreenAccessor",
     "client.AnchorPeerCurvePickMixin",
     "client.AnchorPeerCurveOutlineSupportMixin",
     "client.BezierHandleDragManagerMixin",
@@ -29,6 +31,8 @@
     "client.CoasterCurveSelectionOutlineRendererMixin",
     "client.CoasterCurveDyeOutlineClientMixin",
     "client.CoasterTrackPlacementPreviewMixin",
+    "client.CreativeModeInventoryScreenWaterparkedBannerMixin",
+    "client.CreativeModeInventoryScreenWaterparkedTooltipMixin",
     "client.LevelRendererAccessor",
     "client.SableEntityOrientationMixin",
     "ponder.WaterslidePonderLevelAccessor",

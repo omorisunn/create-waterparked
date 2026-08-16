@@ -5,6 +5,7 @@ import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.content.registry.ModSounds
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
+import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import net.minecraft.client.Minecraft
 import net.minecraft.client.resources.sounds.AbstractSoundInstance
 import net.minecraft.client.resources.sounds.SoundInstance
@@ -44,7 +45,8 @@ object WaterSlideSoundManager {
             for ((peer, raw) in be.anchorPeerCurvesView) {
                 val bc = if (raw.isPrimary) raw else raw.secondary()
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
-                val water = WaterFlowSimulation.resultFor(level, bc) ?: continue
+                val space = SlideSpace.ofLevelAndSub(level, be.blockPos)
+                val water = WaterFlowSimulation.resultFor(level, space, bc) ?: continue
                 val segs = water.segments
                 if (segs.isEmpty()) continue
                 playableCurves++

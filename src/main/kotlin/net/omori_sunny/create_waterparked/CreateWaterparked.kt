@@ -5,16 +5,17 @@ import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.content.registry.ModBlocks
-import net.omori_sunny.create_waterparked.content.registry.ModCreativeTabs
 import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
 import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
 import net.omori_sunny.create_waterparked.content.registry.ModItems
 import net.omori_sunny.create_waterparked.content.registry.ModParticles
 import net.omori_sunny.create_waterparked.content.registry.ModSounds
+import net.omori_sunny.create_waterparked.content.registry.CoasterCreativeTabIntegration
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 import net.omori_sunny.create_waterparked.datagen.CreateWaterparkedDataGen
 import net.omori_sunny.create_waterparked.game.physics.PlayerSlideController
 import net.omori_sunny.create_waterparked.network.ModPayloads
+import net.neoforged.bus.api.EventPriority
 import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.common.EventBusSubscriber
 import net.neoforged.fml.common.Mod
@@ -41,13 +42,17 @@ object CreateWaterparked {
         ModDataComponents.REGISTRY.register(MOD_BUS)
         ModSounds.REGISTRY.register(MOD_BUS)
         ModParticles.REGISTRY.register(MOD_BUS)
-        ModCreativeTabs.REGISTRY.register(MOD_BUS)
+        MOD_BUS.addListener(CoasterCreativeTabIntegration::onBuildCreativeModeTabContents)
 
         MOD_BUS.addListener(ModPayloads::register)
         MOD_BUS.addListener(::onCommonSetup)
         MOD_BUS.addListener(CreateWaterparkedDataGen::gatherData)
 
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onServerTick)
+        NeoForge.EVENT_BUS.addListener(
+            EventPriority.HIGHEST,
+            net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorInteraction::onRightClickBlock
+        )
         MOD_BUS.addListener(WaterslideAnchorBlockEntity::registerCapabilities)
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onPlayerLoggedOut)
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onPlayerLoggedIn)

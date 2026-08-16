@@ -32,11 +32,11 @@ data class SlideSampleWire(
     val inTube: Boolean,
     val watered: Boolean
 ) {
-    fun toSample(): SlideSample =
+    fun toSample(offset: Vec3? = null): SlideSample =
         SlideSample(
             time.toDouble(),
-            Vec3(cx.toDouble(), cy.toDouble(), cz.toDouble()),
-            Vec3(tcx.toDouble(), tcy.toDouble(), tcz.toDouble()),
+            offsetOrZero(cx, cy, cz, offset),
+            offsetOrZero(tcx, tcy, tcz, offset),
             Vec3(tx.toDouble(), ty.toDouble(), tz.toDouble()),
             Vec3(ux.toDouble(), uy.toDouble(), uz.toDouble()),
             radius,
@@ -45,18 +45,29 @@ data class SlideSampleWire(
             watered
         )
 
+    private fun offsetOrZero(x: Float, y: Float, z: Float, offset: Vec3?): Vec3 =
+        if (offset == null) Vec3(x.toDouble(), y.toDouble(), z.toDouble())
+        else Vec3(x + offset.x, y + offset.y, z + offset.z)
+
     companion object {
-        fun from(s: SlideSample): SlideSampleWire = SlideSampleWire(
-            s.time.toFloat(),
-            s.center.x.toFloat(), s.center.y.toFloat(), s.center.z.toFloat(),
-            s.tubeCenter.x.toFloat(), s.tubeCenter.y.toFloat(), s.tubeCenter.z.toFloat(),
-            s.tangent.x.toFloat(), s.tangent.y.toFloat(), s.tangent.z.toFloat(),
-            s.up.x.toFloat(), s.up.y.toFloat(), s.up.z.toFloat(),
-            s.radius,
-            s.speed.toFloat(),
-            s.inTube,
-            s.watered
-        )
+        // positions are encoded RELATIVE to `offset` (the sub-level plot center)
+        // so they stay small enough for float32; tangents/up stay unit vectors
+        fun from(s: SlideSample, offset: Vec3? = null): SlideSampleWire =
+            SlideSampleWire(
+                s.time.toFloat(),
+                (s.center.x - (offset?.x ?: 0.0)).toFloat(),
+                (s.center.y - (offset?.y ?: 0.0)).toFloat(),
+                (s.center.z - (offset?.z ?: 0.0)).toFloat(),
+                (s.tubeCenter.x - (offset?.x ?: 0.0)).toFloat(),
+                (s.tubeCenter.y - (offset?.y ?: 0.0)).toFloat(),
+                (s.tubeCenter.z - (offset?.z ?: 0.0)).toFloat(),
+                s.tangent.x.toFloat(), s.tangent.y.toFloat(), s.tangent.z.toFloat(),
+                s.up.x.toFloat(), s.up.y.toFloat(), s.up.z.toFloat(),
+                s.radius,
+                s.speed.toFloat(),
+                s.inTube,
+                s.watered
+            )
     }
 }
 
@@ -127,6 +138,73 @@ class SlideTrajectoryPayload(
                         )
                     }
                     SlideTrajectoryPayload(sessionId, startTick, swimming, subLevelId, samples)
+                }
+            )
+    }
+}
+
+// Trajectory segment appended when the slide switches into another space.
+class SlideSegmentPayload(
+    val sessionId: Long,
+    val startTick: Long,
+    val subLevelId: UUID?,
+    val samples: List<SlideSampleWire>
+) : CustomPacketPayload {
+
+    override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
+
+    fun handleOnClient(ctx: IPayloadContext) {
+        ctx.enqueueWork { SlideClientSession.appendSegment(this) }
+    }
+
+    companion object {
+        val TYPE: CustomPacketPayload.Type<SlideSegmentPayload> = CustomPacketPayload.Type(
+            ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "slide_segment")
+        )
+
+        val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, SlideSegmentPayload> =
+            StreamCodec.of(
+                { buf, p ->
+                    buf.writeLong(p.sessionId)
+                    buf.writeLong(p.startTick)
+                    buf.writeBoolean(p.subLevelId != null)
+                    if (p.subLevelId != null) buf.writeUUID(p.subLevelId)
+                    buf.writeCollection(p.samples) { b, s ->
+                        b.writeFloat(s.time)
+                        b.writeFloat(s.cx)
+                        b.writeFloat(s.cy)
+                        b.writeFloat(s.cz)
+                        b.writeFloat(s.tcx)
+                        b.writeFloat(s.tcy)
+                        b.writeFloat(s.tcz)
+                        b.writeFloat(s.tx)
+                        b.writeFloat(s.ty)
+                        b.writeFloat(s.tz)
+                        b.writeFloat(s.ux)
+                        b.writeFloat(s.uy)
+                        b.writeFloat(s.uz)
+                        b.writeFloat(s.radius)
+                        b.writeFloat(s.speed)
+                        b.writeBoolean(s.inTube)
+                        b.writeBoolean(s.watered)
+                    }
+                },
+                { buf ->
+                    val sessionId = buf.readLong()
+                    val startTick = buf.readLong()
+                    val hasSub = buf.readBoolean()
+                    val subLevelId = if (hasSub) buf.readUUID() else null
+                    val samples = buf.readCollection({ ArrayList() }) { b ->
+                        SlideSampleWire(
+                            b.readFloat(), b.readFloat(), b.readFloat(), b.readFloat(),
+                            b.readFloat(), b.readFloat(), b.readFloat(),
+                            b.readFloat(), b.readFloat(), b.readFloat(),
+                            b.readFloat(), b.readFloat(), b.readFloat(),
+                            b.readFloat(), b.readFloat(),
+                            b.readBoolean(), b.readBoolean()
+                        )
+                    }
+                    SlideSegmentPayload(sessionId, startTick, subLevelId, samples)
                 }
             )
     }

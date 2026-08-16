@@ -94,7 +94,7 @@ object ModConfig {
             .defineInRange("slideWaterFriction", 0.01, 0.0, 1.0)
         WATER_SIM_PARTICLES = SERVER_BUILDER
             .comment("Particles sampled per water source anchor for the server water simulation.")
-            .defineInRange("waterSimParticleCount", 64, 8, 256)
+            .defineInRange("waterSimParticleCount", 20, 1, 256)
         WATER_SIM_MAX_BLOCKS = SERVER_BUILDER
             .comment("Maximum particle path length in the server water simulation.")
             .defineInRange("waterSimMaxBlocks", 512.0, 64.0, 2048.0)
@@ -152,7 +152,7 @@ object ModConfig {
 
     fun slideWaterFriction(): Double = SLIDE_WATER_FRICTION.get().coerceIn(0.0, 1.0)
 
-    fun waterSimParticleCount(): Int = WATER_SIM_PARTICLES.get().coerceIn(8, 256)
+    fun waterSimParticleCount(): Int = WATER_SIM_PARTICLES.get().coerceIn(1, 256)
 
     fun waterSimMaxBlocks(): Double = WATER_SIM_MAX_BLOCKS.get().coerceIn(64.0, 2048.0)
 
