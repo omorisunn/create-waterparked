@@ -47,6 +47,17 @@ base {
     archivesName = mod_id
 }
 
+// KotlinForForge pulls FancyModLoader's com.mojang:logging:1.1.1 into
+// testRuntimeClasspath, but Minecraft itself pins 1.2.7. Force 1.2.7 there
+// too so offline builds resolve from the local cache.
+configurations.matching { it.name == 'testRuntimeClasspath' }.all {
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == 'com.mojang' && details.requested.name == 'logging') {
+            details.useVersion '1.2.7'
+        }
+    }
+}
+
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 kotlin.jvmToolchain(21)
 
