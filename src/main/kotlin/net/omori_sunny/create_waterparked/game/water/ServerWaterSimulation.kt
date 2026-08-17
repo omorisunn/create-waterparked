@@ -223,6 +223,21 @@ object ServerWaterSimulation {
         lastSig.remove(key)
     }
 
+    // /waterparked refresh: force-recompute the water physics for EVERY loaded
+    // space (main world + all Sable sub-levels) and resend the fields to all
+    // players in this level.
+    fun refresh(level: ServerLevel) {
+        if (level.isClientSide) return
+        for (a in allAccesses(level)) {
+            val key = spaceKey(a)
+            dirty += key
+            lastSig.remove(key)
+            fields.remove(key)
+        }
+        CreateWaterparked.LOGGER.info("[Waterparked] refresh requested for {}", level.dimension().location())
+        tickAll(level)
+    }
+
     // resend the current field to players who just joined
     fun resendTo(level: ServerLevel) {
         val key = MainSlideSpaceAccess(level).space.cacheKey(level)

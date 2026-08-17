@@ -14,7 +14,8 @@ import java.util.UUID
 // server -> client water field sync for one slide space
 class WaterslideWaterSyncPayload(
     val entries: List<Entry>,
-    val subLevelId: UUID? = null
+    val subLevelId: UUID? = null,
+    val contraptionEntityId: Int? = null
 ) : CustomPacketPayload {
 
     data class Entry(
@@ -94,10 +95,19 @@ class WaterslideWaterSyncPayload(
             { buf -> if (buf.readBoolean()) buf.readUUID() else null }
         )
 
+        private val NULLABLE_INT_CODEC: StreamCodec<RegistryFriendlyByteBuf, Int?> = StreamCodec.of(
+            { buf, v ->
+                buf.writeBoolean(v != null)
+                if (v != null) buf.writeVarInt(v)
+            },
+            { buf -> if (buf.readBoolean()) buf.readVarInt() else null }
+        )
+
         val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, WaterslideWaterSyncPayload> =
             StreamCodec.composite(
                 ENTRY_CODEC.apply(ByteBufCodecs.list(256)), WaterslideWaterSyncPayload::entries,
                 NULLABLE_UUID_CODEC, WaterslideWaterSyncPayload::subLevelId,
+                NULLABLE_INT_CODEC, WaterslideWaterSyncPayload::contraptionEntityId,
                 ::WaterslideWaterSyncPayload
             )
     }

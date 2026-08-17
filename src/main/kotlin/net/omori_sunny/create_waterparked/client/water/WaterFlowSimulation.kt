@@ -86,7 +86,11 @@ object WaterFlowSimulation {
     @JvmStatic
     fun applySync(payload: WaterslideWaterSyncPayload) {
         val level = Minecraft.getInstance().level ?: return
-        val space = if (payload.subLevelId == null) SlideSpace.Main else SlideSpace.SubLevel(payload.subLevelId)
+        val space = when {
+            payload.contraptionEntityId != null -> SlideSpace.Contraption(payload.contraptionEntityId!!)
+            payload.subLevelId != null -> SlideSpace.SubLevel(payload.subLevelId)
+            else -> SlideSpace.Main
+        }
         val key = space.cacheKey(level)
         net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
             "Water sync received space={} entries={}", key, payload.entries.size

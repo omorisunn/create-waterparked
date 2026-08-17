@@ -1,5 +1,6 @@
 package net.omori_sunny.create_waterparked.client
 
+import com.simibubi.create.content.contraptions.AbstractContraptionEntity
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
 import dev.ryanhcode.sable.companion.math.JOMLConversion
 import net.omori_sunny.create_waterparked.CreateWaterparked
@@ -47,6 +48,7 @@ object SlideClientSession {
         val sessionId: Long,
         var trajectory: SlideTrajectory,
         var subLevelId: UUID?,
+        var contraptionEntityId: Int?,
         val swimmingPose: Boolean,
         var startTick: Long
     ) {
@@ -79,6 +81,11 @@ object SlideClientSession {
             val container = SubLevelContainer.getContainer(level) ?: return null
             return container.getSubLevel(subLevelId) as? dev.ryanhcode.sable.sublevel.ClientSubLevel
         }
+
+        fun contraption(level: Level): AbstractContraptionEntity? {
+            val id = contraptionEntityId ?: return null
+            return level.getEntity(id) as? AbstractContraptionEntity
+        }
     }
 
     private var active: Active? = null
@@ -99,6 +106,7 @@ object SlideClientSession {
     @JvmStatic
     fun currentSpace(): SlideSpace {
         val session = active ?: return SlideSpace.Main
+        session.contraptionEntityId?.let { return SlideSpace.Contraption(it) }
         return session.subLevelId?.let { SlideSpace.SubLevel(it) } ?: SlideSpace.Main
     }
 
@@ -321,6 +329,7 @@ object SlideClientSession {
             payload.sessionId,
             SlideTrajectory(payload.samples.map { it.toSample(origin) }, SlideEndReason.EXITED, true),
             payload.subLevelId,
+            payload.contraptionEntityId,
             payload.swimmingPose,
             payload.startTick
         )
@@ -373,6 +382,7 @@ object SlideClientSession {
             payload.samples.map { it.toSample(origin) }, SlideEndReason.EXITED, true
         )
         session.subLevelId = payload.subLevelId
+        session.contraptionEntityId = payload.contraptionEntityId
         session.startTick = payload.startTick
         session.timeOffsetTicks = 0.0
         session.targetOffsetTicks = 0.0
@@ -505,15 +515,32 @@ object SlideClientSession {
     }
 
     private fun toWorldPos(level: Level, session: Active, local: Vec3): Vec3 {
-        val sub = session.subLevel(level) ?: return local
-        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
-        return JOMLConversion.toMojang(out)
+        val sub = session.subLevel(level)
+        if (sub != null) {
+            val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
+            return JOMLConversion.toMojang(out)
+        }
+        val cp = session.contraption(level)
+        if (cp != null) {
+            return cp.toGlobalVector(local, 1.0f)
+        }
+        return local
     }
 
     private fun toWorldNormal(level: Level, session: Active, local: Vec3): Vec3 {
-        val sub = session.subLevel(level) ?: return local.normalize()
-        val out = sub.logicalPose().transformNormal(JOMLConversion.toJOML(local), Vector3d())
-        return JOMLConversion.toMojang(out).normalize()
+        val sub = session.subLevel(level)
+        if (sub != null) {
+            val out = sub.logicalPose().transformNormal(JOMLConversion.toJOML(local), Vector3d())
+            return JOMLConversion.toMojang(out).normalize()
+        }
+        val cp = session.contraption(level)
+        if (cp != null) {
+            val p = cp.toGlobalVector(local, 1.0f)
+            val q = cp.toGlobalVector(Vec3.ZERO, 1.0f)
+            val n = p.subtract(q).normalize()
+            return if (n.lengthSqr() < 1.0E-12) local.normalize() else n
+        }
+        return local.normalize()
     }
 
     private fun yawOf(tangent: Vec3): Float =

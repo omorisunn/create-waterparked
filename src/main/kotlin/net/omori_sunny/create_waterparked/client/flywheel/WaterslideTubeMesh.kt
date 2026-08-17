@@ -49,8 +49,11 @@ object WaterslideTubeMesh {
     private const val LENGTH_SUBDIVISIONS = 4
     private const val MAX_FRAME_BLOCKS = 0.5f
 
-    private val modelCache = HashMap<String, TubeModels>()
-    private val waterModelCache = HashMap<String, Model>()
+    // Concurrent: the world visual AND the contraption actor visual can both
+    // build models on Flywheel worker threads. Kotlin's ConcurrentMap.getOrPut
+    // is atomic, so first-build races cannot lose models.
+    private val modelCache = java.util.concurrent.ConcurrentHashMap<String, TubeModels>()
+    private val waterModelCache = java.util.concurrent.ConcurrentHashMap<String, Model>()
 
 // per-fragment UV reconstruction
     private val TUBE_SHADERS: MaterialShaders = SimpleMaterialShaders(
@@ -137,10 +140,14 @@ object WaterslideTubeMesh {
 
 // model cache
     @JvmStatic
-    fun modelsFor(level: Level, config: WaterslideSectorConfig): TubeModels {
+    fun modelsFor(config: WaterslideSectorConfig): TubeModels {
         val key = signature(config)
-        return modelCache.getOrPut(key) { build(level, config) }
+        return modelCache.getOrPut(key) { build(config) }
     }
+
+    // kept for existing world-visual call sites; level is not needed by build()
+    @JvmStatic
+    fun modelsFor(level: Level, config: WaterslideSectorConfig): TubeModels = modelsFor(config)
 
     @JvmStatic
     fun clearModels() {
@@ -285,6 +292,57 @@ object WaterslideTubeMesh {
         return frames
     }
 
+    // level-free overload for contraption-local tube meshes: no rail frames (the
+    // mounted preview uses the stable world-up frame) and no open-end extensions
+    // (extension length needs a live CoasterAnchorpointBlockEntity in a real level).
+    @JvmStatic
+    fun sampleSegments(
+        bc: BezierConnection,
+        r0: Float,
+        r1: Float,
+        origin: Vec3
+    ): List<TubeSegmentFrame> {
+        val count = bc.getSegmentCount().coerceAtLeast(1)
+        val ts = FloatArray(count + 1) { i ->
+            if (i == 0) 0f else if (i == count) 1f else bc.getSegmentT(i)
+        }
+        val centers = Array(count + 1) { bc.getPosition(ts[it].toDouble()) }
+        val tangents = arrayOfNulls<Vec3>(count + 1)
+        val lats = arrayOfNulls<Vec3>(count + 1)
+        var prevLat: Vec3? = null
+        for (i in 0..count) {
+            var tangent = CoasterBezierRailFrames.unitTangentAt(bc, ts[i])
+            if (tangent.lengthSqr() < 1.0E-12) {
+                val prevIdx = if (i > 0) i - 1 else i
+                val nextIdx = if (i < count) i + 1 else i
+                tangent = if (prevIdx != nextIdx) centers[nextIdx].subtract(centers[prevIdx])
+                else Vec3(0.0, 1.0, 0.0)
+            }
+            tangent = tangent.normalize()
+
+            // no rail frames and no extensions: always the stable world-up frame
+            var (lat, _) = SlideCurveGeometry.stableFrame(tangent)
+            if (prevLat != null && lat.dot(prevLat) < 0.0) {
+                lat = lat.scale(-1.0)
+            }
+            tangents[i] = tangent
+            lats[i] = lat
+            prevLat = lat
+        }
+
+        val frames = ArrayList<TubeSegmentFrame>(count)
+        for (i in 0 until count) {
+            frames += TubeSegmentFrame(
+                centers[i].subtract(origin),
+                centers[i + 1].subtract(origin),
+                tangents[i]!!, tangents[i + 1]!!,
+                lats[i]!!, lats[i + 1]!!,
+                Mth.lerp(ts[i], r0, r1), Mth.lerp(ts[i + 1], r0, r1)
+            )
+        }
+        return frames
+    }
+
     private fun openEndExtension(level: Level, bc: BezierConnection, atFirst: Boolean): Float {
         val anchor = if (atFirst) bc.bePositions.getFirst() else bc.bePositions.getSecond()
         val be = level.getBlockEntity(anchor) as? CoasterAnchorpointBlockEntity ?: return 0f
@@ -305,7 +363,7 @@ object WaterslideTubeMesh {
             }
         }
 
-    private fun build(level: Level, config: WaterslideSectorConfig): TubeModels {
+    private fun build(config: WaterslideSectorConfig): TubeModels {
         val placed = WaterslideSectorLayout.place(config)
         // low-poly cross-section, density from client config
         val crossN = crossSections()

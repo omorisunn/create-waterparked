@@ -1,6 +1,7 @@
 package net.omori_sunny.create_waterparked.game.physics
 
 import com.simibubi.create.AllItems
+import com.simibubi.create.content.contraptions.AbstractContraptionEntity
 import com.simibubi.create.content.equipment.armor.DivingBootsItem
 import com.simibubi.create.content.trains.track.BezierConnection
 import dev.ryanhcode.sable.Sable
@@ -73,6 +74,7 @@ object PlayerSlideController {
         val player: ServerPlayer?,
         var trajectory: SlideTrajectory,
         var subLevelId: UUID?,
+        var contraption: AbstractContraptionEntity?,
         val swimmingPose: Boolean,
         val sit: SlideSitEntity?,
         var startTick: Long
@@ -84,6 +86,14 @@ object PlayerSlideController {
             if (subLevelId == null) return null
             val container = SubLevelContainer.getContainer(level) ?: return null
             return container.getSubLevel(subLevelId) as? ServerSubLevel
+        }
+
+        fun access(level: ServerLevel): SlideSpaceAccess {
+            val sub = subLevel(level)
+            if (sub != null) return SubSlideSpaceAccess(level, sub)
+            val cp = contraption
+            if (cp != null) return ContraptionSlideSpaceAccess(level, cp)
+            return MainSlideSpaceAccess(level)
         }
     }
 
@@ -149,6 +159,9 @@ object PlayerSlideController {
                 }
             }
             ServerWaterSimulation.tickAll(level)
+            // track contraption poses so fresh ContraptionSlideSpaceAccess
+            // instances still report correct structure velocity
+            ContraptionSlideSpaces.updatePrev(level)
             for (session in sessions.values.toList()) {
                 if (session.entity.level() != level) continue
                 tickSession(level, session)
@@ -268,14 +281,16 @@ object PlayerSlideController {
             if (level.gameTime < cd) return
             entryCooldown.remove(entity.uuid)
         }
-        val entry = findSlideEntry(level, entity) ?: return
+        val found = findSlideEntry(level, entity) ?: return
+        val entry = found.second
+        val entryAccess = found.first
 
         // Never auto-capture a player holding the Simulated creative physics
         // staff into a sub-level slide. The staff makes the dragged sub-level
         // follow the holder's eye, so moving the player along the slide would
         // feed back into the staff target and send the sub-level flying.
         if (entity is ServerPlayer && isHoldingCreativePhysicsStaff(entity) &&
-            Sable.HELPER.getContaining(level, entry.anchorPos) is ServerSubLevel
+            entryAccess is SubSlideSpaceAccess
         ) {
             if (level.gameTime % 200 == 0L) {
                 CreateWaterparked.LOGGER.info(
@@ -311,10 +326,34 @@ object PlayerSlideController {
         else entity.deltaMovement.add(inherited.x, inherited.y, inherited.z)
         // real per-tick velocity, blocks/tick -> blocks/sec
         val rawVelWorld = playerVelPerTick.scale(20.0)
-        val entryTanWorld = entryTangentWorld(level, entry)
-        val subLevel = Sable.HELPER.getContaining(level, entry.anchorPos) as? ServerSubLevel
-        val access = if (subLevel != null) SubSlideSpaceAccess(level, subLevel) else MainSlideSpaceAccess(level)
+        val entryTanWorld = entryTangentWorld(level, entryAccess, entry)
+        val subLevel = (entryAccess as? SubSlideSpaceAccess)?.sub
+        val contraptionEntity = (entryAccess as? ContraptionSlideSpaceAccess)?.entity
+        val access = entryAccess
         val startPos = access.worldToLocal(entity.position())
+        // Sanity guard: never teleport the rider to an absurd position. A
+        // space mismatch (e.g. a contraption entry detected through the wrong
+        // access) would otherwise move the player to an enormous y. However a
+        // contraption hosted INSIDE a Sable sub-level legitimately sits at
+        // plot-global coordinates (~2e7) with the player also at plot scale, so
+        // only abort when the target is absurd while the player is NOT plot-
+        // scaled (a genuine world/main-scale mismatch).
+        val wouldPos = access.toWorld(startPos)
+        val spaceLabel = access.space.cacheKey(level)
+        val playerIsPlotScaled = kotlin.math.abs(entity.position().x) > 1.0E5 ||
+            kotlin.math.abs(entity.position().z) > 1.0E5
+        val targetAbsurd = !(wouldPos.x.isFinite() && wouldPos.y.isFinite() && wouldPos.z.isFinite()) ||
+            kotlin.math.abs(wouldPos.y) > 100_000.0 || kotlin.math.abs(wouldPos.x) > 100_000.0 ||
+            kotlin.math.abs(wouldPos.z) > 100_000.0
+        if (targetAbsurd && !playerIsPlotScaled) {
+            CreateWaterparked.LOGGER.warn(
+                "[SlideEntry] aborted absurd teleport target={} space={} startLocal={} playerWorld={} contraptionPos={}",
+                wouldPos, spaceLabel, startPos, entity.position(),
+                (access as? ContraptionSlideSpaceAccess)?.entity?.position()
+            )
+            restoreEntity(entity)
+            return
+        }
         // On a Sable sub-level the entity can follow the structure in two ways:
         // 1. plot tracking: Sable repositions the entity from sable$plotPosition
         //    through the logical pose each tick. The structure velocity is then
@@ -365,7 +404,7 @@ object PlayerSlideController {
         sit?.setPos(access.toWorld(startPos))
         val session = Session(
             nextSessionId++, entity, player, trajectory,
-            subLevel?.uniqueId, swimming, sit, level.gameTime
+            subLevel?.uniqueId, contraptionEntity, swimming, sit, level.gameTime
         )
         CreateWaterparked.LOGGER.info(
             "Slide start {} entity {} dir {} pos {} vel {} samples={} last={} reason={}",
@@ -377,7 +416,7 @@ object PlayerSlideController {
         entity.fallDistance = 0f
         if (player != null) {
             SlidePackets.sendTo(player, SlideTrajectoryPayload(
-                session.id, session.startTick, swimming, session.subLevelId,
+                session.id, session.startTick, swimming, session.subLevelId, session.contraption?.id,
                 trajectory.samples.map { SlideSampleWire.from(it, wireOffset(level, session)) }
             ))
         }
@@ -397,7 +436,7 @@ object PlayerSlideController {
         sit.discard()
     }
 
-    private fun entryTangentWorld(level: ServerLevel, entry: SlideEntry): Vec3 {
+    private fun entryTangentWorld(level: ServerLevel, access: SlideSpaceAccess, entry: SlideEntry): Vec3 {
         val bc = entry.curve
         val t = entry.startT ?: if (entry.towardSecond) 0f else 1f
         var tan = CoasterBezierRailFrames.unitTangentAt(bc, t)
@@ -409,30 +448,46 @@ object PlayerSlideController {
         }
         tan = tan.normalize()
         if (!entry.towardSecond) tan = tan.scale(-1.0)
-        val sub = Sable.HELPER.getContaining(level, entry.anchorPos) as? ServerSubLevel
-        if (sub != null) {
-            val out = sub.logicalPose().transformNormal(JOMLConversion.toJOML(tan), Vector3d())
-            return JOMLConversion.toMojang(out).normalize()
-        }
-        return tan
+        return access.toWorldNormal(tan)
     }
 
     private fun findSlideEntry(
         level: ServerLevel,
         entity: Entity,
         requireSolid: Boolean = true
-    ): SlideEntry? {
+    ): Pair<SlideSpaceAccess, SlideEntry>? {
         val mainHit = findSlideEntryInSpace(level, MainSlideSpaceAccess(level), entity, requireSolid)
         if (mainHit != null) return mainHit
 
-        val container = SubLevelContainer.getContainer(level) ?: return null
-        for (raw in container.allSubLevels) {
-            val sub = raw as? ServerSubLevel ?: continue
-            val access = SubSlideSpaceAccess(level, sub)
+        val container = SubLevelContainer.getContainer(level)
+        if (container != null) {
+            for (raw in container.allSubLevels) {
+                val sub = raw as? ServerSubLevel ?: continue
+                val access = SubSlideSpaceAccess(level, sub)
+                val hit = findSlideEntryInSpace(level, access, entity, requireSolid) ?: continue
+                return hit
+            }
+        }
+
+        // Create contraptions carrying a waterslide are their own slide space.
+        for (cp in contraptionCandidates(level, entity)) {
+            val access = ContraptionSlideSpaceAccess(level, cp)
             val hit = findSlideEntryInSpace(level, access, entity, requireSolid) ?: continue
             return hit
         }
         return null
+    }
+
+    // Contraptions carrying slides whose bounding box touches the entity's
+    // neighbourhood; entry probing uses the contraption-local inverse transform.
+    private fun contraptionCandidates(level: ServerLevel, entity: Entity): List<AbstractContraptionEntity> {
+        val box = entity.boundingBox.inflate(6.0)
+        val out = ArrayList<AbstractContraptionEntity>()
+        for (cp in level.getEntitiesOfClass(AbstractContraptionEntity::class.java, box)) {
+            if (!ContraptionSlideSpaces.carriesSlides(cp)) continue
+            out += cp
+        }
+        return out
     }
 
     private fun findSlideEntryInSpace(
@@ -440,14 +495,16 @@ object PlayerSlideController {
         access: SlideSpaceAccess,
         entity: Entity,
         requireSolid: Boolean
-    ): SlideEntry? {
+    ): Pair<SlideSpaceAccess, SlideEntry>? {
         val localPos = access.worldToLocal(entity.position())
         val margin = entityDimensions(entity).width / 2.0
         var best: SegmentHit? = null
-        for (anchorPos in SlideAnchorIndex.all(level, access.space)) {
+        for (anchorPos in ContraptionSlideSpaces.anchorPositions(access)) {
             val be = access.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
             if (be == null) {
-                SlideAnchorIndex.unregister(level, anchorPos)
+                if (access.space !is SlideSpace.Contraption) {
+                    SlideAnchorIndex.unregister(level, anchorPos)
+                }
                 continue
             }
             for (raw in be.anchorPeerCurvesView.values) {
@@ -455,11 +512,11 @@ object PlayerSlideController {
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                 val a = bc.bePositions.getFirst()
                 val b = bc.bePositions.getSecond()
-                val r0 = SlideCurveGeometry.radiusAt(access.level, a)
-                val r1 = SlideCurveGeometry.radiusAt(access.level, b)
+                val r0 = SlideCurveGeometry.radiusAt(access, a)
+                val r1 = SlideCurveGeometry.radiusAt(access, b)
                 val cf = curveFrames(access, bc, r0, r1) ?: continue
                 if (!cf.bounds.contains(localPos)) continue
-                val config = SlideCurveGeometry.sectorConfig(access.level, a, b)
+                val config = SlideCurveGeometry.sectorConfig(access, a, b)
                     ?: WaterslideSectorConfig.defaultConfig()
                 for (i in 0 until cf.frames.size - 1) {
                     val hit = testSegment(
@@ -469,7 +526,7 @@ object PlayerSlideController {
                 }
             }
         }
-        return best?.entry
+        return best?.let { access to it.entry }
     }
 
     // cached per-curve tube envelope; no max-radius guess
@@ -489,7 +546,7 @@ object PlayerSlideController {
         curveFramesCache[key]?.let { if (it.sig == sig) return it }
 
         // entry only inside the real tube, never on the open-end extension
-        val frames = SlideCurveGeometry.sampleFrames(access.level, bc, r0, r1, includeExtensions = false)
+        val frames = SlideCurveGeometry.sampleFrames(access, bc, r0, r1, includeExtensions = false)
         if (frames.size < 2) return null
         var minX = Double.MAX_VALUE
         var minY = Double.MAX_VALUE
@@ -645,7 +702,7 @@ object PlayerSlideController {
         applyRotation(entity, toWorldNormal(level, session, first.tangent))
         if (player != null) {
             SlidePackets.sendTo(player, SlideSegmentPayload(
-                session.id, level.gameTime, session.subLevelId,
+                session.id, level.gameTime, session.subLevelId, session.contraption?.id,
                 session.trajectory.samples.map { SlideSampleWire.from(it, wireOffset(level, session)) }
             ))
         }
@@ -659,12 +716,20 @@ object PlayerSlideController {
         worldVel: Vec3
     ): Boolean {
         val currentSub = session.subLevel(level)
+        val currentCp = session.contraption
+        val currentSpace = currentCp?.let { SlideSpace.Contraption(it.id) }
+            ?: currentSub?.let { SlideSpace.SubLevel(it.uniqueId) }
+            ?: SlideSpace.Main
         val worldVelPerSecond = worldVel.scale(20.0)
 
-        fun tryTarget(access: SlideSpaceAccess): Boolean {
-            if (access.space == (currentSub?.let { SlideSpace.SubLevel(it.uniqueId) } ?: SlideSpace.Main)) return false
+        fun tryTarget(access: SlideSpaceAccess, cp: AbstractContraptionEntity?): Boolean {
+            // Skip only the EXACT same space (the same sub-level id or the same
+            // contraption id); switching to a DIFFERENT space of the same kind
+            // (sub->sub or contraption->contraption) is allowed.
+            if (access.space == currentSpace) return false
             val localNow = access.worldToLocal(worldPos)
-            val entry = findSlideEntryInSpace(level, access, session.entity, requireSolid = false) ?: return false
+            val found = findSlideEntryInSpace(level, access, session.entity, requireSolid = false) ?: return false
+            val entry = found.second
             val structure = access.worldVelocityAt(localNow)
             val localVel = access.worldNormalToLocal(worldVelPerSecond.subtract(structure))
             val dims = entityDimensions(session.entity)
@@ -673,17 +738,27 @@ object PlayerSlideController {
                 localNow, localVel, dims.width.toDouble(), dims.height.toDouble()
             ) ?: return false
             session.trajectory = next
-            session.subLevelId = (access.space as? SlideSpace.SubLevel)?.id
+            session.subLevelId = (access as? SubSlideSpaceAccess)?.sub?.uniqueId
+            session.contraption = cp
             session.elapsed = 0.0
             return true
         }
 
-        if (currentSub != null && tryTarget(MainSlideSpaceAccess(level))) return true
+        if ((currentSub != null || currentCp != null) && tryTarget(MainSlideSpaceAccess(level), null)) return true
+
+        // Create contraptions carrying slides
+        val box = AABB(worldPos, worldPos).inflate(8.0)
+        for (cp in level.getEntitiesOfClass(AbstractContraptionEntity::class.java, box)) {
+            if (currentCp?.id == cp.id) continue
+            if (!ContraptionSlideSpaces.carriesSlides(cp)) continue
+            if (tryTarget(ContraptionSlideSpaceAccess(level, cp), cp)) return true
+        }
+
         val container = SubLevelContainer.getContainer(level) ?: return false
         for (raw in container.allSubLevels) {
             val sub = raw as? ServerSubLevel ?: continue
             if (currentSub?.uniqueId == sub.uniqueId) continue
-            if (tryTarget(SubSlideSpaceAccess(level, sub))) return true
+            if (tryTarget(SubSlideSpaceAccess(level, sub), null)) return true
         }
         return false
     }
@@ -696,7 +771,21 @@ object PlayerSlideController {
         val localVel = session.trajectory.exitVelocity
         val worldPos = toWorldPos(level, session, localPos)
         val worldVel = if (reason == SlideEndReason.STOPPED) Vec3.ZERO
-        else toWorldVel(level, session, localPos, localVel)
+        else {
+            val cp = session.contraption
+            if (cp != null) {
+                // Landing after a contraption ride: do NOT inherit the
+                // contraption's structure velocity. The rotational tangential
+                // term (omega x r) can be large at the far end of a slide and
+                // carries an upward component, launching the player on landing.
+                // Keep only the slide-relative exit velocity in world
+                // orientation, converted to blocks/tick.
+                val cAccess = ContraptionSlideSpaceAccess(level, cp)
+                cAccess.toWorldNormal(localVel).scale(localVel.length()).scale(1.0 / 20.0)
+            } else {
+                toWorldVel(level, session, localPos, localVel)
+            }
+        }
         CreateWaterparked.LOGGER.info(
             "Slide end {} reason {} pos {} vel {}",
             session.id, reason, worldPos, worldVel
@@ -775,17 +864,11 @@ object PlayerSlideController {
         entity.fallDistance = 0f
     }
 
-    private fun toWorldPos(level: ServerLevel, session: Session, local: Vec3): Vec3 {
-        val sub = session.subLevel(level) ?: return local
-        val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(local), Vector3d())
-        return JOMLConversion.toMojang(out)
-    }
+    private fun toWorldPos(level: ServerLevel, session: Session, local: Vec3): Vec3 =
+        session.access(level).toWorld(local)
 
-    private fun toWorldNormal(level: ServerLevel, session: Session, local: Vec3): Vec3 {
-        val sub = session.subLevel(level) ?: return local.normalize()
-        val out = sub.logicalPose().transformNormal(JOMLConversion.toJOML(local), Vector3d())
-        return JOMLConversion.toMojang(out).normalize()
-    }
+    private fun toWorldNormal(level: ServerLevel, session: Session, local: Vec3): Vec3 =
+        session.access(level).toWorldNormal(local)
 
     private fun toWorldVel(
         level: ServerLevel,
@@ -793,9 +876,17 @@ object PlayerSlideController {
         localPos: Vec3,
         localVel: Vec3
     ): Vec3 {
+        // Contraption spaces rotate/translate as a unit; the conventional
+        // helper keeps Sable sub-level scale semantics untouched.
+        val cp = session.contraption
+        if (cp != null) {
+            val access = ContraptionSlideSpaceAccess(level, cp)
+            val out = access.toWorldNormal(localVel).scale(localVel.length())
+            val structure = access.worldVelocityAt(localPos)
+            return out.add(structure).scale(1.0 / 20.0)
+        }
         val sub = session.subLevel(level)
         if (sub == null) return localVel.scale(1.0 / 20.0)
-
         val out = sub.logicalPose().transformNormal(JOMLConversion.toJOML(localVel), Vector3d())
         val structure = Sable.HELPER.getVelocity(
             level, sub, JOMLConversion.toJOML(localPos), Vector3d()

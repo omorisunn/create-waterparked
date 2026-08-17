@@ -13,6 +13,7 @@ import net.omori_sunny.create_waterparked.content.registry.ModSounds
 import net.omori_sunny.create_waterparked.content.registry.CoasterCreativeTabIntegration
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 import net.omori_sunny.create_waterparked.datagen.CreateWaterparkedDataGen
+import net.omori_sunny.create_waterparked.game.contraption.WaterslideContraptionIntegration
 import net.omori_sunny.create_waterparked.game.physics.PlayerSlideController
 import net.omori_sunny.create_waterparked.network.ModPayloads
 import net.neoforged.bus.api.EventPriority
@@ -79,5 +80,7 @@ object CreateWaterparked {
     @SubscribeEvent
     fun onCommonSetup(event: FMLCommonSetupEvent) {
         LOGGER.info("Create Waterparked loaded.")
+        WaterslideContraptionIntegration.register()
+        net.omori_sunny.create_waterparked.game.command.WaterparkedCommands.register()
     }
 }

@@ -77,6 +77,7 @@ class SlideTrajectoryPayload(
     val startTick: Long,
     val swimmingPose: Boolean,
     val subLevelId: UUID?,
+    val contraptionEntityId: Int?,
     val samples: List<SlideSampleWire>
 ) : CustomPacketPayload {
 
@@ -101,6 +102,8 @@ class SlideTrajectoryPayload(
                     buf.writeBoolean(p.swimmingPose)
                     buf.writeBoolean(p.subLevelId != null)
                     if (p.subLevelId != null) buf.writeUUID(p.subLevelId)
+                    buf.writeBoolean(p.contraptionEntityId != null)
+                    if (p.contraptionEntityId != null) buf.writeInt(p.contraptionEntityId)
                     buf.writeCollection(p.samples) { b, s ->
                         b.writeFloat(s.time)
                         b.writeFloat(s.cx)
@@ -127,6 +130,8 @@ class SlideTrajectoryPayload(
                     val swimming = buf.readBoolean()
                     val hasSub = buf.readBoolean()
                     val subLevelId = if (hasSub) buf.readUUID() else null
+                    val hasCp = buf.readBoolean()
+                    val contraptionEntityId = if (hasCp) buf.readInt() else null
                     val samples = buf.readCollection({ ArrayList() }) { b ->
                         SlideSampleWire(
                             b.readFloat(), b.readFloat(), b.readFloat(), b.readFloat(),
@@ -137,7 +142,7 @@ class SlideTrajectoryPayload(
                             b.readBoolean(), b.readBoolean()
                         )
                     }
-                    SlideTrajectoryPayload(sessionId, startTick, swimming, subLevelId, samples)
+                    SlideTrajectoryPayload(sessionId, startTick, swimming, subLevelId, contraptionEntityId, samples)
                 }
             )
     }
@@ -148,6 +153,7 @@ class SlideSegmentPayload(
     val sessionId: Long,
     val startTick: Long,
     val subLevelId: UUID?,
+    val contraptionEntityId: Int?,
     val samples: List<SlideSampleWire>
 ) : CustomPacketPayload {
 
@@ -169,6 +175,8 @@ class SlideSegmentPayload(
                     buf.writeLong(p.startTick)
                     buf.writeBoolean(p.subLevelId != null)
                     if (p.subLevelId != null) buf.writeUUID(p.subLevelId)
+                    buf.writeBoolean(p.contraptionEntityId != null)
+                    if (p.contraptionEntityId != null) buf.writeInt(p.contraptionEntityId)
                     buf.writeCollection(p.samples) { b, s ->
                         b.writeFloat(s.time)
                         b.writeFloat(s.cx)
@@ -194,6 +202,8 @@ class SlideSegmentPayload(
                     val startTick = buf.readLong()
                     val hasSub = buf.readBoolean()
                     val subLevelId = if (hasSub) buf.readUUID() else null
+                    val hasCp = buf.readBoolean()
+                    val contraptionEntityId = if (hasCp) buf.readInt() else null
                     val samples = buf.readCollection({ ArrayList() }) { b ->
                         SlideSampleWire(
                             b.readFloat(), b.readFloat(), b.readFloat(), b.readFloat(),
@@ -204,7 +214,7 @@ class SlideSegmentPayload(
                             b.readBoolean(), b.readBoolean()
                         )
                     }
-                    SlideSegmentPayload(sessionId, startTick, subLevelId, samples)
+                    SlideSegmentPayload(sessionId, startTick, subLevelId, contraptionEntityId, samples)
                 }
             )
     }

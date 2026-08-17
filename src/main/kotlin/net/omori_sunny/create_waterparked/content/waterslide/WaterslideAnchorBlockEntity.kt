@@ -1,22 +1,30 @@
 package net.omori_sunny.create_waterparked.content.waterslide
 
+import com.simibubi.create.api.contraption.transformable.TransformableBlockEntity
+import com.simibubi.create.content.contraptions.StructureTransform
+import com.simibubi.create.content.trains.track.BezierConnection
 import com.simibubi.create.foundation.fluid.SmartFluidTank
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
+import net.createmod.catnip.data.Couple
+import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.game.SlideAnchorIndex
+import net.omori_sunny.create_waterparked.game.contraption.AnchorPeerCurveDataAccess
 import net.minecraft.core.BlockPos
 import net.minecraft.core.HolderLookup
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.nbt.ListTag
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.level.Level
+import net.minecraft.world.level.block.entity.BlockEntity
 import net.minecraft.world.level.block.entity.BlockEntityType
 import net.minecraft.world.level.block.state.BlockState
 import net.minecraft.world.level.material.Fluids
 import net.minecraft.world.phys.AABB
+import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
 import net.neoforged.neoforge.capabilities.Capabilities
@@ -26,7 +34,8 @@ import net.neoforged.neoforge.fluids.capability.IFluidHandler
 import java.util.function.Consumer
 
 // anchor BE
-class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnchorpointBlockEntity(pos, state) {
+class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
+    CoasterAnchorpointBlockEntity(pos, state), TransformableBlockEntity {
 
     var waterActive: Boolean = false
         private set
@@ -162,20 +171,35 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
 
     override fun onLoad() {
         super.onLoad()
-        if (level?.isClientSide == true) {
+        val lvl = level ?: return
+        if (lvl.isClientSide) {
             WaterslideCurveRenderer.registerClientAnchor(this)
         } else {
-            SlideAnchorIndex.register(level!!, blockPos)
+            SlideAnchorIndex.register(lvl, blockPos)
         }
     }
 
     override fun onChunkUnloaded() {
         super.onChunkUnloaded()
-        if (level?.isClientSide == true) {
+        val lvl = level ?: return
+        if (lvl.isClientSide) {
             WaterslideCurveRenderer.unregisterClientAnchor(this)
         } else {
-            SlideAnchorIndex.unregister(level!!, blockPos)
+            SlideAnchorIndex.unregister(lvl, blockPos)
         }
+    }
+
+// pick up by contraption assembly removes the block entity from the world
+// immediately; drop our index entries so stale anchors do not linger. Called
+// by SmartBlockEntity#setRemoved when the block entity is not being chunk-unloaded.
+    override fun remove() {
+        val lvl = level
+        if (lvl?.isClientSide == true) {
+            WaterslideCurveRenderer.unregisterClientAnchor(this)
+        } else if (lvl != null) {
+            SlideAnchorIndex.unregister(lvl, blockPos)
+        }
+        super.remove()
     }
 
 // render bounds
@@ -239,6 +263,14 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
         }
     }
 
+    // Public entry used by contraption-space reconstruction to populate this
+    // (worldless) BE from the captured contraption NBT; read() itself is
+    // protected, so everything else goes through this wrapper.
+    fun readCaptured(tag: CompoundTag, registries: HolderLookup.Provider?) {
+        val regs = registries ?: level?.registryAccess() ?: return
+        read(tag, regs, false)
+    }
+
     override fun write(tag: CompoundTag, registries: HolderLookup.Provider, clientPacket: Boolean) {
         tag.putBoolean("WaterActive", waterActive)
         tag.putFloat("Radius", radius)
@@ -262,6 +294,169 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) : CoasterAnc
         tag.put("WateredCurves", wateredList)
         tag.put("WaterTank", waterTank.writeToNBT(registries, CompoundTag()))
         super.write(tag, registries, clientPacket)
+    }
+
+// ===== contraption disassembly transform =====
+// Rewrite the inherited peer-curve maps, their tint keys and our own
+// sectorConfigs/wateredCurves so slide data stays intact at the new
+// position/rotation. Translation-only moves also go through here because
+// peer keys must shift. radius/waterActive/waterTank are intentionally left
+// untouched (they are position-independent).
+// Endpoint/vector math is valid for any 90-degree axis, but Create only
+// rotates TrackShape block states around Y (TrackBlockEntity does the same),
+// so horizontal-axis rotations keep the curve data consistent while the rail
+// models may not follow; this matches Create's own track convention.
+    override fun transform(blockEntity: BlockEntity, transform: StructureTransform) {
+        val access = this as? AnchorPeerCurveDataAccess ?: return
+        val oldCurves = access.`waterparked$anchorPeerCurves`()
+        if (oldCurves.isEmpty()) return
+
+        val selfPos = worldPosition
+        val selfVec = Vec3.atCenterOf(selfPos)
+        val newCurves = HashMap<BlockPos, BezierConnection>(oldCurves.size)
+        val keyRemap = HashMap<BlockPos, BlockPos>(oldCurves.size)
+
+        for ((oldPeer, bc) in oldCurves.toList()) {
+            // Orient the curve: which endpoint belongs to this block entity?
+            val selfEndpoint: BlockPos
+            val peerEndpoint: BlockPos
+            if (oldPeer == bc.bePositions.getSecond()) {
+                // Curve stored with self first, peer second.
+                selfEndpoint = bc.bePositions.getFirst()
+                peerEndpoint = bc.bePositions.getSecond()
+            } else if (bc.bePositions.getFirst() == selfPos) {
+                // Curve stored with peer first, self second.
+                selfEndpoint = bc.bePositions.getFirst()
+                peerEndpoint = bc.bePositions.getSecond()
+            } else {
+                // Fallback: endpoint closer to this block entity.
+                val first = bc.bePositions.getFirst()
+                val second = bc.bePositions.getSecond()
+                val firstDist = Vec3.atCenterOf(first).distanceToSqr(selfVec)
+                val secondDist = Vec3.atCenterOf(second).distanceToSqr(selfVec)
+                selfEndpoint = if (firstDist <= secondDist) first else second
+                peerEndpoint = if (selfEndpoint == first) second else first
+            }
+            val selfEndpointIsFirst = selfEndpoint == bc.bePositions.getFirst()
+
+            // Curve-local delta between the two endpoints. Simulated's read()
+            // already re-anchored both endpoints onto the NEW self position
+            // (BezierConnection(tag, getBlockPos())), so subtracting cancels
+            // that pre-translation and leaves the true old endpoint delta.
+            val oldDelta = Vec3.atLowerCornerOf(peerEndpoint)
+                .subtract(Vec3.atLowerCornerOf(selfEndpoint))
+
+            // Rebuild the delta from the block's new contraption-local space.
+            val selfLocal = transform.unapplyWithoutOffset(
+                selfVec.subtract(Vec3.atLowerCornerOf(transform.offset))
+            )
+            val peerLocal = selfLocal.add(oldDelta)
+            val peerGlobal = transform.apply(peerLocal)
+            val newPeer = BlockPos.containing(peerGlobal)
+            val newSelf = selfPos
+
+            // Starts are absolute vectors; rotate them around the endpoint
+            // block CENTER exactly like Create's own TrackBlockEntity.transform.
+            // Because read() re-anchored the endpoints, selfEndpoint already IS
+            // newSelf here, so endpointCenter == Vec3.atCenterOf(newSelf) - the
+            // two pivots coincide and the handle offset is exact.
+            val endpointCenter = Vec3.atCenterOf(selfEndpoint)
+            val newStarts = Couple.create(
+                transform.applyWithoutOffsetUncentered(
+                    bc.starts.getFirst().subtract(endpointCenter)
+                ).add(endpointCenter),
+                transform.applyWithoutOffsetUncentered(
+                    bc.starts.getSecond().subtract(endpointCenter)
+                ).add(endpointCenter)
+            )
+            val newAxes = Couple.create(
+                transform.applyWithoutOffsetUncentered(bc.axes.getFirst()),
+                transform.applyWithoutOffsetUncentered(bc.axes.getSecond())
+            )
+            val newNormals = Couple.create(
+                transform.applyWithoutOffsetUncentered(bc.normals.getFirst()),
+                transform.applyWithoutOffsetUncentered(bc.normals.getSecond())
+            )
+
+            val newPositions = if (selfEndpointIsFirst) {
+                Couple.create(newSelf, newPeer)
+            } else {
+                Couple.create(newPeer, newSelf)
+            }
+
+            val rebuilt = BezierConnection(
+                newPositions, newStarts, newAxes, newNormals,
+                bc.primary, bc.hasGirder, bc.getMaterial()
+            )
+            // smoothing is mutable and nullable; carry it over verbatim.
+            if (bc.smoothing != null) {
+                rebuilt.smoothing = bc.smoothing
+            }
+
+            newCurves[newPeer.immutable()] = rebuilt
+            keyRemap[oldPeer] = newPeer
+        }
+
+        // Apply to inherited maps through the mixin accessor.
+        access.`waterparked$anchorPeerCurves`().clear()
+        access.`waterparked$anchorPeerCurves`().putAll(newCurves)
+        remapKeys(access.`waterparked$railRgb`(), keyRemap)
+        remapKeys(access.`waterparked$beamRgb`(), keyRemap)
+
+        // Remap our own data; drop entries whose curve did not survive.
+        remapSectorConfigs(keyRemap)
+        remapWateredCurves(keyRemap)
+
+        CreateWaterparked.LOGGER.debug(
+            "Anchor {} contraption transform: {} curve(s) remapped",
+            selfPos, keyRemap.size
+        )
+        setChanged()
+    }
+
+    private fun <V> remapKeys(target: MutableMap<BlockPos, V>, keyRemap: Map<BlockPos, BlockPos>) {
+        if (target.isEmpty()) return
+        val remapped = HashMap<BlockPos, V>(target.size)
+        for ((oldKey, value) in target) {
+            val newKey = keyRemap[oldKey]
+            if (newKey != null) remapped[newKey.immutable()] = value
+        }
+        target.clear()
+        target.putAll(remapped)
+    }
+
+    private fun remapSectorConfigs(keyRemap: Map<BlockPos, BlockPos>) {
+        if (sectorConfigs.isEmpty()) return
+        val remapped = HashMap<BlockPos, WaterslideSectorConfig>(sectorConfigs.size)
+        for ((oldPeer, config) in sectorConfigs) {
+            val newPeer = keyRemap[oldPeer]
+            if (newPeer != null) {
+                remapped[newPeer.immutable()] = config
+            } else {
+                CreateWaterparked.LOGGER.debug(
+                    "Anchor {}: dropping sector config for unmatched peer {}", blockPos, oldPeer
+                )
+            }
+        }
+        sectorConfigs.clear()
+        sectorConfigs.putAll(remapped)
+    }
+
+    private fun remapWateredCurves(keyRemap: Map<BlockPos, BlockPos>) {
+        if (wateredCurves.isEmpty()) return
+        val remapped = HashMap<BlockPos, Boolean>(wateredCurves.size)
+        for ((oldPeer, watered) in wateredCurves) {
+            val newPeer = keyRemap[oldPeer]
+            if (newPeer != null) {
+                remapped[newPeer.immutable()] = watered
+            } else {
+                CreateWaterparked.LOGGER.debug(
+                    "Anchor {}: dropping watered flag for unmatched peer {}", blockPos, oldPeer
+                )
+            }
+        }
+        wateredCurves.clear()
+        wateredCurves.putAll(remapped)
     }
 
     companion object {
