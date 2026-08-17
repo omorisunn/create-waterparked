@@ -142,6 +142,7 @@ object CreateWaterparkedClient {
         if (event.level.isClientSide) {
             WaterslideCurveRenderer.clearClientAnchors()
             SlideSableOrientation.clearAll()
+            SlideClientSession.resetActive()
             WaterFlowSimulation.clear()
             WaterSlideSoundManager.stopAll()
         }

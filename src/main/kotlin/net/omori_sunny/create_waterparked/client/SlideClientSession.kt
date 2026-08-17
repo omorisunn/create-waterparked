@@ -76,6 +76,19 @@ object SlideClientSession {
         var lastFramePitch: Float? = null
         var lastAppliedPos: Vec3? = null
 
+        // landing transition: when the end position is >8 blocks from the last
+        // ride position, ease over a few ticks instead of one hard setPos so
+        // ReplayMod's per-tick position recorder never emits a >8-block
+        // absolute-teleport packet (its playback camera would snap to the
+        // landing point).
+        var landFrom: Vec3? = null
+        var landTo: Vec3? = null
+        var landRemaining = 0
+        var landTotal = 1
+        var landVel: Vec3? = null
+        var landYaw = 0f
+        var landPitch = 0f
+
         fun subLevel(level: Level): dev.ryanhcode.sable.sublevel.ClientSubLevel? {
             if (subLevelId == null) return null
             val container = SubLevelContainer.getContainer(level) ?: return null
@@ -91,8 +104,62 @@ object SlideClientSession {
     private var active: Active? = null
     private var waterDebugTick = 0L
 
+    /** True when the client is in a replay view (ReplayMod / ReForgePlay) rather
+     *  than a live game. Detected WITHOUT referencing any ReplayMod class, so
+     *  this mod keeps working when ReplayMod is absent. Signals (any hit wins):
+     *   1. no server connection at all (`mc.connection == null`) with a player
+     *      and level loaded - there is no live game, so it must be a replay;
+     *   2. ReForgePlay fakes a ClientConnection during playback, created inside
+     *      ReplayHandler (its anonymous class lives under
+     *      com.replaymod.replay.ReplayHandler) - catches the spectate-player
+     *      mode where mc.player is a plain LocalPlayer whose class helps us none;
+     *   3. local player or render world class under com.replaymod (e.g. the
+     *      replay's CameraEntity acting as mc.player in camera-view mode). */
+    @Volatile
+    private var lastReplayLogTick = -1L
+
+    @JvmStatic
+    fun isReplayView(): Boolean {
+        val mc = Minecraft.getInstance()
+        val player = mc.player
+        var replay = false
+        var why = "?"
+        val conn = mc.connection
+        if (conn == null) {
+            replay = player != null && mc.level != null
+            why = "no-connection"
+        } else if (conn.javaClass.name.startsWith("com.replaymod.replay.ReplayHandler")) {
+            replay = true
+            why = "fake-connection"
+        } else if (player?.javaClass?.name?.startsWith("com.replaymod") == true) {
+            replay = true
+            why = "player-class"
+        } else if (mc.level?.javaClass?.name?.startsWith("com.replaymod") == true) {
+            replay = true
+            why = "level-class"
+        }
+        val gt = mc.level?.gameTime ?: 0L
+        if (replay && gt - lastReplayLogTick >= 100) {
+            lastReplayLogTick = gt
+            CreateWaterparked.LOGGER.info(
+                "[SlideReplay] replay view detected ({}) conn={} player={} level={}",
+                why, conn?.javaClass?.name, player?.javaClass?.name, mc.level?.javaClass?.name
+            )
+        }
+        return replay
+    }
+
     @JvmStatic
     fun isSliding(): Boolean = active != null
+
+    // Drop a dangling session (world unload, leaving to a replay, disconnect).
+    // Prevents a stale Active from writing slide player state into another
+    // context (e.g. ReForgePlay's replay view virtual player).
+    @JvmStatic
+    fun resetActive() {
+        active = null
+        SlideSableOrientation.clearAll()
+    }
 
     // Current playback speed in blocks/second, derived from the velocity that
     // onClientTickPost already applied from the trajectory sample.
@@ -177,6 +244,10 @@ object SlideClientSession {
         val level = mc.level ?: return null
         val player = mc.player ?: return null
         val session = active ?: return null
+        // In replay view the camera entity is ReForgePlay's own (it copies the
+        // recorded player's pos/rot into its camera every frame); do not drive a
+        // slide camera there.
+        if (isReplayView()) return null
         val mouseDyaw = Mth.wrapDegrees(player.getYRot() - session.lastEntityYaw)
         val mouseDpitch = player.getXRot() - session.lastEntityPitch
         session.freeLookYaw += mouseDyaw
@@ -322,6 +393,8 @@ object SlideClientSession {
 
     @JvmStatic
     fun start(payload: SlideTrajectoryPayload) {
+        // replay view: never create a session that writes the (virtual) player
+        if (isReplayView()) return
         SlideSableOrientation.clearAll()
         val level = Minecraft.getInstance().level
         val origin = plotOffset(level, payload.subLevelId) ?: Vec3.ZERO
@@ -375,6 +448,7 @@ object SlideClientSession {
     fun appendSegment(payload: SlideSegmentPayload) {
         val session = active ?: return
         if (session.sessionId != payload.sessionId) return
+        if (isReplayView()) return
         val level = Minecraft.getInstance().level ?: return
         if (payload.samples.isEmpty()) return
         val origin = plotOffset(level, payload.subLevelId)
@@ -393,8 +467,69 @@ object SlideClientSession {
         val session = active ?: return
         if (session.sessionId != payload.sessionId) return
         CreateWaterparked.LOGGER.debug(
-            "Slide end {} reason {}", payload.sessionId, payload.reason
+            "Slide end {} reason {}{}", payload.sessionId, payload.reason,
+            if (isReplayView()) " (replay view -> not applying to player)" else ""
         )
+        // Replay interop: at the landing moment acting while in a replay would
+        // teleport/rotate ReplayMod's camera (it copies the recorded player).
+        // Drop the session without touching the player in replay view.
+        if (isReplayView()) {
+            active = null
+            SlideSableOrientation.clearAll()
+            return
+        }
+        val player = Minecraft.getInstance().player
+        val landPos = Vec3(payload.x.toDouble(), payload.y.toDouble(), payload.z.toDouble())
+        if (player != null) {
+            val dist = player.position().distanceTo(landPos)
+            CreateWaterparked.LOGGER.info(
+                "[SlideLand] session={} dist={} from={} to={}",
+                payload.sessionId, dist, player.position(), landPos
+            )
+            if (dist > 8.0) {
+                // ReplayMod records the local player position each tick; a
+                // >8-block one-frame hop is stored as an absolute-teleport
+                // packet, so the playback camera snaps to the landing point.
+                // Ease the drop over a few ticks instead.
+                val n = kotlin.math.ceil(dist / 8.0).toInt().coerceIn(2, 30)
+                session.landFrom = player.position()
+                session.landTo = landPos
+                session.landTotal = n
+                session.landRemaining = n
+                session.landVel = Vec3(
+                    payload.vx.toDouble(), payload.vy.toDouble(), payload.vz.toDouble()
+                )
+                session.landYaw = session.lastCameraYaw
+                session.landPitch = session.lastCameraPitch
+                return // eased in onClientTickPost; active stays until done
+            }
+        }
+        applyLanding(session, payload)
+    }
+
+    // Complete the eased landing once onClientTickPost reaches the last step.
+    private fun finishLand(session: Active) {
+        active = null
+        val player = Minecraft.getInstance().player ?: return
+        val to = session.landTo ?: return
+        val vel = session.landVel ?: Vec3.ZERO
+        SlideSableOrientation.clear(player)
+        player.setPos(to)
+        player.setDeltaMovement(vel)
+        player.setYRot(session.landYaw)
+        player.setXRot(session.landPitch)
+        player.setYHeadRot(session.landYaw)
+        player.yRotO = session.landYaw
+        player.xRotO = session.landPitch
+        player.yHeadRotO = session.landYaw
+        player.setNoGravity(false)
+        player.setPose(Pose.STANDING)
+        player.refreshDimensions()
+    }
+
+    // Final landing: place the rider, apply velocity and orientation, restore
+    // gravity/pose, and terminate the session.
+    private fun applyLanding(session: Active, payload: SlideEndPayload) {
         active = null
         val player = Minecraft.getInstance().player ?: return
         SlideSableOrientation.clear(player)
@@ -454,6 +589,30 @@ object SlideClientSession {
         val player = mc.player ?: return
         val level = mc.level ?: return
         val session = active ?: return
+
+        // Replay interop: in replay view ReplayMod copies the recorded player's
+        // position/orientation into its own camera; writing the local (virtual)
+        // player here would keep re-hijacking the replay camera to the slide
+        // rider. Skip our playback entirely in replay view.
+        if (isReplayView()) {
+            return
+        }
+
+        // Landing transition in progress: ease the player to the landing point
+        // over a few ticks so ReplayMod's per-tick recorder never sees a
+        // >8-block hop (which it would store as an absolute teleport and the
+        // playback camera would snap to the landing point).
+        if (session.landRemaining > 0) {
+            session.landRemaining--
+            val f = session.landFrom ?: return
+            val t = session.landTo ?: return
+            val k = if (session.landRemaining == 0) 1.0
+            else 1.0 - session.landRemaining.toDouble() / session.landTotal.toDouble()
+            val p = f.scale(1.0 - k).add(t.scale(k))
+            player.setPos(p.x, p.y, p.z)
+            if (session.landRemaining == 0) finishLand(session)
+            return
+        }
 
         session.timeOffsetTicks += (session.targetOffsetTicks - session.timeOffsetTicks).coerceIn(-1.0, 1.0)
         val elapsed = (level.gameTime - session.startTick + session.timeOffsetTicks) / 20.0
