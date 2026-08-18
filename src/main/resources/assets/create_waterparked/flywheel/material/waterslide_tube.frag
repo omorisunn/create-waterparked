@@ -14,11 +14,11 @@ void flw_materialFragment() {
 
     vec2 uv;
     if (isWater > 0.5) {
-        float u = flw_tubeSprite.x + mod(flw_vertexTexCoord.x, 1.0) * (flw_tubeSprite.y - flw_tubeSprite.x);
-        float vDown = flw_tubeSprite.z + mod(flw_vertexTexCoord.y, 1.0) * (flw_tubeSprite.w - flw_tubeSprite.z);
-        float vUp = flw_tubeSprite.z + mod(flw_tubeExtra.x, 1.0) * (flw_tubeSprite.w - flw_tubeSprite.z);
-        vec4 up = texture(flw_diffuseTex, vec2(u, vUp));
-        vec4 down = texture(flw_diffuseTex, vec2(u, vDown));
+        // Vertex shader already tiled the flow coordinate inside the sprite
+        // rect, so the UVs are sprite-absolute and safe to sample directly
+        // (this also matches what shaderpacks do with our vertex UVs).
+        vec4 up = texture(flw_diffuseTex, vec2(flw_vertexTexCoord.x, flw_vertexTexCoord.y));
+        vec4 down = texture(flw_diffuseTex, vec2(flw_vertexTexCoord.x, flw_tubeExtra.x));
         flw_sampleColor = mix(up, down, flw_tubeExtra.y);
         flw_fragColor = flw_vertexColor * flw_sampleColor;
         return;

@@ -603,7 +603,12 @@ object WaterslideTubeMesh {
                 uTex, if (z > 0.25f) 1f else 0f,
                 (Math.round(su0 * 32767f) shl 16) or Math.round(su1 * 32767f),
                 (Math.round(sv0 * 65535f) shl 16) or Math.round(sv1 * 65535f),
-                u / r, v / r, 0f
+                // Up-facing normals (model-space +y): the shaderpack's water
+                // shading assumes a level surface, so a radial normal makes
+                // the fresnel reflection read as grazing from every angle and
+                // the water looks like a mirror. Up normals make reflection
+                // fall off with view angle like real water.
+                0f, 1f, 0f
             )
         }
 

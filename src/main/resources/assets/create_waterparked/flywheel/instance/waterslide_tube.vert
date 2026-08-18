@@ -198,8 +198,14 @@ void flw_instanceVertex(in FlwInstance i) {
         float phase = mix(i.phaseStart, i.phaseEnd, t);
         float base = (i.arcBase + arcLenTo(vf, c0, c1, c2, c3)) * WATER_V_CYCLES_PER_BLOCK;
         float vDown = base + phase * i.flowSign;
-        flw_vertexTexCoord = vec2(uf, vDown);
-        flw_tubeExtra = vec2(vDown, i.downstreamMix);
+        // Sprite-absolute UVs: the flow coordinate is tiled inside the sprite
+        // rect here, so shaderpacks that sample the atlas directly from the
+        // vertex UVs (Photon etc.) get a sane water texture instead of atlas
+        // garbage. The fragment shader samples these directly too.
+        float uu = spriteU0 + mod(uf, 1.0) * (spriteU1 - spriteU0);
+        float vv = spriteV0 + mod(vDown, 1.0) * (spriteV1 - spriteV0);
+        flw_vertexTexCoord = vec2(uu, vv);
+        flw_tubeExtra = vec2(vv, i.downstreamMix);
     } else {
         // tile the whole material, center and border repeat
         float targetW;

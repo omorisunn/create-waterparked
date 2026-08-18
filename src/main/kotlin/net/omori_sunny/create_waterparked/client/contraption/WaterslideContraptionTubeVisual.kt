@@ -35,8 +35,8 @@ class WaterslideContraptionTubeVisual(
         // every segment, matching the world-space visual
         const val WATER_IN_FRAC = 0.9f
         const val WATER_SURF_FRAC = 0.8f
-        const val WATER_COLOR_R = 0.3f
-        const val WATER_COLOR_G = 0.6f
+        const val WATER_COLOR_R = 1f
+        const val WATER_COLOR_G = 1f
         const val WATER_COLOR_B = 1f
         const val WATER_COLOR_A = 0.75f
     }

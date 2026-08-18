@@ -10,10 +10,10 @@ on:
       ccs_version:
         description: "Create: Coasters Simulated version"
         required: false
-        default: "0.1.4"
+        default: "0.1.5"
 
 env:
-  CCS_VERSION: 0.1.4
+  CCS_VERSION: 0.1.5
 
 jobs:
   build:

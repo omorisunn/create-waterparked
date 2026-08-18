@@ -980,7 +980,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             int light = waterLight(level, mid);
             w.setSegment(ps, cs, pt, ct, pl, cl, pr, cr)
                 .light(light)
-                .color(0.3f, 0.6f, 1f, 0.75f);
+                .color(1f, 1f, 1f, 0.75f);
             w.wallThickness = wallThickness;
             w.mirror = mirror;
             // accumulate the shader's own bezier arc length (not the flat 0.5
@@ -1106,7 +1106,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                         s.prevRadius, s.currRadius
                     )
                     .light(light)
-                    .color(0.3f, 0.6f, 1f, 0.75f);
+                    .color(1f, 1f, 1f, 0.75f);
                 arr[i].wallThickness = wallThickness;
                 arr[i].mirror = mirror;
                 arr[i].arcBase = s.arcBase;

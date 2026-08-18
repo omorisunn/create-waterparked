@@ -2,6 +2,7 @@
   "required": true,
   "minVersion": "0.8",
   "package": "net.omori_sunny.create_waterparked.mixin",
+  "plugin": "net.omori_sunny.create_waterparked.mixin.config.WaterparkedMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "AnchorPeerFakeTracksMixin",
@@ -35,6 +36,9 @@
     "client.CreativeModeInventoryScreenWaterparkedBannerMixin",
     "client.CreativeModeInventoryScreenWaterparkedTooltipMixin",
     "client.LevelRendererAccessor",
+    "client.iris.IrisWaterPassMixin",
+    "client.iris.GlShaderSourceProbeMixin",
+    "client.colorwheel.ColorwheelWaterEntityMixin",
     "client.SableEntityOrientationMixin",
     "ponder.WaterslidePonderLevelAccessor",
     "ponder.WaterslidePonderLevelInvoker",

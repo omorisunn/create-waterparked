@@ -85,6 +85,11 @@ object CreateWaterparkedClient {
                     ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "textures/entity/slide_sit.png")
             }
         }
+        // Vanilla fallback tube renderer: only active when Flywheel
+        // visualization is unavailable (the Flywheel visual stays primary).
+        event.registerBlockEntityRenderer(ModBlockEntities.WATERSLIDE_ANCHOR_BE) { ctx ->
+            net.omori_sunny.create_waterparked.client.renderer.WaterslideTubeBlockEntityRenderer(ctx)
+        }
     }
 
     private fun onRegisterParticleProviders(event: RegisterParticleProvidersEvent) {
@@ -115,17 +120,9 @@ object CreateWaterparkedClient {
     }
 
     private var lastDebugState: Boolean? = null
-    private var clientTickLog = 0L
 
     private fun onClientTick(event: ClientTickEvent.Post) {
-        clientTickLog++
         val mc = Minecraft.getInstance()
-        if (clientTickLog % 200 == 1L) {
-            CreateWaterparked.LOGGER.info(
-                "[ClientTick] alive tick={} level={} player={}",
-                clientTickLog, mc.level != null, mc.player != null
-            )
-        }
         WaterslideTubeVisual.tickVisibility()
         net.omori_sunny.create_waterparked.client.editor.SubLevelEditFocus.tick(mc)
         WaterSlideSoundManager.tick()
