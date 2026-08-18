@@ -48,6 +48,50 @@ jobs:
         curl -fsSL "$url" -o "libs/simulatedcoasters-$CCS_VERSION.jar"
         ls -la libs
 
+    # compileOnly shader dependencies (sodium/iris/colorwheel) are not on any
+    # public maven, so the CI downloads them from Modrinth. Sodium ships its
+    # real classes in a nested jar-in-jar, so it is extracted and repacked into
+    # the same flat jar layout the local ./libs uses.
+    - name: "download compile-only shader jars (iris, colorwheel, sodium)"
+      env:
+        IRIS_VERSION: "1.8.14-beta.1+1.21.1-neoforge"
+        COLORWHEEL_VERSION: "1.2.9+mc1.21.1"
+        SODIUM_VERSION: "mc1.21.1-0.8.12-neoforge"
+      run: |
+        set -e
+        fetch() {
+          local slug="$1" ver="$2" out="$3"
+          local url
+          url=$(curl -fsSL -H "User-Agent: create-waterparked-ci/0.1" \
+            "https://api.modrinth.com/v2/project/$slug/version?game_versions=%5B%221.21.1%22%5D&loaders=%5B%22neoforge%22%5D" \
+            | jq -r --arg v "$ver" '.[] | select(.version_number == $v) | .files[] | select(.primary == true) | .url' | head -n 1)
+          if [ -z "$url" ]; then
+            echo "::error::$slug $ver not found on Modrinth"
+            exit 1
+          fi
+          curl -fsSL "$url" -o "$out"
+        }
+        mkdir -p libs
+        fetch colorwheel "$COLORWHEEL_VERSION" libs/colorwheel-1.2.9.jar
+        fetch iris "$IRIS_VERSION" libs/iris-1.8.14-beta.jar
+        fetch sodium "$SODIUM_VERSION" /tmp/sodium-dl.jar
+        rm -rf /tmp/sodium-nested /tmp/sodium-classes
+        mkdir -p /tmp/sodium-nested /tmp/sodium-classes
+        cd /tmp/sodium-nested
+        unzip -q /tmp/sodium-dl.jar 'META-INF/jarjar/*'
+        # the sodium classes live in the sodium-specific nested jar, not the
+        # bundled fabric jars
+        NESTED=$(find . -name '*.jar' | grep -i sodium | head -n 1)
+        if [ -z "$NESTED" ]; then
+          echo "::error::sodium nested jar-in-jar not found"
+          exit 1
+        fi
+        cd /tmp/sodium-classes
+        unzip -q "/tmp/sodium-nested/$NESTED"
+        jar cf "$GITHUB_WORKSPACE/libs/sodium-renderer-0.8.12.jar" -C /tmp/sodium-classes .
+        cd "$GITHUB_WORKSPACE"
+        ls -la libs
+
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@af1da67850ed9a4cedd57bfd976089dd991e2582 # v4.0.0
 
