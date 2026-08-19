@@ -76,6 +76,16 @@ object ModPayloads {
             WaterslideDebugRequestPayload.STREAM_CODEC,
             WaterslideDebugRequestPayload::handleOnServer
         )
+        registrar.playToServer(
+            WaterslideSupportApplyPayload.TYPE,
+            WaterslideSupportApplyPayload.STREAM_CODEC,
+            WaterslideSupportApplyPayload::handleOnServer
+        )
+        registrar.playToServer(
+            WaterslideSupportHoverPayload.TYPE,
+            WaterslideSupportHoverPayload.STREAM_CODEC,
+            WaterslideSupportHoverPayload::handleOnServer
+        )
         registrar.playToClient(
             WaterslideDebugTrajectoryPayload.TYPE,
             WaterslideDebugTrajectoryPayload.STREAM_CODEC,

@@ -1,5 +1,6 @@
 package net.omori_sunny.create_waterparked.content.waterslide
 
+import com.simibubi.create.AllBlocks
 import com.simibubi.create.api.contraption.transformable.TransformableBlockEntity
 import com.simibubi.create.content.contraptions.StructureTransform
 import com.simibubi.create.content.trains.track.BezierConnection
@@ -17,7 +18,9 @@ import net.minecraft.core.BlockPos
 import net.minecraft.core.HolderLookup
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.nbt.ListTag
+import net.minecraft.nbt.NbtUtils
 import net.minecraft.server.level.ServerLevel
+import net.minecraft.world.item.ItemStack
 import net.minecraft.world.level.Level
 import net.minecraft.world.level.block.entity.BlockEntity
 import net.minecraft.world.level.block.entity.BlockEntityType
@@ -52,6 +55,82 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
 
 // watered curves, keyed by peer
     val wateredCurves: MutableMap<BlockPos, Boolean> = mutableMapOf()
+
+// support structure copycat materials, stored per anchor exactly like Create's
+// CopycatBlockEntity: material BlockState + the consumed item (returned on
+// wrench reset). The bracket shell and the beam each keep their own material.
+    var supportBracketMaterial: BlockState = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
+        private set
+    var supportBeamMaterial: BlockState = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
+        private set
+    private var supportBracketConsumedItem: ItemStack = ItemStack.EMPTY
+    private var supportBeamConsumedItem: ItemStack = ItemStack.EMPTY
+
+    fun supportMaterial(part: WaterslideSupportPart): BlockState = when (part) {
+        WaterslideSupportPart.BRACKET -> supportBracketMaterial
+        WaterslideSupportPart.BEAM -> supportBeamMaterial
+    }
+
+    fun supportConsumedItem(part: WaterslideSupportPart): ItemStack = when (part) {
+        WaterslideSupportPart.BRACKET -> supportBracketConsumedItem
+        WaterslideSupportPart.BEAM -> supportBeamConsumedItem
+    }
+
+    fun hasCustomSupportMaterial(part: WaterslideSupportPart): Boolean =
+        !AllBlocks.COPYCAT_BASE.has(supportMaterial(part))
+
+    fun setSupportMaterial(part: WaterslideSupportPart, material: BlockState, consumed: ItemStack) {
+        when (part) {
+            WaterslideSupportPart.BRACKET -> {
+                supportBracketMaterial = material
+                supportBracketConsumedItem = consumed.copyWithCount(1)
+            }
+            WaterslideSupportPart.BEAM -> {
+                supportBeamMaterial = material
+                supportBeamConsumedItem = consumed.copyWithCount(1)
+            }
+        }
+        setChanged()
+        notifyBlockUpdated()
+    }
+
+    fun cycleSupportMaterial(part: WaterslideSupportPart): Boolean {
+        val cycled = WaterslideSupportMaterials.cycleMaterial(supportMaterial(part)) ?: return false
+        when (part) {
+            WaterslideSupportPart.BRACKET -> supportBracketMaterial = cycled
+            WaterslideSupportPart.BEAM -> supportBeamMaterial = cycled
+        }
+        setChanged()
+        notifyBlockUpdated()
+        return true
+    }
+
+    fun resetSupportMaterial(part: WaterslideSupportPart): ItemStack {
+        val returned = supportConsumedItem(part)
+        when (part) {
+            WaterslideSupportPart.BRACKET -> {
+                supportBracketMaterial = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
+                supportBracketConsumedItem = ItemStack.EMPTY
+            }
+            WaterslideSupportPart.BEAM -> {
+                supportBeamMaterial = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
+                supportBeamConsumedItem = ItemStack.EMPTY
+            }
+        }
+        setChanged()
+        notifyBlockUpdated()
+        return returned
+    }
+
+    // Copycat parity: destroying the anchor returns the consumed material items.
+    fun dropSupportConsumedItems() {
+        val lvl = level ?: return
+        if (lvl.isClientSide) return
+        if (!supportBracketConsumedItem.isEmpty)
+            net.minecraft.world.level.block.Block.popResource(lvl, blockPos, supportBracketConsumedItem)
+        if (!supportBeamConsumedItem.isEmpty)
+            net.minecraft.world.level.block.Block.popResource(lvl, blockPos, supportBeamConsumedItem)
+    }
 
     private val waterTank: WaterTank = WaterTank(ModConfig.anchorFluidCapacity()) { onWaterChanged() }
     private val waterHandler: IFluidHandler = WaterOnlyHandler()
@@ -254,6 +333,22 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             }
         }
         wateredCurves.keys.retainAll(anchorPeerCurvesView.keys)
+        supportBracketMaterial = if (tag.contains("SupportBracketMaterial", 10))
+            NbtUtils.readBlockState(blockHolderGetter(), tag.getCompound("SupportBracketMaterial"))
+                ?: AllBlocks.COPYCAT_BASE.get().defaultBlockState()
+        else
+            AllBlocks.COPYCAT_BASE.get().defaultBlockState()
+        supportBeamMaterial = if (tag.contains("SupportBeamMaterial", 10))
+            NbtUtils.readBlockState(blockHolderGetter(), tag.getCompound("SupportBeamMaterial"))
+                ?: AllBlocks.COPYCAT_BASE.get().defaultBlockState()
+        else
+            AllBlocks.COPYCAT_BASE.get().defaultBlockState()
+        supportBracketConsumedItem = ItemStack.parseOptional(
+            registries, tag.getCompound("SupportBracketItem")
+        )
+        supportBeamConsumedItem = ItemStack.parseOptional(
+            registries, tag.getCompound("SupportBeamItem")
+        )
         if (tag.contains("WaterTank", 10)) {
             waterTank.readFromNBT(registries, tag.getCompound("WaterTank"))
         }
@@ -292,6 +387,10 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             wateredList.add(entry)
         }
         tag.put("WateredCurves", wateredList)
+        tag.put("SupportBracketMaterial", NbtUtils.writeBlockState(supportBracketMaterial))
+        tag.put("SupportBeamMaterial", NbtUtils.writeBlockState(supportBeamMaterial))
+        tag.put("SupportBracketItem", supportBracketConsumedItem.saveOptional(registries))
+        tag.put("SupportBeamItem", supportBeamConsumedItem.saveOptional(registries))
         tag.put("WaterTank", waterTank.writeToNBT(registries, CompoundTag()))
         super.write(tag, registries, clientPacket)
     }
@@ -307,6 +406,11 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
 // so horizontal-axis rotations keep the curve data consistent while the rail
 // models may not follow; this matches Create's own track convention.
     override fun transform(blockEntity: BlockEntity, transform: StructureTransform) {
+        // Copycat parity: the stored material states rotate with the structure
+        // even before any curve remapping below.
+        supportBracketMaterial = transform.apply(supportBracketMaterial)
+        supportBeamMaterial = transform.apply(supportBeamMaterial)
+
         val access = this as? AnchorPeerCurveDataAccess ?: return
         val oldCurves = access.`waterparked$anchorPeerCurves`()
         if (oldCurves.isEmpty()) return

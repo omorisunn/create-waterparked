@@ -2,11 +2,13 @@ package net.omori_sunny.create_waterparked.client
 
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer
 import net.omori_sunny.create_waterparked.CreateWaterparked
+import net.omori_sunny.create_waterparked.client.compat.itrp.IterationRPPatcher
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRadiusEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslideDyeOutline
 import net.omori_sunny.create_waterparked.client.editor.WaterslideEditorRenderTypes
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit
+import net.omori_sunny.create_waterparked.client.editor.WaterslideSupportEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPreview
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashParticle
@@ -45,9 +47,20 @@ import thedarkcolour.kotlinforforge.neoforge.forge.MOD_BUS
 object CreateWaterparkedClient {
 
     fun registerClientEvents() {
+        // Iris validates the active shaderpack during its own mod loading - before
+        // any FML event - so the patched pack must exist as early as possible.
+        // Run on a BACKGROUND thread: a synchronous 22MB zip copy on the mod
+        // loading thread broke Create's Registrate registration.
+        Thread { IterationRPPatcher.runIfNeeded() }.apply {
+            isDaemon = true
+            name = "Waterparked-IterationRPPatcher"
+            start()
+        }
         MOD_BUS.addListener(::onClientSetup)
         MOD_BUS.addListener(::onRegisterRenderers)
         MOD_BUS.addListener(::onRegisterParticleProviders)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSupportEdit::onRightClickBlock)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSupportEdit::onRightClickEmpty)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(WaterslidePlacementPreview::onClientTick)
@@ -69,6 +82,9 @@ object CreateWaterparkedClient {
     }
 
     private fun onClientSetup(event: FMLClientSetupEvent) {
+        // safety net: if the background construction run hasn't finished yet, run
+        // it again here (idempotent - runIfNeeded is guarded)
+        IterationRPPatcher.runIfNeeded()
         // ponder stories for waterslide items
         event.enqueueWork { PonderIndex.addPlugin(WaterslidePonderPlugin()) }
         // flywheel instanced rendering
@@ -124,6 +140,7 @@ object CreateWaterparkedClient {
     private fun onClientTick(event: ClientTickEvent.Post) {
         val mc = Minecraft.getInstance()
         WaterslideTubeVisual.tickVisibility()
+        WaterslideSupportEdit.onClientTick()
         net.omori_sunny.create_waterparked.client.editor.SubLevelEditFocus.tick(mc)
         WaterSlideSoundManager.tick()
         WaterslideSplashSpawner.tickStanding(mc)
@@ -138,6 +155,7 @@ object CreateWaterparkedClient {
     private fun onClientLevelUnload(event: LevelEvent.Unload) {
         if (event.level.isClientSide) {
             WaterslideCurveRenderer.clearClientAnchors()
+            WaterslideSupportEdit.clear()
             SlideSableOrientation.clearAll()
             SlideClientSession.resetActive()
             WaterFlowSimulation.clear()

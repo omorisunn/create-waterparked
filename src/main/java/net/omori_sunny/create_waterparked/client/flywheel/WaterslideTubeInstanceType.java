@@ -47,6 +47,13 @@ public final class WaterslideTubeInstanceType {
                     .scalar("jitterTime", FloatRepr.FLOAT)
                     .scalar("tailFadeStart", FloatRepr.FLOAT)
                     .scalar("tailFadeEnd", FloatRepr.FLOAT)
+                    .scalar("waterTileSpan", FloatRepr.FLOAT)
+                    .scalar("spriteU0", FloatRepr.FLOAT)
+                    .scalar("spriteU1", FloatRepr.FLOAT)
+                    .scalar("spriteV0", FloatRepr.FLOAT)
+                    .scalar("spriteV1", FloatRepr.FLOAT)
+                    .scalar("isWater", FloatRepr.FLOAT)
+                    .scalar("waterAtlasUV", FloatRepr.FLOAT)
                     .build()
             )
             .writer((ptr, instance) -> {
@@ -81,6 +88,13 @@ public final class WaterslideTubeInstanceType {
                 MemoryUtil.memPutFloat(ptr + 148L, instance.jitterTime);
                 MemoryUtil.memPutFloat(ptr + 152L, instance.tailFadeStart);
                 MemoryUtil.memPutFloat(ptr + 156L, instance.tailFadeEnd);
+                MemoryUtil.memPutFloat(ptr + 160L, instance.waterTileSpan);
+                MemoryUtil.memPutFloat(ptr + 164L, instance.spriteU0);
+                MemoryUtil.memPutFloat(ptr + 168L, instance.spriteU1);
+                MemoryUtil.memPutFloat(ptr + 172L, instance.spriteV0);
+                MemoryUtil.memPutFloat(ptr + 176L, instance.spriteV1);
+                MemoryUtil.memPutFloat(ptr + 180L, instance.isWater);
+                MemoryUtil.memPutFloat(ptr + 184L, instance.waterAtlasUV);
             })
             .vertexShader(VERTEX_SHADER)
             .cullShader(CULL_SHADER)

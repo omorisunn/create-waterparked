@@ -101,6 +101,7 @@ object WaterslideSectorEdit {
 
     @JvmStatic
     fun onRightClickBlock(event: PlayerInteractEvent.RightClickBlock) {
+        if (event.isCanceled) return
         val player = event.entity ?: return
         if (AllItems.WRENCH.isIn(player.mainHandItem)) return
 

@@ -69,19 +69,20 @@ void flw_instanceVertex(in FlwInstance i) {
         ln.x = -ln.x;
     }
 
-    vec2 rawLight = flw_vertexLight * 256.0;
-    float spriteV0 = rawLight.x / 65535.0;
-    float spriteV1 = rawLight.y / 65535.0;
-    ivec2 ov = flw_vertexOverlay;
-    float spriteU0 = float(ov.x) / 32767.0;
-    float spriteU1 = float(ov.y & 0x7FFF) / 32767.0;
-    bool isSideWall = ov.y < 0;
-    float sectorRadians = flw_vertexColor.r * 6.28318530718;
-    float texW = max(flw_vertexColor.g * 64.0, 1.0);
-    float texH = max(flw_vertexColor.b * 64.0, 1.0);
-    float isWater = flw_vertexColor.g < 0.1 ? 1.0 : 0.0;
-    float borderPx = flw_vertexColor.a * 16.0;
-    float boundaryFactor = flw_vertexColor.a;
+    // sprite rect and flags ride the INSTANCE buffer (ColoredLitOverlay's
+    // instance fields), never the mesh attributes: Colorwheel forwards the raw
+    // mesh vertex attributes verbatim to the shaderpack, so anything packed
+    // there (sprite rect, border) would leak into pack material/alpha/light.
+    float spriteU0 = i.spriteU0;
+    float spriteU1 = i.spriteU1;
+    float spriteV0 = i.spriteV0;
+    float spriteV1 = i.spriteV1;
+    float isWater = i.isWater;
+    // block sprites are 16px; border pixels fixed at the default (2)
+    float texW = 16.0;
+    float texH = 16.0;
+    float borderPx = 2.0;
+    float boundaryFactor = 1.0;
     flw_tubeSprite = vec4(spriteU0, spriteU1, spriteV0, spriteV1);
     flw_tubeTex = vec3(texW, texH, borderPx);
 
@@ -124,7 +125,7 @@ void flw_instanceVertex(in FlwInstance i) {
 
     float radius = max(mix(i.prevRadius, i.currRadius, t), 0.001);
     float isCap = abs(ln.z) > 0.5 ? 1.0 : 0.0;
-    flw_tubeFlags = vec4(isWater, boundaryFactor, isCap, 0.0);
+    flw_tubeFlags = vec4(isWater, boundaryFactor, isCap, i.waterTileSpan);
     vec3 worldPos;
     if (isWater > 0.5) {
         // water envelope vertices carry their own cross-section coordinates;
@@ -134,41 +135,48 @@ void flw_instanceVertex(in FlwInstance i) {
         float r0 = length(lp.xy) * radius;
         vec3 worldBase = spine + radial * r0;
         float speedT = mix(i.flowStart, i.flowEnd, t);
-        float timePhase = i.jitterTime * i.jitterTimeScale * speedT;
-        // noise keyed on spine (bit-identical at shared segment boundaries) + the
-        // cross-section angle, so adjacent segments jitter identically at their seam.
-        // cos(2*ang) is invariant under the ang -> PI - ang remapping caused by a
-        // reversed frame (negated tangent/lateral) or a joined curve, so forward
-        // and backward segments share the same noise key at a boundary ring.
-        float ang = atan(lp.y, lp.x);
-        float angKey = cos(2.0 * ang) * 2.0;
-        // the tangential basis flips sign under the same remapping; cos(ang)
-        // carries exactly that sign, so mirror the tangential jitter back
-        float tangSign = clamp(cos(ang) / 0.85, -1.0, 1.0);
-        vec3 np = vec3(spine.x * i.jitterFrequency, spine.y * i.jitterFrequency + angKey, spine.z * i.jitterFrequency);
-        float nRadial = jitterFbm(np + vec3(0.0, 0.0, timePhase));
-        float nTang = jitterFbm(np + vec3(5.2, 1.3, timePhase * 1.3)) * tangSign;
-        // keep the geometric amplitude small and comparable to conventional
-        // vertex-wave calculations: normalized flow, boundary falloff, a 0.25
-        // wave scale, and a hard cap so a fast segment can never spike out.
         float flowJitter = clamp(speedT, 0.0, 1.0);
-        float amp = min(flowJitter * boundaryFactor * i.jitterScale * 0.25, 0.06);
-        float radialOff = (nRadial * 2.0 - 1.0) * amp;
-        float tangOff = (nTang * 2.0 - 1.0) * amp * 0.6;
+        float radialOff = 0.0;
+        float tangOff = 0.0;
+        // iterationRP passes jitterScale = 0 for its 10x water meshes: skip the
+        // whole FBM here instead of computing noise that multiplies to zero.
+        if (i.jitterScale > 0.0001) {
+            float timePhase = i.jitterTime * i.jitterTimeScale * speedT;
+            // noise keyed on spine (bit-identical at shared segment boundaries) + the
+            // cross-section angle, so adjacent segments jitter identically at their seam.
+            // cos(2*ang) is invariant under the ang -> PI - ang remapping caused by a
+            // reversed frame (negated tangent/lateral) or a joined curve, so forward
+            // and backward segments share the same noise key at a boundary ring.
+            float ang = atan(lp.y, lp.x);
+            float angKey = cos(2.0 * ang) * 2.0;
+            // the tangential basis flips sign under the same remapping; cos(ang)
+            // carries exactly that sign, so mirror the tangential jitter back
+            float tangSign = clamp(cos(ang) / 0.85, -1.0, 1.0);
+            vec3 np = vec3(spine.x * i.jitterFrequency, spine.y * i.jitterFrequency + angKey, spine.z * i.jitterFrequency);
+            float nRadial = jitterFbm(np + vec3(0.0, 0.0, timePhase));
+            float nTang = jitterFbm(np + vec3(5.2, 1.3, timePhase * 1.3)) * tangSign;
+            // keep the geometric amplitude small and comparable to conventional
+            // vertex-wave calculations: normalized flow, boundary falloff, a 0.25
+            // wave scale, and a hard cap so a fast segment can never spike out.
+            float amp = min(flowJitter * boundaryFactor * i.jitterScale * 0.25, 0.06);
+            radialOff = (nRadial * 2.0 - 1.0) * amp;
+            tangOff = (nTang * 2.0 - 1.0) * amp * 0.6;
+        }
         float maxOut = max(radius - i.wallThickness - r0, 0.0);
         radialOff = clamp(radialOff, -r0, maxOut);
         worldPos = worldBase + radial * radialOff + tangential * tangOff;
     } else {
+        // One rule for the tube wall AND side walls: inner/outer comes from
+        // lp.xy length (side-wall verts sit at 0.92/1.0) and normal orientation.
+        // The old negative-u side-wall channel was mix()ed as a radial fraction
+        // and extruded the side wall ~1 block outside the tube at OPEN sector
+        // boundaries (the wrong wall width between sectors).
         float radial;
-        if (isSideWall) {
-            radial = mix(radius + (i.wallThickness - BASE_WALL), radius - BASE_WALL, flw_vertexTexCoord.x);
-        } else {
-            float inner = length(lp.xy) < 0.95 ? 1.0
-                : (dot(lp.xy, ln.xy) < 0.0 ? 1.0 : 0.0);
-            radial = inner > 0.5
-                ? max(radius - BASE_WALL, 0.001)
-                : max(radius + (i.wallThickness - BASE_WALL), 0.001);
-        }
+        float inner = length(lp.xy) < 0.95 ? 1.0
+            : (dot(lp.xy, ln.xy) < 0.0 ? 1.0 : 0.0);
+        radial = inner > 0.5
+            ? max(radius - BASE_WALL, 0.001)
+            : max(radius + (i.wallThickness - BASE_WALL), 0.001);
         worldPos = spine + lp.x * lateral * radial + lp.y * faceUp * radial;
     }
     flw_vertexPos = vec4(worldPos, 1.0);
@@ -198,32 +206,34 @@ void flw_instanceVertex(in FlwInstance i) {
         float phase = mix(i.phaseStart, i.phaseEnd, t);
         float base = (i.arcBase + arcLenTo(vf, c0, c1, c2, c3)) * WATER_V_CYCLES_PER_BLOCK;
         float vDown = base + phase * i.flowSign;
-        // Sprite-absolute UVs: the flow coordinate is tiled inside the sprite
-        // rect here, so shaderpacks that sample the atlas directly from the
-        // vertex UVs (Photon etc.) get a sane water texture instead of atlas
-        // garbage. The fragment shader samples these directly too.
-        float uu = spriteU0 + mod(uf, 1.0) * (spriteU1 - spriteU0);
-        float vv = spriteV0 + mod(vDown, 1.0) * (spriteV1 - spriteV0);
-        flw_vertexTexCoord = vec2(uu, vv);
-        flw_tubeExtra = vec2(vv, i.downstreamMix);
-    } else {
-        // tile the whole material, center and border repeat
-        float targetW;
-        if (isSideWall) {
-            targetW = max(i.wallThickness * 16.0, 1.0);
+        // stretch the tile repeat to `waterTileSpan` blocks (>=1); shaderpack
+        // water materials/normals sample this vertex UV, so a larger span melts
+        // the per-block striping without touching the non-shader look (span=1)
+        float span = max(i.waterTileSpan, 1.0);
+        float vSpan = vDown / span;
+        if (i.waterAtlasUV > 0.5) {
+            // atlas-sampling pack (iterationRP): gbuffers_water samples tex
+            // (the block atlas) directly with the vertex uv, so export the
+            // coordinate folded into the water_still sprite rect - tile
+            // coordinates (0..2.09, v = arc length) would sample arbitrary
+            // atlas regions and the water looks like loud garbage texture.
+            // (Only set while colorwheel routes our meshes, so the plain
+            // fragment path below never sees these pre-folded coords.)
+            flw_vertexTexCoord = vec2(
+                spriteU0 + mod(uf, 1.0) * (spriteU1 - spriteU0),
+                spriteV0 + mod(vSpan, 1.0) * (spriteV1 - spriteV0)
+            );
+            flw_tubeExtra = vec2(
+                spriteV0 + mod(vSpan, 1.0) * (spriteV1 - spriteV0), i.downstreamMix
+            );
         } else {
-            float inner = length(lp.xy) < 0.95 ? 1.0
-                : (dot(lp.xy, ln.xy) < 0.0 ? 1.0 : 0.0);
-            float texRadius = inner > 0.5
-                ? radius - BASE_WALL
-                : radius + (i.wallThickness - BASE_WALL);
-            targetW = max(sectorRadians * texRadius * 16.0, 1.0);
+            flw_vertexTexCoord = vec2(uf, vSpan);
+            flw_tubeExtra = vec2(vSpan, i.downstreamMix);
         }
-        float px = flw_vertexTexCoord.x * targetW;
-        // undistorted V: real arc length along the curve, caps use wall thickness
-        float py = isCap > 0.5
-            ? flw_vertexTexCoord.y * i.wallThickness * 16.0
-            : arcLenTo(flw_vertexTexCoord.y, c0, c1, c2, c3) * 16.0;
-        flw_vertexTexCoord = vec2(px, py);
+    } else {
+        // Wall/cap/side-wall uv is already atlas-space (sprite rect baked by
+        // the mesh builder for the Colorwheel/pack path, which samples
+        // texture() with this vertex uv directly). Nothing to do — border
+        // pixels are part of the sprite.
     }
 }

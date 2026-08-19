@@ -51,6 +51,13 @@ object CreateWaterparked {
 
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onServerTick)
         NeoForge.EVENT_BUS.addListener(
+            net.omori_sunny.create_waterparked.content.waterslide.WaterslideSupportInteraction::onPlayerLoggedOut
+        )
+        NeoForge.EVENT_BUS.addListener(
+            EventPriority.HIGHEST,
+            net.omori_sunny.create_waterparked.content.waterslide.WaterslideSupportInteraction::onRightClickBlock
+        )
+        NeoForge.EVENT_BUS.addListener(
             EventPriority.HIGHEST,
             net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorInteraction::onRightClickBlock
         )

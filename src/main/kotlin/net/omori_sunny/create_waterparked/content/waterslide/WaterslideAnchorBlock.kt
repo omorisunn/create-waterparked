@@ -34,6 +34,19 @@ class WaterslideAnchorBlock(properties: BlockBehaviour.Properties) : CoasterAnch
     ): BlockEntityTicker<T>? =
         createTickerHelper(type, ModBlockEntities.WATERSLIDE_ANCHOR_BE, WaterslideAnchorBlockEntity::tick)
 
+    override fun onRemove(
+        state: BlockState,
+        level: Level,
+        pos: BlockPos,
+        newState: BlockState,
+        isMoving: Boolean
+    ) {
+        if (!isMoving && !state.`is`(newState.block)) {
+            (level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity)?.dropSupportConsumedItems()
+        }
+        super.onRemove(state, level, pos, newState, isMoving)
+    }
+
     companion object {
         fun defaultProperties(): BlockBehaviour.Properties =
             BlockBehaviour.Properties.of()

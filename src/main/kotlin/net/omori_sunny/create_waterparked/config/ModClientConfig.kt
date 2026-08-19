@@ -23,6 +23,12 @@ object ModClientConfig {
     lateinit var WATER_JITTER_TIME_SCALE: ModConfigSpec.DoubleValue
     // water simulation
     lateinit var WATER_PARTICLE_COUNT: ModConfigSpec.IntValue
+    // support structure (copycat-style bracket shell + beam)
+    lateinit var SUPPORT_FRACTION: ModConfigSpec.DoubleValue
+    lateinit var SUPPORT_THICKNESS: ModConfigSpec.DoubleValue
+    lateinit var SUPPORT_BEAM_SIZE: ModConfigSpec.DoubleValue
+    lateinit var SUPPORT_BRACKET_THICKNESS: ModConfigSpec.DoubleValue
+    lateinit var SHADER_WATER_COMPAT: ModConfigSpec.BooleanValue
     // slide splash particles
     lateinit var SPLASH_DENSITY: ModConfigSpec.DoubleValue
     lateinit var SPLASH_MAX_RATE: ModConfigSpec.IntValue
@@ -69,6 +75,27 @@ object ModClientConfig {
         WATER_JITTER_TIME_SCALE = BUILDER
             .comment("Water vertex jitter noise time scale (how fast the noise evolves).")
             .defineInRange("waterJitterTimeScale", 12.0, 0.1, 16.0)
+        BUILDER.pop()
+
+        BUILDER.push("compat")
+        SHADER_WATER_COMPAT = BUILDER
+            .comment("Enable shaderpack water adaptation: the tube water and thrown stream are stamped and shaded through the active shaderpack's own water program (BSL / Complementary / Photon adapters). Turn off to render water with the plain translucent appearance under any shaderpack.")
+            .define("shaderWaterCompat", true)
+        BUILDER.pop()
+
+        BUILDER.push("support")
+        SUPPORT_FRACTION = BUILDER
+            .comment("Fraction of the tube's lower circumference wrapped by the support bracket shell. 1/3 = bottom 120 degrees.")
+            .defineInRange("supportFraction", 1.0 / 3.0, 0.1, 0.5)
+        SUPPORT_THICKNESS = BUILDER
+            .comment("Support bracket shell thickness in blocks (extends outward from the tube wall).")
+            .defineInRange("supportThickness", 0.15, 0.05, 0.4)
+        SUPPORT_BEAM_SIZE = BUILDER
+            .comment("Support beam cross-section edge length in blocks (square profile).")
+            .defineInRange("supportBeamSize", 0.4, 0.2, 0.8)
+        SUPPORT_BRACKET_THICKNESS = BUILDER
+            .comment("Length of the bridge-style support bracket along the tube axis, in blocks (one bracket per anchor).")
+            .defineInRange("supportBracketThickness", 0.5, 0.2, 2.0)
         BUILDER.pop()
 
         BUILDER.push("water")
@@ -124,6 +151,26 @@ object ModClientConfig {
     fun waterEnvelopeSpacing(): Int = WATER_ENVELOPE_SPACING.get().coerceIn(1, 4)
 
     fun waterSimDebug(): Boolean = WATER_SIM_DEBUG.get()
+
+    /** Lower arc bound (degrees) of the support shell, centered on 270° (bottom). */
+    fun supportArcLo(): Float {
+        val f = SUPPORT_FRACTION.get().toFloat().coerceIn(0.1f, 0.5f)
+        return 270f - 180f * f / 2f
+    }
+
+    fun supportArcHi(): Float {
+        val f = SUPPORT_FRACTION.get().toFloat().coerceIn(0.1f, 0.5f)
+        return 270f + 180f * f / 2f
+    }
+
+    fun supportThickness(): Float = SUPPORT_THICKNESS.get().toFloat().coerceIn(0.05f, 0.4f)
+
+    fun supportBeamSize(): Float = SUPPORT_BEAM_SIZE.get().toFloat().coerceIn(0.2f, 0.8f)
+
+    fun supportBracketThickness(): Float =
+        SUPPORT_BRACKET_THICKNESS.get().toFloat().coerceIn(0.2f, 2.0f)
+
+    fun shaderWaterCompat(): Boolean = SHADER_WATER_COMPAT.get()
 
     fun register() {
         ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.CLIENT, SPEC)

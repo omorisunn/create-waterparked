@@ -11,6 +11,7 @@ import net.minecraft.nbt.CompoundTag
 import net.minecraft.nbt.Tag
 import net.minecraft.world.level.LightLayer
 import net.minecraft.world.phys.Vec3
+import net.omori_sunny.create_waterparked.client.compat.IrisColorwheelCompat
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeInstance
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeInstanceType
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
@@ -32,11 +33,13 @@ class WaterslideContraptionTubeVisual(
     private companion object {
         const val WALL_THICKNESS = 0.1f
         // fixed cross-section fractions so the water model is shared across
-        // every segment, matching the world-space visual
-        const val WATER_IN_FRAC = 0.9f
+        // every segment, matching the world-space visual. The bed arc stays
+        // strictly inside the inner wall (radius - 0.1): need 0.85r < r - 0.1
+        // (r > 2/3) so the band never z-fights with the wall into green stripes.
+        const val WATER_IN_FRAC = 0.85f
         const val WATER_SURF_FRAC = 0.8f
-        const val WATER_COLOR_R = 1f
-        const val WATER_COLOR_G = 1f
+        const val WATER_COLOR_R = 0.3f
+        const val WATER_COLOR_G = 0.6f
         const val WATER_COLOR_B = 1f
         const val WATER_COLOR_A = 0.75f
     }
@@ -156,7 +159,7 @@ class WaterslideContraptionTubeVisual(
         private val frames: List<WaterslideTubeMesh.TubeSegmentFrame> =
             WaterslideTubeMesh.sampleSegments(curve, radius, radius, Vec3.ZERO)
 
-        private val models = WaterslideTubeMesh.modelsFor(config)
+        private val models = WaterslideTubeMesh.modelsFor(config, radius)
 
         // water field synced from the server's one-time contraption water
         // computation; when present the tube flows even if the captured NBT
@@ -189,6 +192,7 @@ class WaterslideContraptionTubeVisual(
         private val wallInstances = ArrayList<WaterslideTubeInstance>()
         private val waterInstances = ArrayList<WaterslideTubeInstance>()
         private var waterBuilt = false
+        private var builtWaterCrossSections = 0
 
         init {
             buildWall()
@@ -197,18 +201,28 @@ class WaterslideContraptionTubeVisual(
 
         // Builds the water band lazily: after the server's water-field sync
         // arrives (it can lag the visual creation) the tube should still show
-        // flowing water. Called once at construction and re-checked periodically.
+        // flowing water. Also rebuilds when the water mesh density changes
+        // (iterationRP's 10x subdivision toggled by pack/config/polygon scale),
+        // so mounted contraptions pick the feature up without re-mounting.
         fun rebuildWaterIfNeeded() {
-            if (waterBuilt) return
+            val crossSections = WaterslideTubeMesh.waterCrossSections()
+            if (waterBuilt && crossSections == builtWaterCrossSections) return
             val fieldPresent = waterField != null
             if (watered || fieldPresent) {
+                deleteWater()
                 buildWater()
                 waterBuilt = true
+                builtWaterCrossSections = crossSections
                 net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.debug(
-                    "[ContraptionWaterVisual] built water for peer={} wateredNbt={} fieldPresent={} fieldSegs={}",
-                    peer, watered, fieldPresent, waterField?.segments?.size
+                    "[ContraptionWaterVisual] built water for peer={} wateredNbt={} fieldPresent={} fieldSegs={} crossSections={}",
+                    peer, watered, fieldPresent, waterField?.segments?.size, crossSections
                 )
             }
+        }
+
+        private fun deleteWater() {
+            for (w in waterInstances) w.delete()
+            waterInstances.clear()
         }
 
         private fun buildWall() {
@@ -255,7 +269,13 @@ class WaterslideContraptionTubeVisual(
                     f.prevRadius, f.currRadius
                 )
                 w.light(lights[i])
-                w.color(WATER_COLOR_R, WATER_COLOR_G, WATER_COLOR_B, WATER_COLOR_A)
+                // iterationRP: light blue albedo (its glass absorption tint comes
+                // from this) - keeps the background readable with a hint of blue
+                if (IrisColorwheelCompat.waterUvAtlasMode()) {
+                    w.color(0.86f, 0.92f, 1f, WATER_COLOR_A)
+                } else {
+                    w.color(WATER_COLOR_R, WATER_COLOR_G, WATER_COLOR_B, WATER_COLOR_A)
+                }
                 w.wallThickness = WALL_THICKNESS
                 w.mirror = 1f
                 w.arcBase = prefixArcs[i]
@@ -266,7 +286,10 @@ class WaterslideContraptionTubeVisual(
                 w.flowEnd = flow
                 w.flowUpstream = flow
                 w.downstreamMix = 1f
-                w.jitterScale = ModClientConfig.waterJitterScale()
+                // iterationRP shades water through its own path: keep the mesh
+                // static there, user jitter stays active for every other pack
+                w.jitterScale = if (IrisColorwheelCompat.iterationRpWaterMode()) 0f
+                    else ModClientConfig.waterJitterScale()
                 w.jitterFrequency = ModClientConfig.waterJitterFrequency()
                 w.jitterTimeScale = ModClientConfig.waterJitterTimeScale()
                 w.jitterTime = 0f
@@ -280,9 +303,8 @@ class WaterslideContraptionTubeVisual(
 
         fun delete() {
             for (w in wallInstances) w.delete()
-            for (w in waterInstances) w.delete()
+            deleteWater()
             wallInstances.clear()
-            waterInstances.clear()
         }
     }
 }

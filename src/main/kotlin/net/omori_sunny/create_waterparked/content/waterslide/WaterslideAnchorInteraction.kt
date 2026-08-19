@@ -19,6 +19,7 @@ object WaterslideAnchorInteraction {
 
     @JvmStatic
     fun onRightClickBlock(event: PlayerInteractEvent.RightClickBlock) {
+        if (event.isCanceled) return
         val level = event.level as? ServerLevel ?: return
         val player = event.entity as? Player ?: return
         val held = player.getItemInHand(event.hand)

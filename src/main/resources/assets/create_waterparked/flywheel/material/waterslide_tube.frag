@@ -14,23 +14,21 @@ void flw_materialFragment() {
 
     vec2 uv;
     if (isWater > 0.5) {
-        // Vertex shader already tiled the flow coordinate inside the sprite
-        // rect, so the UVs are sprite-absolute and safe to sample directly
-        // (this also matches what shaderpacks do with our vertex UVs).
-        vec4 up = texture(flw_diffuseTex, vec2(flw_vertexTexCoord.x, flw_vertexTexCoord.y));
-        vec4 down = texture(flw_diffuseTex, vec2(flw_vertexTexCoord.x, flw_tubeExtra.x));
+        // v was already divided by the tile span in the vertex shader, so the
+        // repeat is `span` blocks wide (smaller striping under shaderpacks)
+        float u = flw_tubeSprite.x + mod(flw_vertexTexCoord.x, 1.0) * (flw_tubeSprite.y - flw_tubeSprite.x);
+        float vDown = flw_tubeSprite.z + mod(flw_vertexTexCoord.y, 1.0) * (flw_tubeSprite.w - flw_tubeSprite.z);
+        float vUp = flw_tubeSprite.z + mod(flw_tubeExtra.x, 1.0) * (flw_tubeSprite.w - flw_tubeSprite.z);
+        vec4 up = texture(flw_diffuseTex, vec2(u, vUp));
+        vec4 down = texture(flw_diffuseTex, vec2(u, vDown));
         flw_sampleColor = mix(up, down, flw_tubeExtra.y);
         flw_fragColor = flw_vertexColor * flw_sampleColor;
         return;
     } else {
-        float centerW = max(texW - 2.0 * borderPx, 1.0);
-        float centerH = max(texH - 2.0 * borderPx, 1.0);
-        float uf = mod(borderPx + mod(flw_vertexTexCoord.x, centerW), texW) / texW;
-        float vf = mod(borderPx + mod(flw_vertexTexCoord.y, centerH), texH) / texH;
-        uv = vec2(
-            flw_tubeSprite.x + uf * (flw_tubeSprite.y - flw_tubeSprite.x),
-            flw_tubeSprite.z + vf * (flw_tubeSprite.w - flw_tubeSprite.z)
-        );
+        // atlas-space sprite uv is baked into the mesh (kept clean for the
+        // shaderpack path which samples texture() with the same vertex uv);
+        // sample directly — border pixels are part of the sprite
+        uv = flw_vertexTexCoord;
     }
 
     flw_sampleColor = texture(flw_diffuseTex, uv);
