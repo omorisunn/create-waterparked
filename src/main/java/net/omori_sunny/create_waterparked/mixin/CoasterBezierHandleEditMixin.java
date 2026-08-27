@@ -22,6 +22,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(CoasterBezierHandleEdit.class)
 public abstract class CoasterBezierHandleEditMixin {
 
+    private static final double LIFT_ORIGIN_OFFSET = 1.4;
+    private static final float MIN_DRAG_LIFT = 0.25f;
+
 // actionbar lift readout without the radius offset
     @WrapOperation(
         method = "commitLift(Lnet/minecraft/server/level/ServerPlayer;"
@@ -53,9 +56,9 @@ public abstract class CoasterBezierHandleEditMixin {
         if (!(level.getBlockEntity(pos) instanceof WaterslideAnchorBlockEntity be)) return;
         Vec3 base = CoasterAnchorpointBlockEntity.worldCenterBase(level, pos);
         Vec3 dir = CoasterAnchorpointBlockEntity.anchorLiftDirection(level, pos);
-        double raw = target.subtract(base).dot(dir) - 1.4 - be.getRadius();
-        float maxStored = Math.max(ModConfig.INSTANCE.maxSlideLift() - be.getRadius(), 0.25f);
-        cir.setReturnValue((float) Mth.clamp(raw, 0.25, maxStored));
+        double raw = target.subtract(base).dot(dir) - LIFT_ORIGIN_OFFSET - be.getRadius();
+        float maxStored = Math.max(ModConfig.INSTANCE.maxSlideLift() - be.getRadius(), MIN_DRAG_LIFT);
+        cir.setReturnValue((float) Mth.clamp(raw, MIN_DRAG_LIFT, maxStored));
     }
 
 // snap target above the radius-shifted hub
@@ -104,7 +107,7 @@ public abstract class CoasterBezierHandleEditMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$incident(ResourceLocation self, Object other, Operation<Boolean> original) {
-        return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
+        return coasterOrWaterslideEquals(self, other, original);
     }
 
     @WrapOperation(
@@ -114,7 +117,7 @@ public abstract class CoasterBezierHandleEditMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$preview(ResourceLocation self, Object other, Operation<Boolean> original) {
-        return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
+        return coasterOrWaterslideEquals(self, other, original);
     }
 
     @WrapOperation(
@@ -124,7 +127,7 @@ public abstract class CoasterBezierHandleEditMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$snap(ResourceLocation self, Object other, Operation<Boolean> original) {
-        return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
+        return coasterOrWaterslideEquals(self, other, original);
     }
 
     @WrapOperation(
@@ -133,6 +136,10 @@ public abstract class CoasterBezierHandleEditMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$apply(ResourceLocation self, Object other, Operation<Boolean> original) {
+        return coasterOrWaterslideEquals(self, other, original);
+    }
+
+    private static boolean coasterOrWaterslideEquals(ResourceLocation self, Object other, Operation<Boolean> original) {
         return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
     }
 }

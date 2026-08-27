@@ -56,9 +56,7 @@ object WaterslidePlacementPreview {
         if (stack.item !is WaterslideTrackItem) return clearAll()
         val first = WaterslideTrackPlacement.readAnchorFirstSelection(stack) ?: return clearAll()
 
-        // Never touch the far sub-level anchor or build preview geometry when the hovered
-        // block lives in a different space (main world vs. sub-level): that is what froze
-        // the line-preview phase before.
+        // never touch a far anchor or build preview across spaces, that froze the preview
         val hit = mc.hitResult
         val hovered = (hit as? BlockHitResult)?.takeIf { it.type == HitResult.Type.BLOCK }?.blockPos
         if (hovered != null && hovered != first && WaterslideConnectionRules.acrossSubLevels(level, first, hovered)) {
@@ -71,8 +69,7 @@ object WaterslidePlacementPreview {
             return
         }
 
-        // Also avoid querying the far plot-global anchor when the player has left its space
-        // (e.g. walked back into the main world while a sub-level selection is still active).
+        // also skip the far anchor when the player left its space
         if (hovered == null && WaterslideConnectionRules.acrossSubLevels(level, first, player.blockPosition())) {
             clearAll()
             return
@@ -106,8 +103,7 @@ object WaterslidePlacementPreview {
             removeHoverAndCurve()
             clearNeighborPreviews()
             showTargetOutline(level, target, KEY_INVALID, COLOR_BAD)
-            // Invalid hover preview. Skip geometry entirely across spaces / beyond max span;
-            // building a sub-level -> main-world preview used to hang the client.
+            // skip geometry across spaces or beyond max span, it used to hang the client
             val virtualSecond = target.above()
             if (virtualSecond != first) {
                 if (WaterslideConnectionRules.shouldSkipPreview(level, first, virtualSecond)) {

@@ -15,10 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import java.util.ArrayList;
 import java.util.List;
 
-// Mirrors the Simulated library's section tooltip: for Waterparked items it
-// injects the blue section title right under the item name and removes the
-// vanilla "Simulated Coasters" tab-name line (the item is displayed in that
-// tab, but its identity should read Waterparked).
+// inject the blue section title and drop the tab name line for Waterparked items
 @Mixin(CreativeModeInventoryScreen.class)
 public abstract class CreativeModeInventoryScreenWaterparkedTooltipMixin {
 

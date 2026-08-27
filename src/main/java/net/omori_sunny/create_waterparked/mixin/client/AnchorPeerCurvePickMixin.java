@@ -21,6 +21,10 @@ import org.spongepowered.asm.mixin.injection.At;
 @Mixin(AnchorPeerCurvePick.class)
 public abstract class AnchorPeerCurvePickMixin {
 
+    private static final float RADIUS_PADDING = 0.45f;
+
+    private record Radii(float r0, float r1) {}
+
 // radius-aware coarse curve bounds
     @WrapOperation(
         method = "refineAfterCreatePass",
@@ -78,27 +82,28 @@ public abstract class AnchorPeerCurvePickMixin {
         @Local(name = "t1") float t1
     ) {
         if (!WaterslideTrackMaterials.isWaterslide(bc)) return original.call(box, from, to);
-        Level level = Minecraft.getInstance().level;
-        if (level == null) return original.call(box, from, to);
-        float r0 = WaterslideRadiusEdit.INSTANCE.radiusAt(
-            level, bc.bePositions.getFirst(), ModConfig.INSTANCE.defaultSlideRadius()
-        );
-        float r1 = WaterslideRadiusEdit.INSTANCE.radiusAt(
-            level, bc.bePositions.getSecond(), ModConfig.INSTANCE.defaultSlideRadius()
-        );
-        float half = Mth.lerp(t1, r0, r1) + 0.45f;
+        Radii r = endpointRadii(bc);
+        if (r == null) return original.call(box, from, to);
+        float half = Mth.lerp(t1, r.r0(), r.r1()) + RADIUS_PADDING;
         return new AABB(-half, -half, -half, half, half, half).clip(from, to);
     }
 
     private static AABB inflateByRadius(AABB box, BezierConnection bc) {
+        Radii r = endpointRadii(bc);
+        if (r == null) return box;
+        return box.inflate(Math.max(r.r0(), r.r1()) + RADIUS_PADDING);
+    }
+
+    private static Radii endpointRadii(BezierConnection bc) {
         Level level = Minecraft.getInstance().level;
-        if (level == null) return box;
-        float r0 = WaterslideRadiusEdit.INSTANCE.radiusAt(
-            level, bc.bePositions.getFirst(), ModConfig.INSTANCE.defaultSlideRadius()
+        if (level == null) return null;
+        return new Radii(
+            WaterslideRadiusEdit.INSTANCE.radiusAt(
+                level, bc.bePositions.getFirst(), ModConfig.INSTANCE.defaultSlideRadius()
+            ),
+            WaterslideRadiusEdit.INSTANCE.radiusAt(
+                level, bc.bePositions.getSecond(), ModConfig.INSTANCE.defaultSlideRadius()
+            )
         );
-        float r1 = WaterslideRadiusEdit.INSTANCE.radiusAt(
-            level, bc.bePositions.getSecond(), ModConfig.INSTANCE.defaultSlideRadius()
-        );
-        return box.inflate(Math.max(r0, r1) + 0.45f);
     }
 }

@@ -29,10 +29,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-// Same role as Coasters Simulated's CoasterPonderRestore: waterslide anchor
-// peer-curve data is stored in the schematic's BlockEntity NBT and has to be
-// (re)injected into the Ponder level before backup and after every restore.
-public final class WaterslidePonderRestore {
+// reinject waterslide anchor peer curve data into the Ponder level
+public class WaterslidePonderRestore {
 
     private static final Map<BlockPos, CompoundTag> TEMPLATE_ANCHOR_NBTS = new HashMap<>();
 
@@ -47,13 +45,11 @@ public final class WaterslidePonderRestore {
 
         for (StructureTemplate.StructureBlockInfo info :
             template.filterBlocks(BlockPos.ZERO, settings, ModBlocks.INSTANCE.getWATERSLIDE_ANCHOR())) {
-            BlockPos pos = info.pos();
             CompoundTag nbt = info.nbt();
-            if (nbt != null) {
-                TEMPLATE_ANCHOR_NBTS.put(pos.immutable(), nbt.copy());
-            }
-            if (nbt != null
-                && nbt.contains("AnchorPeerCurves")
+            if (nbt == null) continue;
+            BlockPos pos = info.pos();
+            TEMPLATE_ANCHOR_NBTS.put(pos.immutable(), nbt.copy());
+            if (nbt.contains("AnchorPeerCurves")
                 && BlockEntity.loadStatic(pos, info.state(), nbt, registries)
                     instanceof WaterslideAnchorBlockEntity anchor) {
                 installBlockEntity(level, pos, anchor);

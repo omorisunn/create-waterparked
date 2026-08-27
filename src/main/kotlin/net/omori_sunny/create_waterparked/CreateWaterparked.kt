@@ -14,7 +14,10 @@ import net.omori_sunny.create_waterparked.content.registry.ModParticles
 import net.omori_sunny.create_waterparked.content.registry.ModSounds
 import net.omori_sunny.create_waterparked.content.registry.CoasterCreativeTabIntegration
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
+import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorInteraction
+import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSupportInteraction
 import net.omori_sunny.create_waterparked.datagen.CreateWaterparkedDataGen
+import net.omori_sunny.create_waterparked.game.command.WaterparkedCommands
 import net.omori_sunny.create_waterparked.game.contraption.WaterslideContraptionIntegration
 import net.omori_sunny.create_waterparked.game.physics.PlayerSlideController
 import net.omori_sunny.create_waterparked.network.ModPayloads
@@ -54,16 +57,14 @@ object CreateWaterparked {
         MOD_BUS.addListener(::onConfigReloaded)
 
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onServerTick)
+        NeoForge.EVENT_BUS.addListener(WaterslideSupportInteraction::onPlayerLoggedOut)
         NeoForge.EVENT_BUS.addListener(
-            net.omori_sunny.create_waterparked.content.waterslide.WaterslideSupportInteraction::onPlayerLoggedOut
+            EventPriority.HIGHEST,
+            WaterslideSupportInteraction::onRightClickBlock
         )
         NeoForge.EVENT_BUS.addListener(
             EventPriority.HIGHEST,
-            net.omori_sunny.create_waterparked.content.waterslide.WaterslideSupportInteraction::onRightClickBlock
-        )
-        NeoForge.EVENT_BUS.addListener(
-            EventPriority.HIGHEST,
-            net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorInteraction::onRightClickBlock
+            WaterslideAnchorInteraction::onRightClickBlock
         )
         MOD_BUS.addListener(WaterslideAnchorBlockEntity::registerCapabilities)
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onPlayerLoggedOut)
@@ -92,14 +93,12 @@ object CreateWaterparked {
     fun onCommonSetup(event: FMLCommonSetupEvent) {
         LOGGER.info("Create Waterparked loaded.")
         WaterslideContraptionIntegration.register()
-        net.omori_sunny.create_waterparked.game.command.WaterparkedCommands.register()
+        WaterparkedCommands.register()
     }
 
     @SubscribeEvent
     fun onConfigReloaded(event: ModConfigEvent.Reloading) {
-        // client-side rendering options take effect immediately (like the
-        // per-frame waterSimDebug read) by rebuilding the tube visuals; the
-        // mesh cache is dropped so the rebuild picks up the new values
+        // rebuild tube visuals so client rendering options apply immediately
         if (event.config.spec === ModClientConfig.SPEC) {
             WaterslideTubeMesh.clearModels()
             WaterslideTubeVisual.refreshAll()

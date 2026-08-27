@@ -14,13 +14,11 @@ import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
 
-// Lays the Simulated Coasters creative tab out like the Simulated library's
-// sectioned tab: all non-Waterparked (SC) items first, empty slots to finish
-// their last row, one fully empty banner row, then the Waterparked items.
-// The amount of padding is derived from the live SC item count, so future SC
-// items are adapted to automatically.
+// pad SC rows, add a banner row, then place Waterparked items
 @Mixin(CreativeModeTab.class)
 public abstract class CreativeModeTabWaterparkedLayoutMixin {
+
+    private static final int TAB_COLUMNS = 9;
 
     @Shadow
     private Collection<ItemStack> displayItems;
@@ -30,8 +28,7 @@ public abstract class CreativeModeTabWaterparkedLayoutMixin {
         CreativeModeTab tab = (CreativeModeTab) (Object) this;
         if (!WaterparkedCreativeTabLayout.isSimulatedCoastersTab(tab)) return;
 
-        // Split live entries, dropping any EMPTY placeholders from a previous
-        // build so this layout is idempotent.
+        // split entries and drop empty placeholders for a clean rebuild
         List<ItemStack> waterparked = new ArrayList<>();
         List<ItemStack> coasterItems = new ArrayList<>();
         for (ItemStack stack : displayItems) {
@@ -45,8 +42,8 @@ public abstract class CreativeModeTabWaterparkedLayoutMixin {
         if (waterparked.isEmpty()) return;
 
         int coasters = coasterItems.size();
-        int finishLastRow = (9 - (coasters % 9)) % 9;
-        int padding = finishLastRow + 9; // + one fully empty banner row
+        int finishLastRow = (TAB_COLUMNS - (coasters % TAB_COLUMNS)) % TAB_COLUMNS;
+        int padding = finishLastRow + TAB_COLUMNS; // plus one fully empty banner row
 
         LinkedList<ItemStack> ordered = new LinkedList<>(coasterItems);
         for (int i = 0; i < padding; i++) ordered.add(ItemStack.EMPTY);

@@ -26,6 +26,9 @@ import kotlin.math.sin
 // Shared slide curve frames, usable on server and client.
 object SlideCurveGeometry {
 
+    private const val ZERO_EPS = 1.0E-12
+    private const val AXIS_ALIGNED = 0.999
+
     data class Frame(
         val t: Float,
         val center: Vec3,
@@ -49,9 +52,9 @@ object SlideCurveGeometry {
     // stable cross-section frame, world-up aligned, continuous across tracks
     fun stableFrame(tangent: Vec3): Pair<Vec3, Vec3> {
         var ref = Vec3(0.0, 1.0, 0.0)
-        if (abs(tangent.y) > 0.999) ref = Vec3(1.0, 0.0, 0.0)
+        if (abs(tangent.y) > AXIS_ALIGNED) ref = Vec3(1.0, 0.0, 0.0)
         var faceUp = ref.subtract(tangent.scale(ref.dot(tangent)))
-        if (faceUp.lengthSqr() < 1.0E-12) {
+        if (faceUp.lengthSqr() < ZERO_EPS) {
             ref = Vec3(0.0, 0.0, 1.0)
             faceUp = ref.subtract(tangent.scale(ref.dot(tangent)))
         }
@@ -118,7 +121,7 @@ object SlideCurveGeometry {
         return out
     }
 
-    // Access-based variant used by sub-level slide computation.
+    // access-based variant for sub level slide computation
     fun sampleFrames(
         access: SlideSpaceAccess,
         bc: BezierConnection,
@@ -126,61 +129,7 @@ object SlideCurveGeometry {
         r1: Float,
         spacing: Double = 0.5,
         includeExtensions: Boolean = true
-    ): List<Frame> {
-        val count = bc.getSegmentCount().coerceAtLeast(1)
-        val ts = FloatArray(count + 1) { i ->
-            if (i == 0) 0f else if (i == count) 1f else bc.getSegmentT(i)
-        }
-        val coarse = ArrayList<Frame>(count + 3)
-        val ext0 = if (includeExtensions) openEndExtension(access, bc, atFirst = true) else 0f
-        if (ext0 > 0.01f) {
-            val first = frameAt(access.level, bc, 0f, r0, r1)
-            coarse += Frame(0f, first.center.subtract(first.tangent.scale(ext0.toDouble())),
-                first.tangent, first.lateral, first.up, r0)
-        }
-        for (t in ts) coarse += frameAt(access.level, bc, t, r0, r1)
-        val ext1 = if (includeExtensions) openEndExtension(access, bc, atFirst = false) else 0f
-        if (ext1 > 0.01f) {
-            val last = frameAt(access.level, bc, 1f, r0, r1)
-            coarse += Frame(1f, last.center.add(last.tangent.scale(ext1.toDouble())),
-                last.tangent, last.lateral, last.up, r1)
-        }
-
-        if (coarse.size < 2) return coarse
-        val out = ArrayList<Frame>(coarse.size * 4)
-        var prevLat: Vec3? = null
-        fun push(f: Frame) {
-            var lat = f.lateral
-            var up = f.up
-            if (prevLat != null && lat.dot(prevLat!!) < 0.0) {
-                lat = lat.scale(-1.0)
-                up = up.scale(-1.0)
-            }
-            prevLat = lat
-            out += Frame(f.t, f.center, f.tangent, lat, up, f.radius)
-        }
-        push(coarse[0])
-        for (i in 0 until coarse.size - 1) {
-            val a = coarse[i]
-            val b = coarse[i + 1]
-            val dist = a.center.distanceTo(b.center)
-            val steps = max(1, ceil(dist / spacing).toInt())
-            for (j in 1 until steps) {
-                val f = j.toDouble() / steps
-                val t = a.t + (b.t - a.t) * f.toFloat()
-                push(frameAt(access.level, bc, t, r0, r1))
-            }
-            push(b)
-        }
-        return out
-    }
-
-    private fun openEndExtension(access: SlideSpaceAccess, bc: BezierConnection, atFirst: Boolean): Float {
-        val anchor = if (atFirst) bc.bePositions.getFirst() else bc.bePositions.getSecond()
-        val be = access.getBlockEntity(anchor) as? CoasterAnchorpointBlockEntity ?: return 0f
-        if (be.legCount() != 1) return 0f
-        return CoasterOpenEndExtension.extensionBlocks(access.level, anchor)
-    }
+    ): List<Frame> = sampleFrames(access.level, bc, r0, r1, spacing, includeExtensions)
 
     private fun frameAt(
         level: Level,
@@ -191,13 +140,13 @@ object SlideCurveGeometry {
     ): Frame {
         val center = bc.getPosition(t.toDouble())
         var tangent = CoasterBezierRailFrames.unitTangentAt(bc, t)
-        if (tangent.lengthSqr() < 1.0E-12) tangent = Vec3(0.0, 1.0, 0.0)
+        if (tangent.lengthSqr() < ZERO_EPS) tangent = Vec3(0.0, 1.0, 0.0)
         tangent = tangent.normalize()
         val (lat, up) = stableFrame(tangent)
         return Frame(t, center, tangent, lat, up, Mth.lerp(t, r0, r1))
     }
 
-    // Extension only at open ends (mirrors the render mesh).
+    // extension only at open ends, mirrors the render mesh
     private fun openEndExtension(level: Level, bc: BezierConnection, atFirst: Boolean): Float {
         val anchor = if (atFirst) bc.bePositions.getFirst() else bc.bePositions.getSecond()
         val be = level.getBlockEntity(anchor) as? CoasterAnchorpointBlockEntity ?: return 0f

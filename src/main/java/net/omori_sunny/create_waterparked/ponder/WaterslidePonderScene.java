@@ -14,7 +14,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 import net.omori_sunny.create_waterparked.content.registry.ModItems;
 
-public final class WaterslidePonderScene {
+public class WaterslidePonderScene {
 
     private static final int DISPLAY_Y = 1;
     private static final BlockPos ANCHOR_LEFT = new BlockPos(3, DISPLAY_Y, 7);
@@ -33,7 +33,10 @@ public final class WaterslidePonderScene {
         scene.showBasePlate();
         scene.idle(10);
 
-        Selection twoAnchors = util.select().fromTo(3, DISPLAY_Y, 7, 11, DISPLAY_Y, 7);
+        Selection twoAnchors = util.select().fromTo(
+            ANCHOR_LEFT.getX(), DISPLAY_Y, ANCHOR_LEFT.getZ(),
+            ANCHOR_RIGHT.getX(), DISPLAY_Y, ANCHOR_RIGHT.getZ()
+        );
         ElementLink<WorldSectionElement> anchorLayer =
             scene.world().showIndependentSection(twoAnchors, Direction.DOWN);
         WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, DISPLAY_Y, DISPLAY_Y, ANCHOR_LEFT, ANCHOR_RIGHT);
@@ -83,7 +86,10 @@ public final class WaterslidePonderScene {
         ElementLink<WorldSectionElement> previous,
         int sourceY
     ) {
-        Selection layer = util.select().fromTo(3, sourceY, 7, 11, sourceY, 7);
+        Selection layer = util.select().fromTo(
+            ANCHOR_LEFT.getX(), sourceY, ANCHOR_LEFT.getZ(),
+            ANCHOR_RIGHT.getX(), sourceY, ANCHOR_RIGHT.getZ()
+        );
         Vec3 offset = util.vector().of(0.0, DISPLAY_Y - sourceY, 0.0);
         scene.world().moveSection(previous, OFFSCREEN, 0);
         ElementLink<WorldSectionElement> section = scene.world().showIndependentSectionImmediately(layer);

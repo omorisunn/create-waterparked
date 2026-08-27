@@ -14,9 +14,7 @@ object WaterslideConnectionRules {
 
     data class Result(val valid: Boolean, val messageKey: String? = null)
 
-    // Cheap checks; do these before touching block entities / building preview geometry.
-    // anchorConnectionExceedsMaxSpan only looks up block entities when the raw distance is
-    // inside the allowed span, so acrossSubLevels short-circuits the far-coordinate case.
+    // cheap checks before block entity lookups
     fun acrossSubLevels(level: Level, a: BlockPos, b: BlockPos): Boolean =
         CoasterTrackPlacement.anchorConnectionAcrossSubLevels(level, a, b)
 
@@ -26,8 +24,7 @@ object WaterslideConnectionRules {
     fun validate(level: Level, a: BlockPos, b: BlockPos): Result {
         if (a == b) return Result(false, "create.track.second_point")
 
-        // These run before any block-entity lookup: querying a far plot-global sub-level
-        // anchor from the main world can force-load chunks and hang the client.
+        // far sub level anchors can force load chunks and hang the client
         if (CoasterTrackPlacement.anchorConnectionAcrossSubLevels(level, a, b)) {
             return Result(false, "create_waterparked.connect.cross_sublevel")
         }

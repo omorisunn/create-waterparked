@@ -18,9 +18,7 @@ import net.neoforged.api.distmarker.OnlyIn
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-// One looping water sound per watered slide curve. Every instance computes its
-// own distance falloff and local-flow-speed volume, so several slides can be
-// heard at once.
+// one looping water sound per watered curve, own falloff and volume
 @OnlyIn(Dist.CLIENT)
 object WaterSlideSoundManager {
     private const val RANGE = 16.0
@@ -79,8 +77,7 @@ object WaterSlideSoundManager {
                 val volume = (MAX_VOLUME * speedFactor * distFactor).toFloat()
                 val inst = sounds.getOrPut(key) {
                     WaterSlideSoundInstance(ModSounds.WATER_FLOW.value()).also {
-                        // volume and position must be valid BEFORE play():
-                        // SoundEngine drops volume-zero sounds entirely.
+                        // volume and position must be valid before play
                         it.setVolume(volume)
                         it.setPosition(nearestPos)
                         CreateWaterparked.LOGGER.info(

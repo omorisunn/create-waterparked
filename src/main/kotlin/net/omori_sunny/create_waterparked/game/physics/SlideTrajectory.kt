@@ -13,6 +13,10 @@ enum class SlideEndReason {
 
 const val SLIDE_WALL_THICKNESS = 0.1
 
+private const val POINT_SLOP = 1.0E-12
+private const val SPAN_SLOP = 1.0E-9
+private const val ANGLE_SLOP = 1.0E-6
+
 data class SlideSample(
     val time: Double,
     val center: Vec3,
@@ -70,7 +74,7 @@ class SlideTrajectory(
         val a = samples[lo]
         val b = samples[hi]
         val span = b.time - a.time
-        val f = if (span <= 1.0E-9) 0.0 else (time - a.time) / span
+        val f = if (span <= SPAN_SLOP) 0.0 else (time - a.time) / span
         val center = a.center.lerp(b.center, f)
         val unit = slerpUnit(a.tangent, b.tangent, f)
         val upB = if (a.up.dot(b.up) < 0.0) b.up.scale(-1.0) else b.up
@@ -84,13 +88,13 @@ class SlideTrajectory(
     }
 
     private fun slerpUnit(a: Vec3, b: Vec3, f: Double): Vec3 {
-        if (a.lengthSqr() < 1.0E-12) return if (b.lengthSqr() < 1.0E-12) Vec3(0.0, 1.0, 0.0) else b.normalize()
-        if (b.lengthSqr() < 1.0E-12) return a.normalize()
+        if (a.lengthSqr() < POINT_SLOP) return if (b.lengthSqr() < POINT_SLOP) Vec3(0.0, 1.0, 0.0) else b.normalize()
+        if (b.lengthSqr() < POINT_SLOP) return a.normalize()
         val dot = (a.dot(b) / (a.length() * b.length())).coerceIn(-1.0, 1.0)
         val omega = acos(dot)
-        if (omega < 1.0E-6) return a.normalize()
+        if (omega < ANGLE_SLOP) return a.normalize()
         val sinOmega = sin(omega)
-        if (sinOmega < 1.0E-6) return a.normalize()
+        if (sinOmega < ANGLE_SLOP) return a.normalize()
         val wa = sin((1.0 - f) * omega) / sinOmega
         val wb = sin(f * omega) / sinOmega
         return a.scale(wa).add(b.scale(wb)).normalize()

@@ -10,8 +10,7 @@ import org.spongepowered.asm.mixin.Shadow;
 
 import java.util.Map;
 
-// Expose the inherited peer-curve maps so waterslide anchors can rewrite their
-// absolute-space data when a contraption is disassembled.
+// expose inherited peer curve maps for contraption disassembly
 @Mixin(CoasterAnchorpointBlockEntity.class)
 public abstract class CoasterAnchorpointBlockEntityContraptionAccessorMixin implements AnchorPeerCurveDataAccess {
 

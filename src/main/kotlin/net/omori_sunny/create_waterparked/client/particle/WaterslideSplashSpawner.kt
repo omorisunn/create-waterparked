@@ -15,10 +15,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
-// Spawns vanilla splash particles while sliding through water (left/right of
-// the player, 1% of player velocity) and while standing/walking inside thrown
-// stream water (left/right of the player, using the water's own velocity).
-// The splash sound fires once when a slide enters a watered segment.
+// spawns splash particles while sliding through water or touching thrown streams
 @OnlyIn(Dist.CLIENT)
 object WaterslideSplashSpawner {
 
@@ -40,8 +37,7 @@ object WaterslideSplashSpawner {
     private var debugSpawnedTotal = 0
     private var debugFirstSpawnLogged = false
 
-    // Called every client tick from CreateWaterparkedClient; handles players
-    // who are NOT sliding but whose box touches a thrown stream polyline.
+    // handles players not sliding whose box touches a stream polyline
     fun tickStanding(mc: Minecraft) {
         if (SlideClientSession.isSliding()) return
         val level = mc.level ?: return
@@ -67,10 +63,7 @@ object WaterslideSplashSpawner {
         )
         val box = player.boundingBox
 
-        // find the nearest point on the thrown-water sheet for each side of
-        // the player, then move it onto the collision-box surface along the
-        // sheet -> probe line. Particles are born exactly on the intersection
-        // between the box and the water surface.
+        // nearest point on the sheet per side, moved onto the box surface
         val leftProbe = bodyCenter.subtract(side.scale(SIDE_OFFSET))
         val rightProbe = bodyCenter.add(side.scale(SIDE_OFFSET))
         val leftContact = WaterFlowSimulation.streamContactAt(level, leftProbe, STREAM_CONTACT_RADIUS)
@@ -118,9 +111,7 @@ object WaterslideSplashSpawner {
         }
     }
 
-    // The point where the segment from the water-sheet contact to the probe
-    // crosses the player's AABB surface (or the contact itself when it is
-    // already inside the box).
+    // point where the contact to probe segment crosses the box surface
     private fun boxSurfacePoint(box: AABB, from: Vec3, toward: Vec3): Vec3 {
         if (box.contains(from)) return from
         val d = toward.subtract(from)
@@ -162,10 +153,7 @@ object WaterslideSplashSpawner {
         p.z.coerceIn(box.minZ, box.maxZ)
     )
 
-    // Called from SlideClientSession.start the instant the trajectory payload
-    // arrives, before the next client tick. Pre-spawning the entry burst here
-    // removes the one-tick delay between entering the water and the first
-    // visible splash.
+    // prespawn the entry burst when the trajectory payload arrives
     fun onSlideStart(
         mc: Minecraft,
         bodyCenter: Vec3,
@@ -211,8 +199,7 @@ object WaterslideSplashSpawner {
         player.playSound(SoundEvents.PLAYER_SPLASH, volume, pitch)
     }
 
-    // Called from SlideClientSession.onClientTickPost AFTER the playback
-    // velocity has been written for this tick.
+    // called after the playback velocity is written for this tick
     fun tickSliding(mc: Minecraft) {
         val level = mc.level ?: return
         val player = mc.player ?: return
@@ -257,8 +244,7 @@ object WaterslideSplashSpawner {
             return
         }
 
-        // First moving tick of a contact: one pair immediately, plus the
-        // Minecraft player-splash sound for crashing into the water segment.
+        // first moving tick of a contact, one pair and the splash sound
         if (!wasContact) {
             wasContact = true
             leftAccum = 1.0
@@ -271,9 +257,7 @@ object WaterslideSplashSpawner {
             player.playSound(SoundEvents.PLAYER_SPLASH, volume, pitch)
         }
 
-        // particle positions track the player's LOWER body continuously (the
-        // part that actually slices the water), offset to the left/right of
-        // the movement direction
+        // positions track the lower body, offset to the sides of movement
         val bodyCenter = Vec3(
             player.boundingBox.center.x,
             player.boundingBox.minY + 0.3,
@@ -285,8 +269,7 @@ object WaterslideSplashSpawner {
         val leftPos = bodyCenter.subtract(side.scale(SIDE_OFFSET))
         val rightPos = bodyCenter.add(side.scale(SIDE_OFFSET))
 
-        // speed-scaled rate, multiplied by the splash density config and
-        // capped by splashMaxRate (per side per second)
+        // speed scaled rate, capped per side per second
         val ratePerSecond = max(
             8.0,
             min(speed * 4.0 * ModClientConfig.splashDensity(), ModClientConfig.splashMaxRate())
@@ -295,7 +278,7 @@ object WaterslideSplashSpawner {
         leftAccum += perTick
         rightAccum += perTick
 
-        // 1% of the player's current velocity, exact direction
+        // one percent of the current velocity, exact direction
         val particleVel = vel.scale(0.01)
         while (leftAccum >= 1.0) {
             level.addParticle(

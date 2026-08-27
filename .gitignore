@@ -39,6 +39,8 @@ MODELING.md
 /.dsh/
 /.dshcraft-staging/
 /.gradle-home/
-
-# Design docs
 docs/
+/scripts/
+/.dsh-tmp-glass/
+/.dsh-highres-vision/
+/.dsh-backup-src/

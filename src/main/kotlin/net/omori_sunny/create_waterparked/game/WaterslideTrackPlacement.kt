@@ -107,7 +107,7 @@ object WaterslideTrackPlacement {
         }
 
         val existing = readAnchorFirstSelection(stack)
-        if (existing == null || existing != firstAnchor) {
+        if (existing != firstAnchor) {
             applyAnchorFirstSelection(level, stack, firstAnchor, player, hand)
             stack = player.getItemInHand(hand)
         }

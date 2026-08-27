@@ -8,7 +8,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 
-public final class WaterslidePonderScenes {
+public class WaterslidePonderScenes {
 
     public static final String CONNECT_SCHEMATIC = "waterslide_anchor/ponder_connect";
 

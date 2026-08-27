@@ -70,8 +70,7 @@ import kotlin.math.max
 object WaterslideSectorEdit {
 
     private const val PICK_RADIUS = 0.2
-    // control rings sit OUTSIDE the tube rim so they never cover the opening
-    // radius handle that sits on the rim itself
+    // control rings sit outside the tube rim, never cover the opening handle
     private const val CONTROL_RING_OFFSET = 0.75f
     private const val BOUNDARY_RING_GAP = 0.55f
     private const val WALL_SEGMENTS = 24
@@ -90,6 +89,7 @@ object WaterslideSectorEdit {
     private var currentDragAngle = 0f
     private var currentBoundaryAngle = 0f
     private var lastChainRefreshAngle = -1f
+    private var lastDragSoundAngle = Float.NaN
     private var pendingBlockAnchor: BlockPos? = null
     private var lastTargetState = 0
     private var lastTargetPos: BlockPos? = null
@@ -126,8 +126,7 @@ object WaterslideSectorEdit {
             return
         }
 
-        // Two-step block add: only full-cube blocks become sectors; every
-        // other block falls through to vanilla placement.
+        // two step block add, only full cube blocks become sectors
         if (mainBlockId != null) {
             val block = BuiltInRegistries.BLOCK.get(mainBlockId)
             if (!net.minecraft.world.level.block.Block.isShapeFullBlock(
@@ -265,6 +264,7 @@ object WaterslideSectorEdit {
         }
         val hit = resolveWallHit(level, hitVec, requireAnchor = pending)
         if (hit == null) {
+            WaterslideEditSounds.playDeny()
             clearPending(level)
             event.isCanceled = true
             event.cancellationResult = InteractionResult.SUCCESS
@@ -278,6 +278,7 @@ object WaterslideSectorEdit {
                 .withStyle(ChatFormatting.GREEN),
             true
         )
+        WaterslideEditSounds.playCommitSuccess()
         clearPending(level)
         event.isCanceled = true
         event.cancellationResult = InteractionResult.SUCCESS
@@ -335,11 +336,7 @@ object WaterslideSectorEdit {
         hitVec: Vec3,
         requireAnchor: BlockPos? = null
     ): WallHit? {
-        // Block hits inside a Sable sub-level come back in plot-global
-        // coordinates already (Sable raycasts inward), while our own ray
-        // marching feeds world-space points that must be projected inward.
-        // Build one candidate per plausible coordinate space and only compare
-        // curves that actually live in that space.
+        // one candidate per plausible coordinate space, compare curves in that space
         val player = Minecraft.getInstance().player
         val containing = Sable.HELPER.getContaining(level, hitVec) as? ClientSubLevel
         val tracking = player?.let { Sable.HELPER.getTrackingSubLevel(it) as? ClientSubLevel }
@@ -348,17 +345,14 @@ object WaterslideSectorEdit {
         if (tracking != null && tracking !== containing) {
             candidates += tracking to SableClientEdit.worldToPlot(tracking, hitVec)
         }
-        // a world-space point is ALWAYS also a candidate in main space, even
-        // when sub-level projections exist (otherwise normal main-world
-        // sectors stop being hittable as soon as any Sable plot exists)
+        // world space is always a candidate once any sub level projection exists
         if (containing == null) candidates += null to hitVec
         val container = SubLevelContainer.getContainer(level)
         container?.allSubLevels?.forEach { raw ->
             val sub = raw as? ClientSubLevel ?: return@forEach
             if (sub === tracking || sub === containing) return@forEach
             val plot = SableClientEdit.worldToPlot(sub, hitVec)
-            // only keep the projection if it really lands inside this
-            // sub-level's own plot
+            // keep the projection only when it lands inside this plot
             if (Sable.HELPER.getContaining(level, plot) === sub) candidates += sub to plot
         }
         if (candidates.isEmpty()) candidates += null to hitVec
@@ -374,8 +368,7 @@ object WaterslideSectorEdit {
                     val primary = if (raw.isPrimary) raw else raw.secondary()
                     if (!WaterslideTrackMaterials.isWaterslide(primary)) continue
                     val key = curveKey(primary.bePositions.getFirst(), primary.bePositions.getSecond())
-                    // keep each curve in its own coordinate space so a plot
-                    // hit can never accidentally match a different sub-level
+                    // each curve stays in its own coordinate space
                     val curveSub = Sable.HELPER.getContaining(level, primary.bePositions.getFirst())
                         as? ClientSubLevel
                     if (curveSub !== candidateSub) continue
@@ -511,6 +504,7 @@ object WaterslideSectorEdit {
         if (lastTargetState == state && lastTargetPos == target) return
         lastTargetState = state
         lastTargetPos = target
+        if (state == 2) WaterslideEditSounds.playDeny()
         val player = mc.player ?: return
         player.displayClientMessage(
             Component.translatable(
@@ -562,6 +556,7 @@ object WaterslideSectorEdit {
                 blockId
             )
         )
+        WaterslideEditSounds.playCommitSuccess()
         return true
     }
 
@@ -636,6 +631,7 @@ object WaterslideSectorEdit {
                     .withStyle(ChatFormatting.RED),
                 true
             )
+            WaterslideEditSounds.playDeny()
             return false
         }
         PacketDistributor.sendToServer(
@@ -651,6 +647,7 @@ object WaterslideSectorEdit {
                 .withStyle(ChatFormatting.GREEN),
             true
         )
+        WaterslideEditSounds.playCommitSuccess()
         CreateWaterparked.LOGGER.debug("WaterslideSectorEdit: axe delete sector {}", hit.sectorId)
         return true
     }
@@ -690,6 +687,7 @@ object WaterslideSectorEdit {
                 newBlock
             )
         )
+        WaterslideEditSounds.playCommitSuccess()
         CreateWaterparked.LOGGER.debug("dye: sector {} {} -> {}", hit.sectorId, blockId, newBlock)
         return true
     }
@@ -752,16 +750,31 @@ object WaterslideSectorEdit {
                 )
             }
             var targetAngle = angleFromDrag(level, anchorGlobal, curve, eye, view) ?: return clear()
-            if (!AllKeys.ALT_MODIFIER.isPressed()) {
-                targetAngle = alignedBoundaryAngle(level, anchorGlobal, curve, key, targetAngle) ?: targetAngle
+            // control points snap to a 2 degree grid, ALT frees the angle
+            val snappedAngle: Float = if (draggingBoundary) {
+                if (AllKeys.ALT_MODIFIER.isPressed()) targetAngle
+                else alignedBoundaryAngle(level, anchorGlobal, curve, key, targetAngle)
+                    ?: Math.round(targetAngle / 2f) * 2f
+            } else if (AllKeys.ALT_MODIFIER.isPressed()) {
+                targetAngle
+            } else {
+                Math.round(targetAngle / 2f) * 2f
             }
             val config = previewConfigs[key] ?: return clear()
             if (draggingBoundary) {
-                currentBoundaryAngle = easeAngle(currentBoundaryAngle, targetAngle)
+                currentBoundaryAngle = easeAngle(currentBoundaryAngle, snappedAngle)
                 WaterslideSectorLayout.applyBoundaryResize(config, dragBoundarySectorId, currentBoundaryAngle)
             } else {
-                currentDragAngle = easeAngle(currentDragAngle, targetAngle)
+                currentDragAngle = easeAngle(currentDragAngle, snappedAngle)
                 applyMove(config, dragSectorId, currentDragAngle)
+            }
+            // drag tick, a soft scroll click per 2 degree cell crossed
+            val soundAngle = if (draggingBoundary) currentBoundaryAngle else currentDragAngle
+            if (lastDragSoundAngle.isNaN() || abs(soundAngle - lastDragSoundAngle) >= 2f) {
+                val inCell = if (lastDragSoundAngle.isNaN()) 0f
+                else (abs(soundAngle - lastDragSoundAngle) % 2f).coerceIn(0f, 2f) / 2f
+                WaterslideEditSounds.playDragTick(inCell)
+                lastDragSoundAngle = soundAngle
             }
             if (!useDown) {
                 PacketDistributor.sendToServer(
@@ -782,6 +795,8 @@ object WaterslideSectorEdit {
                 dragCurveKey = null
                 dragSectorId = -1
                 dragBoundarySectorId = -1
+                lastDragSoundAngle = Float.NaN
+                WaterslideEditSounds.playCommitSuccess()
             }
         } else if (useDown) {
             val pick = pickControlPoint(mc, level, anchorGlobal, be) ?: return

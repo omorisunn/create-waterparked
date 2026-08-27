@@ -76,11 +76,7 @@ object SlideClientSession {
         var lastFramePitch: Float? = null
         var lastAppliedPos: Vec3? = null
 
-        // landing transition: when the end position is >8 blocks from the last
-        // ride position, ease over a few ticks instead of one hard setPos so
-        // ReplayMod's per-tick position recorder never emits a >8-block
-        // absolute-teleport packet (its playback camera would snap to the
-        // landing point).
+        // landing transition eases long setPos moves so ReplayMod never sees a teleport
         var landFrom: Vec3? = null
         var landTo: Vec3? = null
         var landRemaining = 0
@@ -104,17 +100,7 @@ object SlideClientSession {
     private var active: Active? = null
     private var waterDebugTick = 0L
 
-    /** True when the client is in a replay view (ReplayMod / ReForgePlay) rather
-     *  than a live game. Detected WITHOUT referencing any ReplayMod class, so
-     *  this mod keeps working when ReplayMod is absent. Signals (any hit wins):
-     *   1. no server connection at all (`mc.connection == null`) with a player
-     *      and level loaded - there is no live game, so it must be a replay;
-     *   2. ReForgePlay fakes a ClientConnection during playback, created inside
-     *      ReplayHandler (its anonymous class lives under
-     *      com.replaymod.replay.ReplayHandler) - catches the spectate-player
-     *      mode where mc.player is a plain LocalPlayer whose class helps us none;
-     *   3. local player or render world class under com.replaymod (e.g. the
-     *      replay's CameraEntity acting as mc.player in camera-view mode). */
+    // true when in a replay view, detected without referencing ReplayMod
     @Volatile
     private var lastReplayLogTick = -1L
 
@@ -152,17 +138,14 @@ object SlideClientSession {
     @JvmStatic
     fun isSliding(): Boolean = active != null
 
-    // Drop a dangling session (world unload, leaving to a replay, disconnect).
-    // Prevents a stale Active from writing slide player state into another
-    // context (e.g. ReForgePlay's replay view virtual player).
+    // drop a dangling session so it cannot write into another context
     @JvmStatic
     fun resetActive() {
         active = null
         SlideSableOrientation.clearAll()
     }
 
-    // Current playback speed in blocks/second, derived from the velocity that
-    // onClientTickPost already applied from the trajectory sample.
+    // current playback speed from the velocity already applied by the tick
     @JvmStatic
     fun currentSpeedBlocksPerSecond(): Float {
         if (active == null) return 0f
@@ -177,18 +160,13 @@ object SlideClientSession {
         return session.subLevelId?.let { SlideSpace.SubLevel(it) } ?: SlideSpace.Main
     }
 
-    // True while the player's actual collision box intersects a rendered
-    // water band (in-tube) or a thrown stream polyline. This uses the entity
-    // bounding box directly, not a single probe point.
+    // true while the real collision box intersects a rendered water band
     @JvmStatic
     fun isOnWateredSegment(level: Level): Boolean {
         val session = active ?: return false
         val playerBox = Minecraft.getInstance().player?.boundingBox ?: return false
 
-        // Strict contact test against the player's actual collision box. The
-        // trajectory inTube flag is NOT part of the gate: the player may be
-        // in a free-fall sample between two tubes (or a stream arc) while the
-        // box still slices a rendered water band, and the box is authoritative.
+        // the box is authoritative, the trajectory inTube flag is not part of the gate
         val space = currentSpace()
         val sub = session.subLevel(level)
         val localBox = if (sub != null) toLocalBox(level, session, playerBox) else null
@@ -306,10 +284,7 @@ object SlideClientSession {
         val vNext = toWorldNormal(level, session, atNext.sample.tangent).scale(atNext.sample.speed)
         val felt = vNext.subtract(vPrev).scale(10.0).add(0.0, 32.0, 0.0)
         val right = worldTanNow.cross(Vec3(0.0, 1.0, 0.0))
-        // Roll is locked while the player is flying OUTSIDE any tube. The lock
-        // value is the roll from the last in-tube frame, so the throw does not
-        // spin the camera, and it is released as soon as the trajectory sample
-        // is inside the next tube again.
+        // roll is locked while flying outside a tube, released on the next entry
         val thrownNow = !atNow.sample.inTube
         val preThrownRoll = session.lastSmoothedRoll
         var roll: Float
@@ -470,9 +445,7 @@ object SlideClientSession {
             "Slide end {} reason {}{}", payload.sessionId, payload.reason,
             if (isReplayView()) " (replay view -> not applying to player)" else ""
         )
-        // Replay interop: at the landing moment acting while in a replay would
-        // teleport/rotate ReplayMod's camera (it copies the recorded player).
-        // Drop the session without touching the player in replay view.
+        // in replay view drop the session without touching the camera player
         if (isReplayView()) {
             active = null
             SlideSableOrientation.clearAll()
@@ -487,10 +460,7 @@ object SlideClientSession {
                 payload.sessionId, dist, player.position(), landPos
             )
             if (dist > 8.0) {
-                // ReplayMod records the local player position each tick; a
-                // >8-block one-frame hop is stored as an absolute-teleport
-                // packet, so the playback camera snaps to the landing point.
-                // Ease the drop over a few ticks instead.
+                // ease the drop over a few ticks, avoids a teleport packet in ReplayMod
                 val n = kotlin.math.ceil(dist / 8.0).toInt().coerceIn(2, 30)
                 session.landFrom = player.position()
                 session.landTo = landPos
@@ -507,7 +477,7 @@ object SlideClientSession {
         applyLanding(session, payload)
     }
 
-    // Complete the eased landing once onClientTickPost reaches the last step.
+    // finish the eased landing at the final step
     private fun finishLand(session: Active) {
         active = null
         val player = Minecraft.getInstance().player ?: return
@@ -527,8 +497,7 @@ object SlideClientSession {
         player.refreshDimensions()
     }
 
-    // Final landing: place the rider, apply velocity and orientation, restore
-    // gravity/pose, and terminate the session.
+    // final landing, restores gravity and pose and ends the session
     private fun applyLanding(session: Active, payload: SlideEndPayload) {
         active = null
         val player = Minecraft.getInstance().player ?: return
@@ -590,18 +559,12 @@ object SlideClientSession {
         val level = mc.level ?: return
         val session = active ?: return
 
-        // Replay interop: in replay view ReplayMod copies the recorded player's
-        // position/orientation into its own camera; writing the local (virtual)
-        // player here would keep re-hijacking the replay camera to the slide
-        // rider. Skip our playback entirely in replay view.
+        // in replay view the recorded player owns the camera, skip the playback
         if (isReplayView()) {
             return
         }
 
-        // Landing transition in progress: ease the player to the landing point
-        // over a few ticks so ReplayMod's per-tick recorder never sees a
-        // >8-block hop (which it would store as an absolute teleport and the
-        // playback camera would snap to the landing point).
+        // ease the landing over a few ticks, no ReplayMod teleport packet
         if (session.landRemaining > 0) {
             session.landRemaining--
             val f = session.landFrom ?: return
@@ -660,9 +623,7 @@ object SlideClientSession {
             )
         }
 
-        // Splash particles must run AFTER the playback velocity above has been
-        // written, otherwise they read the zeroed pre-tick deltaMovement and
-        // never spawn.
+        // splash particles run after the playback velocity is written
         WaterslideSplashSpawner.tickSliding(mc)
     }
 

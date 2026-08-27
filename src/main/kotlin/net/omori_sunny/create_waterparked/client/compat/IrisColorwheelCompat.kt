@@ -9,22 +9,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.zip.ZipFile
 
-// Iris + Colorwheel (ShaderPacks) compatibility detection.
-//
-// Deliberately dependency-light so this mod works WITHOUT Iris/Colorwheel:
-//  - presence of the mods is checked through NeoForge's ModList (no classes
-//    from Iris referenced), and
-//  - "are shaders actually in use right now" is reflected over Iris's public
-//    compat API (net.irisshaders.iris.api.v0.IrisApi#isShaderPackInUse), never
-//    compiled against.
-//
-// When all three hold (Iris installed + Colorwheel installed + shader pack
-// active with a colorwheel-compatible pack), the water inside our tubes and the
-// thrown stream get the shaderpack's water shading automatically: Colorwheel is
-// the Flywheel 1.0 -> Iris backend, so every translucent Flywheel water
-// material (TUBE_TRANSLUCENT / WATER_TRANSLUCENT) is already drawn through the
-// pack's clrwl_gbuffers_translucent program. This object only reports the
-// state so other code can act on it.
+// Iris and Colorwheel compatibility detection, works without either mod
 object IrisColorwheelCompat {
 
     @JvmStatic
@@ -33,8 +18,7 @@ object IrisColorwheelCompat {
     @JvmStatic
     fun colorwheelPresent(): Boolean = runCatching { ModList.get().isLoaded("colorwheel") }.getOrDefault(false)
 
-    // Reflected call into Iris's public compat API; returns false when Iris is
-    // absent so nothing on the Iris classpath is ever touched.
+    // reflected call into Iris public API, nothing on its classpath is touched
     @JvmStatic
     fun shadersInUse(): Boolean {
         if (!irisPresent()) return false
@@ -47,23 +31,13 @@ object IrisColorwheelCompat {
         }
     }
 
-    /** True when the full shader-waters stack is active for mounted slides. */
+    // true when the full shader water stack is active for mounted slides
     @JvmStatic
     fun waterShadingActive(): Boolean =
         ModClientConfig.shaderWaterCompat() &&
             irisPresent() && colorwheelPresent() && shadersInUse()
 
-    // Active shaderpack name, resolved in this order so detection survives the
-    // user renaming the pack folder:
-    //   1) iris.properties `shaderPack=` folder/file name, if it already matches
-    //      an adapter (fast path, no pack I/O);
-    //   2) the pack's OWN display-name field (shader.properties /
-    //      shaders/shaders.properties `name=`). None of BSL/Comp/photon/iteration
-    //      ship one today, but packs that do get their authoritative name;
-    //   3) a bounded probe of a few stable in-pack text files for the known
-    //      family markers (rename-proof);
-    // falling back to the raw folder/file name. The expensive steps are cached
-    // against iris.properties' mtime, so per-tick / per-instance calls are cheap.
+    // active pack name, resolved from folder name, display name and markers
     @JvmStatic
     fun shaderpackName(): String? {
         return try {
@@ -111,15 +85,14 @@ object IrisColorwheelCompat {
         return raw
     }
 
-    // Ordered by ShaderpackWaterAdapters.ALL priority; the probe checks each
-    // candidate file head for the first matching marker.
+    // ordered by adapter priority, first matching marker wins
     private val FAMILY_MARKERS: List<Pair<String, List<String>>> = listOf(
         "bsl" to listOf("bsl"),
         "complementary" to listOf("complementary"),
         "photon" to listOf("photon"),
         "iteration" to listOf("iteration", "itrp")
     )
-    // Small, stable, text-only entries that carry a pack's own name comment.
+    // small stable text files that carry a pack name comment
     private val PROBE_FILES: List<String> = listOf(
         "shaders/shaders.properties",
         "shaders/block.properties",

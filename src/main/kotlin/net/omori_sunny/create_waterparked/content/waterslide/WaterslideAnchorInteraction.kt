@@ -12,9 +12,7 @@ import net.minecraft.world.item.Items
 import net.neoforged.bus.api.EventPriority
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent
 
-// Water-bucket interaction for anchors inside Sable sub-levels. Sable gives
-// the click a local content position while the block entity lives at a
-// plot-global position, so the generic fluid-handler path never finds it.
+// water bucket interaction for anchors inside Sable sub levels
 object WaterslideAnchorInteraction {
 
     @JvmStatic

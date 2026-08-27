@@ -30,6 +30,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(BezierHandleDragManager.class)
 public abstract class BezierHandleDragManagerMixin {
 
+    private static final float MIN_DRAG_LIFT = 0.25f;
+    private static final float LIFT_SNAP_FLOOR = 0.5f;
+    private static final float LIFT_SNAP_DIVISOR = 2f;
+
     @Shadow
     private static BlockPos dragLiftAnchorPos;
 
@@ -88,10 +92,10 @@ public abstract class BezierHandleDragManagerMixin {
     private static float waterslide$liftSnap(float value, Operation<Float> original) {
         Level level = Minecraft.getInstance().level;
         if (level != null && level.getBlockEntity(dragLiftAnchorPos) instanceof WaterslideAnchorBlockEntity be) {
-            float max = Math.max(ModConfig.INSTANCE.maxSlideLift() - be.getRadius(), 0.25f);
-            float clamped = Mth.clamp(value, 0.25f, max);
-            if (clamped < 0.5f) return 0.25f;
-            return Mth.clamp(Math.round(clamped * 2f) / 2f, 0.25f, max);
+            float max = Math.max(ModConfig.INSTANCE.maxSlideLift() - be.getRadius(), MIN_DRAG_LIFT);
+            float clamped = Mth.clamp(value, MIN_DRAG_LIFT, max);
+            if (clamped < LIFT_SNAP_FLOOR) return MIN_DRAG_LIFT;
+            return Mth.clamp(Math.round(clamped * LIFT_SNAP_DIVISOR) / LIFT_SNAP_DIVISOR, MIN_DRAG_LIFT, max);
         }
         return original.call(value);
     }
@@ -136,17 +140,20 @@ public abstract class BezierHandleDragManagerMixin {
 
     @Inject(method = "isHoveringOrDraggingAnyHandle(Lnet/minecraft/client/Minecraft;)Z", at = @At("HEAD"), cancellable = true)
     private static void waterslide$anyHandle(Minecraft mc, CallbackInfoReturnable<Boolean> cir) {
-        if (WaterslideRadiusEdit.isHoveringOrDragging(mc) ||
-            WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc)) {
+        if (hoveringOrDraggingAny(mc)) {
             cir.setReturnValue(true);
         }
     }
 
     @Inject(method = "shouldSuppressVanillaUse(Lnet/minecraft/client/Minecraft;)Z", at = @At("HEAD"), cancellable = true)
     private static void waterslide$suppressUse(Minecraft mc, CallbackInfoReturnable<Boolean> cir) {
-        if (WaterslideRadiusEdit.isHoveringOrDragging(mc) ||
-            WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc)) {
+        if (hoveringOrDraggingAny(mc)) {
             cir.setReturnValue(true);
         }
+    }
+
+    private static boolean hoveringOrDraggingAny(Minecraft mc) {
+        return WaterslideRadiusEdit.isHoveringOrDragging(mc) ||
+            WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc);
     }
 }

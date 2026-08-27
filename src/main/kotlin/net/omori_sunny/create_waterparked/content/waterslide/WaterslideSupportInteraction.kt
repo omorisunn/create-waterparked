@@ -10,21 +10,19 @@ import net.minecraft.sounds.SoundSource
 import net.minecraft.world.InteractionHand
 import net.minecraft.world.InteractionResult
 import net.minecraft.world.entity.player.Player
+import net.minecraft.world.item.AxeItem
+import net.minecraft.world.item.BlockItem
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.level.Level
 import net.minecraft.world.level.block.Block
 import net.minecraft.world.level.block.LevelEvent
+import net.neoforged.neoforge.event.entity.player.PlayerEvent
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent
+import net.omori_sunny.create_waterparked.CreateWaterparked
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-// Server half of the copycat-style support material interaction.
-//
-// The client ray-picks the rendered Flywheel support geometry (which has no
-// block hitbox) and reports the hovered anchor+part. That short-lived state is
-// used ONLY to cancel the server's RightClickBlock event for the real block
-// behind the support, so vanilla placement cannot happen through the beam.
-// The actual material operation is sent as an explicit apply payload.
+// server half of the copycat style support material interaction
 object WaterslideSupportInteraction {
 
     const val HOVER_TTL_TICKS = 40L
@@ -43,7 +41,7 @@ object WaterslideSupportInteraction {
     }
 
     @JvmStatic
-    fun onPlayerLoggedOut(event: net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent) {
+    fun onPlayerLoggedOut(event: PlayerEvent.PlayerLoggedOutEvent) {
         hovers.remove(event.entity.uuid)
     }
 
@@ -70,11 +68,18 @@ object WaterslideSupportInteraction {
     ): Boolean {
         val level = player.serverLevel()
         val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return false
-        return apply(level, player, be, part, face, hand)
+        val ok = apply(level, player, be, part, face, hand)
+        CreateWaterparked.LOGGER.info(
+            "[SupportApply] anchor={} part={} item={} ok={} deleted={} filled={}",
+            anchor, part, player.getItemInHand(hand).item.descriptionId, ok,
+            !be.isSupportVisible(part), be.hasCustomSupportMaterial(part)
+        )
+        return ok
     }
 
     private fun canInteract(stack: ItemStack): Boolean =
-        !stack.isEmpty && (AllItems.WRENCH.isIn(stack) || stack.item is net.minecraft.world.item.BlockItem)
+        !stack.isEmpty && (AllItems.WRENCH.isIn(stack) || stack.item is BlockItem ||
+            stack.item is AxeItem)
 
     private fun apply(
         level: Level,
@@ -85,10 +90,27 @@ object WaterslideSupportInteraction {
         hand: InteractionHand
     ): Boolean {
         val stack = player.getItemInHand(hand)
+        val deleted = !be.isSupportVisible(part)
+        val filled = be.hasCustomSupportMaterial(part)
+        // deleted part: only the wrench may restore it
+        // filled part: only the wrench may act; empty part: the wrench is rejected
+        val wrench = AllItems.WRENCH.isIn(stack)
+        val allowed = if (deleted) wrench else filled == wrench
+        if (!allowed) return false
 
-        // Wrench: copycat reset - give the consumed item back and restore the
-        // default copycat_base look.
+        // axe deletes the support part, the wrench restores it
+        if (stack.item is AxeItem) {
+            if (!be.isSupportVisible(part)) return false
+            be.setSupportVisible(part, false)
+            return true
+        }
+
+        // wrench reset: return the consumed item and restore the default look
         if (AllItems.WRENCH.isIn(stack)) {
+            if (!be.isSupportVisible(part)) {
+                be.setSupportVisible(part, true)
+                return true
+            }
             val returned = be.resetSupportMaterial(part)
             if (returned.isEmpty) return false
             if (!player.isCreative) player.inventory.placeItemBackInInventory(returned)

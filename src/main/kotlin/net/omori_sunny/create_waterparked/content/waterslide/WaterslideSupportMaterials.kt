@@ -15,10 +15,7 @@ import net.minecraft.world.level.block.state.BlockState
 import net.minecraft.world.level.block.state.properties.BlockStateProperties
 import net.minecraft.world.phys.shapes.Shapes
 
-// Copycat parity helpers for the anchor-stored support materials. The accepted
-// block checks and the property cycling are intentionally identical to Create's
-// CopycatBlock.getAcceptedBlockState / CopycatBlockEntity.cycleMaterial, so the
-// support beam/bracket behave exactly like placing material on a copycat block.
+// copycat parity helpers for anchor stored support materials
 object WaterslideSupportMaterials {
 
     @JvmStatic

@@ -14,7 +14,7 @@ object ModBlockEntities {
 
     val WATERSLIDE_ANCHOR_BE: BlockEntityType<WaterslideAnchorBlockEntity> by
     REGISTRY.register("waterslide_anchor") { ->
-        // Set pendingType for the type-swap mixin.
+        // set pendingType for the type swap mixin
         var resolvedType: BlockEntityType<WaterslideAnchorBlockEntity>? = null
         val type = BlockEntityType.Builder.of(
             { pos, state ->

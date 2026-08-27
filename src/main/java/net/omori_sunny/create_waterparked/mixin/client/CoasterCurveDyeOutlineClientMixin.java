@@ -4,8 +4,10 @@ import com.simibubi.create.content.trains.track.BezierConnection;
 import dev.silvergold.simulatedcoasters.client.track.CoasterCurveDyeOutlineClient;
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.DyeItem;
+import net.minecraft.world.item.Item;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -28,12 +30,12 @@ public abstract class CoasterCurveDyeOutlineClientMixin {
         if (cir.getReturnValue() == null) return;
         if (!WaterslideTrackMaterials.isWaterslide(cir.getReturnValue())) return;
         if (mc.player == null) return;
-        boolean holdingDye = mc.player.getMainHandItem().getItem() instanceof DyeItem ||
-            mc.player.getOffhandItem().getItem() instanceof DyeItem;
-        boolean holdingAxe = mc.player.getMainHandItem().getItem() instanceof AxeItem ||
-            mc.player.getOffhandItem().getItem() instanceof AxeItem;
-        if (holdingDye || holdingAxe) {
+        if (holdsTool(mc.player, DyeItem.class) || holdsTool(mc.player, AxeItem.class)) {
             cir.setReturnValue(null);
         }
+    }
+
+    private static boolean holdsTool(Player player, Class<? extends Item> type) {
+        return type.isInstance(player.getMainHandItem().getItem()) || type.isInstance(player.getOffhandItem().getItem());
     }
 }

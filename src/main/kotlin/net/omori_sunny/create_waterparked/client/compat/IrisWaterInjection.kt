@@ -13,10 +13,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMate
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import org.lwjgl.opengl.GL33
 
-// Builds the mounted tube water (in-tube bands) into Sodium's compact chunk
-// vertex format and draws it during Sodium's water (translucent terrain) pass,
-// so the active shaderpack's own water program shades it. Geometry is gathered
-// from the client anchor block entities and rebuilt a few times per second.
+// builds tube water into Sodium compact vertices and draws it in the water pass
 object IrisWaterInjection {
 
     private val vertexType: ChunkVertexType = ChunkMeshFormats.COMPACT
@@ -36,8 +33,7 @@ object IrisWaterInjection {
         built = false
     }
 
-    // Called from the water-pass mixin while Sodium's water program + uniforms
-    // are live; our matrix state was pushed via ChunkShaderInterface first.
+    // called from the water pass mixin while the water program and uniforms are live
     @JvmStatic
     fun renderWaterGeometry() {
         if (!IrisColorwheelCompat.waterShadingActive()) return
@@ -71,9 +67,7 @@ object IrisWaterInjection {
         GL33.glBindBuffer(GL33.GL_ARRAY_BUFFER, 0)
     }
 
-    // Reflection into org.lwjgl.opengl.GL30: Kotlin's overload resolution is
-    // hostile to the int vs long pointer variants; reflect to bind attributes
-    // with the exact (index,size,type[,normalized,stride],offset) signatures.
+    // reflect into GL30, exact attribute pointer signatures
     private val vap = try {
         Class.forName("org.lwjgl.opengl.GL30")
             .getMethod("glVertexAttribPointer", Integer.TYPE, Integer.TYPE, Integer.TYPE,
@@ -101,8 +95,7 @@ object IrisWaterInjection {
     @JvmStatic
     fun currentRegionOffset(): Vec3 = lastOrigin
 
-    // GlVertexAttributeBinding keeps its attribute privately; fetch it by
-    // walking the class hierarchy (stable across the vendored sodium).
+    // fetch the private attribute by walking the class hierarchy
     private fun reflectiveAttribute(b: Any): GlVertexAttribute {
         var c: Class<*>? = b.javaClass
         while (c != null) {

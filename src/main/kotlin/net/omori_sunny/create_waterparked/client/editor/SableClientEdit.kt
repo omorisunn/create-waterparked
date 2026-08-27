@@ -10,9 +10,7 @@ import net.minecraft.world.level.Level
 import net.minecraft.world.phys.Vec3
 import org.joml.Vector3d
 
-// Resolves editor anchors that live inside a Sable sub-level. Sub-level block
-// entities are stored at plot-global positions while the editor UI receives
-// local content positions, so every lookup converts through the plot center.
+// resolves editor anchors inside a Sable sub level through the plot center
 object SableClientEdit {
 
     data class AnchorCtx(
@@ -22,9 +20,7 @@ object SableClientEdit {
     )
 
     fun resolve(level: Level, anchor: BlockPos): AnchorCtx? {
-        // Plot-global positions resolve directly against the parent level, but
-        // still have to keep their containing sub-level so render/hit code can
-        // transform the plot geometry into world space.
+        // plot global anchors resolve directly, keep the containing sub level
         val direct = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity
         if (direct != null) {
             val sub = Sable.HELPER.getContaining(level, anchor) as? ClientSubLevel
@@ -40,9 +36,7 @@ object SableClientEdit {
         return null
     }
 
-    // Sable's logical pose already maps the parent level's plot-global block
-    // coordinates straight into world space; there is no extra plot-center
-    // offset to apply.
+    // logical pose maps plot global coords straight into world space
     fun toWorld(sub: ClientSubLevel, plotGlobal: Vec3): Vec3 {
         val out = sub.logicalPose().transformPosition(JOMLConversion.toJOML(plotGlobal), Vector3d())
         return JOMLConversion.toMojang(out)

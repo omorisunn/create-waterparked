@@ -20,10 +20,7 @@ import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 
-// Contraption-local clone of the world-space waterslide tube visual. It decodes
-// the captured anchor block entity NBT and draws the tube wall plus static
-// in-tube water in contraption-local coordinates; Flywheel applies the entity
-// matrices automatically, so every instance is authored relative to Vec3.ZERO.
+// contraption local clone of the tube visual, decoded from captured anchor NBT
 class WaterslideContraptionTubeVisual(
     visualizationContext: VisualizationContext,
     simulationWorld: VirtualRenderWorld,
@@ -32,10 +29,7 @@ class WaterslideContraptionTubeVisual(
 
     private companion object {
         const val WALL_THICKNESS = 0.1f
-        // fixed cross-section fractions so the water model is shared across
-        // every segment, matching the world-space visual. The bed arc stays
-        // strictly inside the inner wall (radius - 0.1): need 0.85r < r - 0.1
-        // (r > 2/3) so the band never z-fights with the wall into green stripes.
+        // fixed cross section fractions, band stays inside the inner wall
         const val WATER_IN_FRAC = 0.85f
         const val WATER_SURF_FRAC = 0.8f
         const val WATER_COLOR_R = 0.3f
@@ -63,7 +57,7 @@ class WaterslideContraptionTubeVisual(
             ModConfig.defaultSlideRadius()
         }
 
-        // SectorConfigs: { Peer:Long, Config:Compound }
+        // sector configs, peer to config
         val sectorConfigs = HashMap<BlockPos, WaterslideSectorConfig>()
         if (tag.contains("SectorConfigs", Tag.TAG_LIST.toInt())) {
             for (entry in tag.getList("SectorConfigs", Tag.TAG_COMPOUND.toInt())) {
@@ -74,7 +68,7 @@ class WaterslideContraptionTubeVisual(
             }
         }
 
-        // WateredCurves: { Peer:Long, Watered:Byte }
+        // watered curves, peer to watered flag
         val wateredPeers = HashSet<BlockPos>()
         if (tag.contains("WateredCurves", Tag.TAG_LIST.toInt())) {
             for (entry in tag.getList("WateredCurves", Tag.TAG_COMPOUND.toInt())) {
@@ -86,11 +80,7 @@ class WaterslideContraptionTubeVisual(
             }
         }
 
-        // AnchorPeerCurves: { Peer:Long, Bezier:Compound } written with
-        // localTo = the anchor's world position (BezierConnection.write/read
-        // store endpoints and starts relative to the anchor). Create captures
-        // that NBT verbatim, so rebuilding with localTo = context.localPos
-        // re-anchors the whole curve into contraption-local space.
+        // rebuild curves with localTo the captured anchor world position
         val out = ArrayList<MountedTubeCurve>()
         if (!tag.contains("AnchorPeerCurves", Tag.TAG_LIST.toInt())) return out
         for (entry in tag.getList("AnchorPeerCurves", Tag.TAG_COMPOUND.toInt())) {
@@ -101,14 +91,10 @@ class WaterslideContraptionTubeVisual(
             val raw = try {
                 BezierConnection(bezierTag, movementContext.localPos)
             } catch (e: Throwable) {
-                // a malformed/remapped curve should never crash the whole contraption
+                // a malformed curve should never crash the whole contraption
                 continue
             }
-            // Only the primary host renders: Simulated stores each physical
-            // curve as primary at exactly one anchor and as secondary at the
-            // reciprocal anchor, so this deduplicates. A partial assembly that
-            // mounts only the secondary-side anchor intentionally draws no
-            // tube (its peer data would be inconsistent after disassembly).
+            // only the primary host renders, dedupes the reciprocal copy
             if (!raw.isPrimary) continue
             if (!WaterslideTrackMaterials.isWaterslide(raw)) continue
             val config = sectorConfigs[peer] ?: WaterslideSectorConfig.defaultConfig()
@@ -117,8 +103,7 @@ class WaterslideContraptionTubeVisual(
         return out
     }
 
-    // same packed light sampling as the world visual, but from the contraption's
-    // virtual render world instead of the real level
+    // packed light from the virtual render world
     private fun packedLight(pos: Vec3): Int {
         val bp = BlockPos.containing(pos)
         val block = simulationWorld.getBrightness(LightLayer.BLOCK, bp).coerceIn(0, 15)
@@ -126,14 +111,12 @@ class WaterslideContraptionTubeVisual(
         return LightTexture.pack(block, sky)
     }
 
-    // static in-tube water: no server flow speed exists in the captured NBT, so
-    // phases are never advanced. beginFrame stays a no-op.
+    // static water, no flow phases in the captured NBT
     override fun beginFrame() {
     }
 
     override fun update(partialTicks: Float) {
-        // re-check for a late-arriving water-field sync so the tube can start
-        // flowing after creation
+        // re check a late water field sync so the tube can start flowing
         if (++refreshCounter % 10 == 0) {
             for (curve in curves) curve.rebuildWaterIfNeeded()
         }
@@ -154,17 +137,13 @@ class WaterslideContraptionTubeVisual(
         val radius: Float,
         val watered: Boolean
     ) {
-        // this anchor's radius is used for both ends; the mounted preview has no
-        // live peer anchor to read a differing radius from
+        // this anchor radius for both ends, no live peer to read from
         private val frames: List<WaterslideTubeMesh.TubeSegmentFrame> =
             WaterslideTubeMesh.sampleSegments(curve, radius, radius, Vec3.ZERO)
 
         private val models = WaterslideTubeMesh.modelsFor(config, radius)
 
-        // water field synced from the server's one-time contraption water
-        // computation; when present the tube flows even if the captured NBT
-        // WateredCurves was empty (server auto-watered it from the
-        // contraption's fluid storage)
+        // server synced water field, flows even when the captured NBT was empty
         private val waterField: net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation.CurveWater? =
             try {
                 net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation.fieldFor(
@@ -175,8 +154,7 @@ class WaterslideContraptionTubeVisual(
                 null
             }
 
-        // cumulative shader arc length at each frame so consecutive water
-        // instances share the same UV coordinate at their boundary ring
+        // cumulative arc length per frame for shared UV at boundary rings
         private val prefixArcs: FloatArray = FloatArray(frames.size + 1).also { arcs ->
             for (i in frames.indices) {
                 arcs[i + 1] = arcs[i] + WaterslideTubeMesh.arcLength(frames[i])
@@ -199,11 +177,7 @@ class WaterslideContraptionTubeVisual(
             rebuildWaterIfNeeded()
         }
 
-        // Builds the water band lazily: after the server's water-field sync
-        // arrives (it can lag the visual creation) the tube should still show
-        // flowing water. Also rebuilds when the water mesh density changes
-        // (iterationRP's 10x subdivision toggled by pack/config/polygon scale),
-        // so mounted contraptions pick the feature up without re-mounting.
+        // builds the water band lazily, water field sync can lag creation
         fun rebuildWaterIfNeeded() {
             val crossSections = WaterslideTubeMesh.waterCrossSections()
             if (waterBuilt && crossSections == builtWaterCrossSections) return
@@ -254,8 +228,7 @@ class WaterslideContraptionTubeVisual(
             val waterInstancer = instancerProvider.instancer(
                 WaterslideTubeInstanceType.INSTANCE, waterModel
             )
-            // average flow speed from the server-synced water field (if any);
-            // drives the texture scroll so the mounted water visibly flows
+            // average flow speed from the server synced field, drives the scroll
             val avgFlow = waterField?.let { f ->
                 if (f.segments.isEmpty()) 0f
                 else (f.segments.sumOf { it.speed.toDouble() } / f.segments.size.toDouble()).toFloat()
@@ -269,8 +242,7 @@ class WaterslideContraptionTubeVisual(
                     f.prevRadius, f.currRadius
                 )
                 w.light(lights[i])
-                // iterationRP: light blue albedo (its glass absorption tint comes
-                // from this) - keeps the background readable with a hint of blue
+                // iterationRP light blue albedo, keeps the background readable
                 if (IrisColorwheelCompat.waterUvAtlasMode()) {
                     w.color(0.86f, 0.92f, 1f, WATER_COLOR_A)
                 } else {
@@ -280,14 +252,13 @@ class WaterslideContraptionTubeVisual(
                 w.mirror = 1f
                 w.arcBase = prefixArcs[i]
                 w.flowSign = if (avgFlow >= 0f) -1f else 1f
-                // flowing water driven by the contraption-internal water sim
+                // flowing water driven by the contraption internal water sim
                 val flow = avgFlow / 40f
                 w.flowStart = flow
                 w.flowEnd = flow
                 w.flowUpstream = flow
                 w.downstreamMix = 1f
-                // iterationRP shades water through its own path: keep the mesh
-                // static there, user jitter stays active for every other pack
+                // iterationRP shades water through its own path, keep it static there
                 w.jitterScale = if (IrisColorwheelCompat.iterationRpWaterMode()) 0f
                     else ModClientConfig.waterJitterScale()
                 w.jitterFrequency = ModClientConfig.waterJitterFrequency()

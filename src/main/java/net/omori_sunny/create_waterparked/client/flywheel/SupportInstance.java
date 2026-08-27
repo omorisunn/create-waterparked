@@ -8,15 +8,11 @@ import org.joml.Vector3f;
 
 public class SupportInstance extends ColoredLitOverlayInstance {
     public final Vector3f origin = new Vector3f();
-    // 1 = whole-face texture tiling (beam: one full sprite per face, v repeats
-    // every block); 0 = wall-style 16px/block border tiling (bracket shell)
+    // 1 = whole face tiling, 0 = wall style 16px border tiling
     public float fullTileMode = 0f;
-    // sprite rect of this mesh's texture (per-instance so mesh attributes stay clean)
+    // sprite rect of this mesh texture, instances keep mesh attributes clean
     public float spriteU0 = 0f, spriteU1 = 1f, spriteV0 = 0f, spriteV1 = 1f;
-    // real bounding sphere of the CPU-baked mesh, in INSTANCE space (relative to
-    // `origin`). The baked geometry can sit far from the origin, so these ride
-    // the instance instead of the fixed 6.0 sphere at the origin that used to
-    // cull the beam/bracket out whenever the camera moved.
+    // real bounding sphere of the baked mesh in instance space, rides the instance
     public final Vector3f boundCenter = new Vector3f();
     public float boundRadius = 1f;
 

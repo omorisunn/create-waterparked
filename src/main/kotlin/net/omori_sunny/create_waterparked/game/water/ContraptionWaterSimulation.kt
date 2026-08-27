@@ -8,37 +8,29 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMate
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
 import net.omori_sunny.create_waterparked.game.physics.ContraptionSlideSpaceAccess
 import net.omori_sunny.create_waterparked.game.physics.ContraptionSlideSpaces
+import net.omori_sunny.create_waterparked.network.WaterslideWaterSyncPayload
 import net.minecraft.core.BlockPos
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.phys.Vec3
+import net.neoforged.neoforge.network.PacketDistributor
 import kotlin.math.max
 import kotlin.math.sqrt
 
-// One-time, contraption-internal water-physics computation.
-//
-// When a contraption carrying a waterslide is assembled, the water-particle
-// field for ITS OWN tubes is computed exactly once (this is what feeds the
-// running-water / thrown-water visuals on the move). The slides mounted on a
-// contraption deliberately do NOT take part in the per-tick water simulation
-// of other carriers (main-world / Sable sub-levels): ServerWaterSimulation
-// only ever visits Main + SubLevel spaces, and everything contraption-side
-// lives here.
-//
-// Water source = the (auto-watered) captured anchors; autonomous water: the
-// field is static and water is never consumed, so recomputation happens only
-// when the captured slide data changes.
+// one time water field for contraption tubes, never simulated per tick
 object ContraptionWaterSimulation {
 
     private const val WATER_LAUNCH = 2.0 // initial block/s at the source mouth
     private const val GRAVITY = 32.0
+    private const val ZERO_EPS = 1.0E-12
+    private const val MIN_SEGMENT_LENGTH = 1.0E-6
+    private const val MIN_SPEED = 1.0E-6
 
     private data class Cached(
         val sig: Int,
         val fields: Map<Pair<Long, Long>, ServerWaterSimulation.CurveField>
     )
 
-    // contraption entity id -> cached field (kept in the parent object's cache
-    // so Sessions and the render path share one copy)
+    // contraption id to cached field, shared with the render path
     private val cache = HashMap<Int, Cached>()
 
     fun edgeKey(a: BlockPos, b: BlockPos): Pair<Long, Long> =
@@ -48,7 +40,7 @@ object ContraptionWaterSimulation {
 
     fun invalidate(entityId: Int) { cache.remove(entityId) }
 
-    // /waterparked refresh: recompute + resync every loaded contraption slide.
+    // recompute and resync all loaded contraption slides
     fun refresh(level: ServerLevel) {
         invalidateAll()
         for (id in ContraptionSlideSpaces.carriersIn(level)) {
@@ -58,21 +50,20 @@ object ContraptionWaterSimulation {
         }
     }
 
-    // Send the once-computed contraption water field to every player in the
-    // dimension so the client can render flowing water / the thrown stream.
+    // send the computed field to all players in the dimension
     fun syncToPlayers(level: ServerLevel, entity: AbstractContraptionEntity) {
         if (level.isClientSide) return
         val fields = fieldsFor(level, entity)
         if (fields.isEmpty()) return
         val entries = fields.map { (edge, f) ->
-            net.omori_sunny.create_waterparked.network.WaterslideWaterSyncPayload.Entry(
+            WaterslideWaterSyncPayload.Entry(
                 edge.first, edge.second,
-                f.segments.map { net.omori_sunny.create_waterparked.network.WaterslideWaterSyncPayload.Segment(it.arc, it.speed) },
+                f.segments.map { WaterslideWaterSyncPayload.Segment(it.arc, it.speed) },
                 f.exit?.pos, f.exit?.vel
             )
         }
-        val payload = net.omori_sunny.create_waterparked.network.WaterslideWaterSyncPayload(entries, null, entity.id)
-        net.neoforged.neoforge.network.PacketDistributor.sendToPlayersInDimension(level, payload)
+        val payload = WaterslideWaterSyncPayload(entries, null, entity.id)
+        PacketDistributor.sendToPlayersInDimension(level, payload)
         CreateWaterparked.LOGGER.debug("[ContraptionWater] synced {} field(s) for contraption {}", entries.size, entity.id)
     }
 
@@ -109,8 +100,7 @@ object ContraptionWaterSimulation {
         return key
     }
 
-    // Water flows from every watered anchor down its curves; since water is
-    // not consumed the whole tube becomes wet and the far (open) mouth throws.
+    // water flows from every watered anchor and exits at the open mouth
     private fun compute(level: ServerLevel, entity: AbstractContraptionEntity): Map<Pair<Long, Long>, ServerWaterSimulation.CurveField> {
         val out = HashMap<Pair<Long, Long>, ServerWaterSimulation.CurveField>()
         try {
@@ -134,8 +124,7 @@ object ContraptionWaterSimulation {
         return out
     }
 
-    // Ballistic water along one curve in contraption-local space: the whole
-    // tube is watered from the source mouth onward and the far open end throws.
+    // ballistic water along one curve, the far open end throws
     private fun flow(
         access: ContraptionSlideSpaceAccess,
         bc: BezierConnection,
@@ -145,9 +134,9 @@ object ContraptionWaterSimulation {
         val frames = SlideCurveGeometry.sampleFrames(access, bc, r0, r1, includeExtensions = true)
         if (frames.size < 2) return ServerWaterSimulation.CurveField(emptyList(), null)
 
-        // downward direction in contraption-local space: -localGravity, else world-down
+        // local down, falls back to world down
         val grav = access.localGravity()
-        val downLocal = if (grav.lengthSqr() > 1.0E-12) grav.scale(-1.0).normalize()
+        val downLocal = if (grav.lengthSqr() > ZERO_EPS) grav.scale(-1.0).normalize()
         else Vec3(0.0, 1.0, 0.0)
 
         val segments = ArrayList<ServerWaterSimulation.WaterSegment>()
@@ -157,16 +146,16 @@ object ContraptionWaterSimulation {
             val fa = frames[i]
             val fb = frames[i + 1]
             val len = fa.center.distanceTo(fb.center)
-            if (len < 1.0E-6) continue
+            if (len < MIN_SEGMENT_LENGTH) continue
             // gain from falling along the downward component of travel
             val along = (fb.center.subtract(fa.center)).normalize()
             val fall = max(0.0, along.dot(downLocal))
-            speed = sqrt(max(1.0E-6, speed * speed + 2.0 * GRAVITY * fall * len))
+            speed = sqrt(max(MIN_SPEED, speed * speed + 2.0 * GRAVITY * fall * len))
             arc += len.toFloat()
             segments += ServerWaterSimulation.WaterSegment(arc, speed.toFloat())
         }
 
-        // exit throw at the far mouth (extension frames included)
+        // exit throw at the far mouth
         val lastFrame = frames.last()
         val exitPos = lastFrame.center
         val exitVel = lastFrame.tangent.scale(speed)

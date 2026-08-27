@@ -1,16 +1,17 @@
 package net.omori_sunny.create_waterparked.network
 
-import net.omori_sunny.create_waterparked.CreateWaterparked
-import net.omori_sunny.create_waterparked.client.SlideClientSession
-import net.omori_sunny.create_waterparked.game.physics.PlayerSlideController
-import net.omori_sunny.create_waterparked.game.physics.SlideSample
 import net.minecraft.network.RegistryFriendlyByteBuf
 import net.minecraft.network.codec.StreamCodec
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import net.minecraft.resources.ResourceLocation
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.phys.Vec3
+import net.neoforged.neoforge.network.PacketDistributor
 import net.neoforged.neoforge.network.handling.IPayloadContext
+import net.omori_sunny.create_waterparked.CreateWaterparked
+import net.omori_sunny.create_waterparked.client.SlideClientSession
+import net.omori_sunny.create_waterparked.game.physics.PlayerSlideController
+import net.omori_sunny.create_waterparked.game.physics.SlideSample
 import java.util.UUID
 
 data class SlideSampleWire(
@@ -50,17 +51,16 @@ data class SlideSampleWire(
         else Vec3(x + offset.x, y + offset.y, z + offset.z)
 
     companion object {
-        // positions are encoded RELATIVE to `offset` (the sub-level plot center)
-        // so they stay small enough for float32; tangents/up stay unit vectors
+        // positions are relative to the plot center for float32
         fun from(s: SlideSample, offset: Vec3? = null): SlideSampleWire =
             SlideSampleWire(
                 s.time.toFloat(),
-                (s.center.x - (offset?.x ?: 0.0)).toFloat(),
-                (s.center.y - (offset?.y ?: 0.0)).toFloat(),
-                (s.center.z - (offset?.z ?: 0.0)).toFloat(),
-                (s.tubeCenter.x - (offset?.x ?: 0.0)).toFloat(),
-                (s.tubeCenter.y - (offset?.y ?: 0.0)).toFloat(),
-                (s.tubeCenter.z - (offset?.z ?: 0.0)).toFloat(),
+                relCoord(s.center.x, offset?.x),
+                relCoord(s.center.y, offset?.y),
+                relCoord(s.center.z, offset?.z),
+                relCoord(s.tubeCenter.x, offset?.x),
+                relCoord(s.tubeCenter.y, offset?.y),
+                relCoord(s.tubeCenter.z, offset?.z),
                 s.tangent.x.toFloat(), s.tangent.y.toFloat(), s.tangent.z.toFloat(),
                 s.up.x.toFloat(), s.up.y.toFloat(), s.up.z.toFloat(),
                 s.radius,
@@ -68,6 +68,9 @@ data class SlideSampleWire(
                 s.inTube,
                 s.watered
             )
+
+        private fun relCoord(value: Double, offset: Double?): Float =
+            (value - (offset ?: 0.0)).toFloat()
     }
 }
 
@@ -100,49 +103,19 @@ class SlideTrajectoryPayload(
                     buf.writeLong(p.sessionId)
                     buf.writeLong(p.startTick)
                     buf.writeBoolean(p.swimmingPose)
-                    buf.writeBoolean(p.subLevelId != null)
-                    if (p.subLevelId != null) buf.writeUUID(p.subLevelId)
-                    buf.writeBoolean(p.contraptionEntityId != null)
-                    if (p.contraptionEntityId != null) buf.writeInt(p.contraptionEntityId)
-                    buf.writeCollection(p.samples) { b, s ->
-                        b.writeFloat(s.time)
-                        b.writeFloat(s.cx)
-                        b.writeFloat(s.cy)
-                        b.writeFloat(s.cz)
-                        b.writeFloat(s.tcx)
-                        b.writeFloat(s.tcy)
-                        b.writeFloat(s.tcz)
-                        b.writeFloat(s.tx)
-                        b.writeFloat(s.ty)
-                        b.writeFloat(s.tz)
-                        b.writeFloat(s.ux)
-                        b.writeFloat(s.uy)
-                        b.writeFloat(s.uz)
-                        b.writeFloat(s.radius)
-                        b.writeFloat(s.speed)
-                        b.writeBoolean(s.inTube)
-                        b.writeBoolean(s.watered)
-                    }
+                    buf.writeNullableUuid(p.subLevelId)
+                    buf.writeNullableInt(p.contraptionEntityId)
+                    buf.writeSamples(p.samples)
                 },
                 { buf ->
                     val sessionId = buf.readLong()
                     val startTick = buf.readLong()
                     val swimming = buf.readBoolean()
-                    val hasSub = buf.readBoolean()
-                    val subLevelId = if (hasSub) buf.readUUID() else null
-                    val hasCp = buf.readBoolean()
-                    val contraptionEntityId = if (hasCp) buf.readInt() else null
-                    val samples = buf.readCollection({ ArrayList() }) { b ->
-                        SlideSampleWire(
-                            b.readFloat(), b.readFloat(), b.readFloat(), b.readFloat(),
-                            b.readFloat(), b.readFloat(), b.readFloat(),
-                            b.readFloat(), b.readFloat(), b.readFloat(),
-                            b.readFloat(), b.readFloat(), b.readFloat(),
-                            b.readFloat(), b.readFloat(),
-                            b.readBoolean(), b.readBoolean()
-                        )
-                    }
-                    SlideTrajectoryPayload(sessionId, startTick, swimming, subLevelId, contraptionEntityId, samples)
+                    val subLevelId = buf.readNullableUuid()
+                    val contraptionEntityId = buf.readNullableInt()
+                    SlideTrajectoryPayload(
+                        sessionId, startTick, swimming, subLevelId, contraptionEntityId, buf.readSamples()
+                    )
                 }
             )
     }
@@ -173,48 +146,18 @@ class SlideSegmentPayload(
                 { buf, p ->
                     buf.writeLong(p.sessionId)
                     buf.writeLong(p.startTick)
-                    buf.writeBoolean(p.subLevelId != null)
-                    if (p.subLevelId != null) buf.writeUUID(p.subLevelId)
-                    buf.writeBoolean(p.contraptionEntityId != null)
-                    if (p.contraptionEntityId != null) buf.writeInt(p.contraptionEntityId)
-                    buf.writeCollection(p.samples) { b, s ->
-                        b.writeFloat(s.time)
-                        b.writeFloat(s.cx)
-                        b.writeFloat(s.cy)
-                        b.writeFloat(s.cz)
-                        b.writeFloat(s.tcx)
-                        b.writeFloat(s.tcy)
-                        b.writeFloat(s.tcz)
-                        b.writeFloat(s.tx)
-                        b.writeFloat(s.ty)
-                        b.writeFloat(s.tz)
-                        b.writeFloat(s.ux)
-                        b.writeFloat(s.uy)
-                        b.writeFloat(s.uz)
-                        b.writeFloat(s.radius)
-                        b.writeFloat(s.speed)
-                        b.writeBoolean(s.inTube)
-                        b.writeBoolean(s.watered)
-                    }
+                    buf.writeNullableUuid(p.subLevelId)
+                    buf.writeNullableInt(p.contraptionEntityId)
+                    buf.writeSamples(p.samples)
                 },
                 { buf ->
                     val sessionId = buf.readLong()
                     val startTick = buf.readLong()
-                    val hasSub = buf.readBoolean()
-                    val subLevelId = if (hasSub) buf.readUUID() else null
-                    val hasCp = buf.readBoolean()
-                    val contraptionEntityId = if (hasCp) buf.readInt() else null
-                    val samples = buf.readCollection({ ArrayList() }) { b ->
-                        SlideSampleWire(
-                            b.readFloat(), b.readFloat(), b.readFloat(), b.readFloat(),
-                            b.readFloat(), b.readFloat(), b.readFloat(),
-                            b.readFloat(), b.readFloat(), b.readFloat(),
-                            b.readFloat(), b.readFloat(), b.readFloat(),
-                            b.readFloat(), b.readFloat(),
-                            b.readBoolean(), b.readBoolean()
-                        )
-                    }
-                    SlideSegmentPayload(sessionId, startTick, subLevelId, contraptionEntityId, samples)
+                    val subLevelId = buf.readNullableUuid()
+                    val contraptionEntityId = buf.readNullableInt()
+                    SlideSegmentPayload(
+                        sessionId, startTick, subLevelId, contraptionEntityId, buf.readSamples()
+                    )
                 }
             )
     }
@@ -324,6 +267,53 @@ class SlideSyncPayload(val sessionId: Long, val elapsedTicks: Int) : CustomPacke
 object SlidePackets {
     @JvmStatic
     fun sendTo(player: ServerPlayer, payload: CustomPacketPayload) {
-        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player, payload)
+        PacketDistributor.sendToPlayer(player, payload)
     }
 }
+
+private fun RegistryFriendlyByteBuf.writeNullableUuid(uuid: UUID?) {
+    writeBoolean(uuid != null)
+    if (uuid != null) writeUUID(uuid)
+}
+
+private fun RegistryFriendlyByteBuf.readNullableUuid(): UUID? = if (readBoolean()) readUUID() else null
+
+private fun RegistryFriendlyByteBuf.writeNullableInt(value: Int?) {
+    writeBoolean(value != null)
+    if (value != null) writeInt(value)
+}
+
+private fun RegistryFriendlyByteBuf.readNullableInt(): Int? = if (readBoolean()) readInt() else null
+
+private fun RegistryFriendlyByteBuf.writeSamples(samples: List<SlideSampleWire>) =
+    writeCollection(samples) { b, s ->
+        b.writeFloat(s.time)
+        b.writeFloat(s.cx)
+        b.writeFloat(s.cy)
+        b.writeFloat(s.cz)
+        b.writeFloat(s.tcx)
+        b.writeFloat(s.tcy)
+        b.writeFloat(s.tcz)
+        b.writeFloat(s.tx)
+        b.writeFloat(s.ty)
+        b.writeFloat(s.tz)
+        b.writeFloat(s.ux)
+        b.writeFloat(s.uy)
+        b.writeFloat(s.uz)
+        b.writeFloat(s.radius)
+        b.writeFloat(s.speed)
+        b.writeBoolean(s.inTube)
+        b.writeBoolean(s.watered)
+    }
+
+private fun RegistryFriendlyByteBuf.readSamples(): List<SlideSampleWire> =
+    readCollection({ ArrayList() }) { b ->
+        SlideSampleWire(
+            b.readFloat(), b.readFloat(), b.readFloat(), b.readFloat(),
+            b.readFloat(), b.readFloat(), b.readFloat(),
+            b.readFloat(), b.readFloat(), b.readFloat(),
+            b.readFloat(), b.readFloat(), b.readFloat(),
+            b.readFloat(), b.readFloat(),
+            b.readBoolean(), b.readBoolean()
+        )
+    }

@@ -14,9 +14,7 @@ import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.InteractionHand
 import net.neoforged.neoforge.network.handling.IPayloadContext
 
-// Client -> server: explicit support interaction (the canceled client
-// RightClickBlock never reaches the server, and RightClickEmpty has no block
-// event at all). faceId = -1 falls back to the player's facing direction.
+// client to server support interaction, right click never reaches the server
 class WaterslideSupportApplyPayload(
     val anchor: BlockPos,
     val partId: Byte,

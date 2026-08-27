@@ -10,6 +10,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlo
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSector
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
+import io.netty.buffer.ByteBuf
 import net.minecraft.core.BlockPos
 import net.minecraft.network.RegistryFriendlyByteBuf
 import net.minecraft.network.codec.ByteBufCodecs
@@ -18,7 +19,9 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket
 import net.minecraft.resources.ResourceLocation
 import net.minecraft.server.level.ServerPlayer
+import net.minecraft.world.level.Level
 import net.neoforged.neoforge.network.handling.IPayloadContext
+import java.util.Optional
 
 enum class SectorEditAction {
     ADD_BLOCK,
@@ -46,8 +49,8 @@ class WaterslideSectorEditPayload(
             val player = ctx.player() ?: return@enqueueWork
             if (player !is ServerPlayer) return@enqueueWork
             val level = player.serverLevel()
-            val globalA = resolveSubPos(level, curveA)
-            val globalB = resolveSubPos(level, curveB)
+            val globalA = resolveSubLevelPos(level, curveA)
+            val globalB = resolveSubLevelPos(level, curveB)
             if (!player.canInteractWithBlock(globalA, CoasterTrackGauge.maxCoasterCurvePacketInteractionRangeBlocks().toDouble())) {
                 return@enqueueWork
             }
@@ -111,22 +114,8 @@ class WaterslideSectorEditPayload(
         }
     }
 
-    private fun resolveSubPos(
-        level: net.minecraft.server.level.ServerLevel,
-        pos: BlockPos
-    ): BlockPos {
-        if (level.getBlockEntity(pos) != null) return pos
-        val container = dev.ryanhcode.sable.api.sublevel.SubLevelContainer.getContainer(level)
-        container?.allSubLevels?.forEach { raw ->
-            val sub = raw as? dev.ryanhcode.sable.sublevel.ServerSubLevel ?: return@forEach
-            val candidate = pos.offset(sub.getPlot().getCenterBlock())
-            if (level.getBlockEntity(candidate) != null) return candidate
-        }
-        return pos
-    }
-
     private fun findCurve(
-        level: net.minecraft.world.level.Level,
+        level: Level,
         a: BlockPos,
         b: BlockPos
     ): BezierConnection? {
@@ -141,7 +130,7 @@ class WaterslideSectorEditPayload(
             ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "waterslide_sector_edit")
         )
 
-        private val ACTION_CODEC: StreamCodec<io.netty.buffer.ByteBuf, SectorEditAction> =
+        private val ACTION_CODEC: StreamCodec<ByteBuf, SectorEditAction> =
             ByteBufCodecs.STRING_UTF8.map<SectorEditAction>(
                 { name -> SectorEditAction.valueOf(name) },
                 { action -> action.name }
@@ -162,5 +151,5 @@ class WaterslideSectorEditPayload(
     }
 }
 
-private fun WaterslideSectorEditPayload.optionalBlockId(): java.util.Optional<ResourceLocation> =
-    java.util.Optional.ofNullable(blockId)
+private fun WaterslideSectorEditPayload.optionalBlockId(): Optional<ResourceLocation> =
+    Optional.ofNullable(blockId)

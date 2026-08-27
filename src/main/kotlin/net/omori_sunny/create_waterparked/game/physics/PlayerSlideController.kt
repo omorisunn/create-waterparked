@@ -59,11 +59,7 @@ object PlayerSlideController {
 
     private const val SIT_HEIGHT = 0.7
     private const val RIDER_SIG_CACHE_TICKS = 5L
-    // How long a rider stays locked to the exit point of a sub-level slide
-    // after the ride ends. The lock gives Sable one or two ticks to register
-    // the landing, then it MUST be released: leaving sable$plotPosition set
-    // makes EntityMixin keep teleporting the player back to that point every
-    // tick, which blocks normal movement and item pickup.
+    // lock the rider to the exit point, release it after the landing
     private const val POST_RIDE_STICK_TICKS = 10L
     private val CREATIVE_PHYSICS_STAFF =
         ResourceLocation.fromNamespaceAndPath("simulated", "creative_physics_staff")
@@ -159,8 +155,7 @@ object PlayerSlideController {
                 }
             }
             ServerWaterSimulation.tickAll(level)
-            // track contraption poses so fresh ContraptionSlideSpaceAccess
-            // instances still report correct structure velocity
+            // track contraption poses so fresh accessors report correct velocity
             ContraptionSlideSpaces.updatePrev(level)
             for (session in sessions.values.toList()) {
                 if (session.entity.level() != level) continue
@@ -181,9 +176,7 @@ object PlayerSlideController {
                     }
                 }
             }
-            // players are checked directly so entry detection also works while
-            // the player is inside a Sable sub-level (world AABB queries above
-            // use main-world slide geometry bounds only)
+            // check players directly, also works inside a Sable sub level
             for (player in level.players()) {
                 if (player.isRemoved || sessions.containsKey(player.uuid)) continue
                 val prev = lastPos.put(player.uuid, player.position())
@@ -205,9 +198,7 @@ object PlayerSlideController {
             // water flow pushes players standing inside the tube (not while sliding)
             for (player in level.players()) {
                 if (player.isRemoved || sessions.containsKey(player.uuid)) continue
-                // The Simulated physics staff drags a sub-level to the holder's
-                // eye position. Pushing the holder here would make the dragged
-                // sub-level chase that movement every tick and fly around.
+                // never push the physics staff holder, it chases the dragged sub level
                 if (isHoldingCreativePhysicsStaff(player)) continue
                 val center = player.position().add(0.0, player.bbHeight / 2.0, 0.0)
                 val waterVel = ServerWaterSimulation.waterVelocityAt(level, center) ?: continue
@@ -285,10 +276,7 @@ object PlayerSlideController {
         val entry = found.second
         val entryAccess = found.first
 
-        // Never auto-capture a player holding the Simulated creative physics
-        // staff into a sub-level slide. The staff makes the dragged sub-level
-        // follow the holder's eye, so moving the player along the slide would
-        // feed back into the staff target and send the sub-level flying.
+        // never auto capture a player holding the creative physics staff
         if (entity is ServerPlayer && isHoldingCreativePhysicsStaff(entity) &&
             entryAccess is SubSlideSpaceAccess
         ) {
@@ -316,28 +304,18 @@ object PlayerSlideController {
         }
 
         val dims = entityDimensions(entity)
-        // Sable moves tracked living entities by a separate `inheritedVelocity`
-        // (the sub-level's motion, blocks/tick) applied to position during
-        // travel(). entity.deltaMovement alone does NOT contain the structure
-        // motion, so include both before subtracting the structure velocity
-        // below. The result is the player's own velocity relative to the slide.
+        // include inherited velocity so the player keeps the structure motion
         val inherited = (entity as? LivingEntityMovementExtension)?.`sable$getInheritedVelocity`()
         val playerVelPerTick = if (inherited == null) entity.deltaMovement
         else entity.deltaMovement.add(inherited.x, inherited.y, inherited.z)
-        // real per-tick velocity, blocks/tick -> blocks/sec
+        // real per tick velocity, blocks per tick to blocks per second
         val rawVelWorld = playerVelPerTick.scale(20.0)
         val entryTanWorld = entryTangentWorld(level, entryAccess, entry)
         val subLevel = (entryAccess as? SubSlideSpaceAccess)?.sub
         val contraptionEntity = (entryAccess as? ContraptionSlideSpaceAccess)?.entity
         val access = entryAccess
         val startPos = access.worldToLocal(entity.position())
-        // Sanity guard: never teleport the rider to an absurd position. A
-        // space mismatch (e.g. a contraption entry detected through the wrong
-        // access) would otherwise move the player to an enormous y. However a
-        // contraption hosted INSIDE a Sable sub-level legitimately sits at
-        // plot-global coordinates (~2e7) with the player also at plot scale, so
-        // only abort when the target is absurd while the player is NOT plot-
-        // scaled (a genuine world/main-scale mismatch).
+        // abort only when the target is absurd at world scale
         val wouldPos = access.toWorld(startPos)
         val spaceLabel = access.space.cacheKey(level)
         val playerIsPlotScaled = kotlin.math.abs(entity.position().x) > 1.0E5 ||
@@ -354,23 +332,14 @@ object PlayerSlideController {
             restoreEntity(entity)
             return
         }
-        // On a Sable sub-level the entity can follow the structure in two ways:
-        // 1. plot tracking: Sable repositions the entity from sable$plotPosition
-        //    through the logical pose each tick. The structure velocity is then
-        //    OUTSIDE deltaMovement/inherited, so subtracting it again gave a
-        //    standing player a huge backwards velocity and bounced them out of
-        //    the entrance.
-        // 2. collision inheritance: Sable adds collisionInfo.inheritedMotion on
-        //    top of deltaMovement; then the structure velocity must be removed.
+        // sub level entities follow the structure two ways, subtract the velocity only for collision inheritance
         val structureVel = access.worldVelocityAt(startPos)
         val plotTracked = (entity as? EntityStickExtension)?.`sable$getPlotPosition`() != null
         val velWorld = if (plotTracked) rawVelWorld
         else rawVelWorld.subtract(structureVel)
         val along = velWorld.dot(entryTanWorld)
         if (along < -0.5) return
-        // preserve the player's actual 3D velocity (direction AND magnitude)
-        // and add the configured entrance boost; the trajectory builder already
-        // starts from the real position/velocity and resolves any wall contact
+        // keep the real 3D velocity and add the entrance boost
         var startVelWorld = velWorld
             .add(entryTanWorld.scale(ModConfig.entranceBoost() * 20.0))
         val maxSpeed = ModConfig.slideMaxEntrySpeed()
@@ -396,9 +365,7 @@ object PlayerSlideController {
         val sit = if (player != null && !swimming) spawnSit(level, player) else null
         if (sit != null && player != null) player.startRiding(sit, true)
         postRideRelease.remove(entity.uuid)
-        // A sub-level rider must be tracked into the sub-level BEFORE the next
-        // vanilla movement pass, otherwise Sable's inclusive entity getter
-        // observes AABBs that span main-world and plot-global coordinates.
+        // track a sub level rider before the vanilla movement pass
         bindToSpace(entity, sit, subLevel, startPos)
         entity.setPos(access.toWorld(startPos))
         sit?.setPos(access.toWorld(startPos))
@@ -478,8 +445,7 @@ object PlayerSlideController {
         return null
     }
 
-    // Contraptions carrying slides whose bounding box touches the entity's
-    // neighbourhood; entry probing uses the contraption-local inverse transform.
+    // contraptions with a slide whose bounds touch the player
     private fun contraptionCandidates(level: ServerLevel, entity: Entity): List<AbstractContraptionEntity> {
         val box = entity.boundingBox.inflate(6.0)
         val out = ArrayList<AbstractContraptionEntity>()
@@ -622,8 +588,7 @@ object PlayerSlideController {
             onCancel(player, session.id)
             return
         }
-        // Taking out the physics staff mid-ride on a sub-level slide would
-        // otherwise let the staff chase the player along the trajectory.
+        // never chase the physics staff holder along the trajectory
         if (player != null && session.subLevelId != null && isHoldingCreativePhysicsStaff(player)) {
             CreateWaterparked.LOGGER.info(
                 "[StaffGuard] cancelling sub-level slide session {} for staff holder {}",
@@ -640,9 +605,7 @@ object PlayerSlideController {
 
         session.elapsed += 1.0 / 20.0
         if (session.elapsed >= session.trajectory.duration) {
-            // Main-branch behavior: one precomputed trajectory per space. At
-            // the end of a trajectory, try a single cross-space handoff into
-            // another space before declaring the ride finished.
+            // one precomputed trajectory per space, one handoff at the end
             val end = session.trajectory.sampleAt(session.trajectory.duration)
             val endWorldPos = toWorldPos(level, session, end.sample.position)
             val endWorldVel = toWorldVel(level, session, end.sample.position, session.trajectory.exitVelocity)
@@ -663,8 +626,7 @@ object PlayerSlideController {
         val worldTan = toWorldNormal(level, session, at.sample.tangent)
         val worldVel = toWorldVel(level, session, at.sample.position, at.sample.tangent.scale(at.sample.speed))
 
-        // keep Sable's tracking/plot state in sync so the rider collides with
-        // the sub-level's own blocks instead of the main-world void below
+        // keep Sable plot state in sync with the rider position
         bindToSpace(entity, sit, session.subLevel(level), at.sample.position)
         entity.setPos(sitPos)
         entity.setDeltaMovement(worldVel)
@@ -685,8 +647,7 @@ object PlayerSlideController {
         }
     }
 
-    // Applies the first sample of a freshly started segment (including after a
-    // cross-space handoff) and tells the client to swap to the new trajectory.
+    // apply the first sample of a fresh segment after a handoff
     private fun startPlaybackSegment(level: ServerLevel, session: Session) {
         val entity = session.entity
         val player = session.player
@@ -723,9 +684,7 @@ object PlayerSlideController {
         val worldVelPerSecond = worldVel.scale(20.0)
 
         fun tryTarget(access: SlideSpaceAccess, cp: AbstractContraptionEntity?): Boolean {
-            // Skip only the EXACT same space (the same sub-level id or the same
-            // contraption id); switching to a DIFFERENT space of the same kind
-            // (sub->sub or contraption->contraption) is allowed.
+            // skip only the exact same space, other switches are allowed
             if (access.space == currentSpace) return false
             val localNow = access.worldToLocal(worldPos)
             val found = findSlideEntryInSpace(level, access, session.entity, requireSolid = false) ?: return false
@@ -774,12 +733,7 @@ object PlayerSlideController {
         else {
             val cp = session.contraption
             if (cp != null) {
-                // Landing after a contraption ride: do NOT inherit the
-                // contraption's structure velocity. The rotational tangential
-                // term (omega x r) can be large at the far end of a slide and
-                // carries an upward component, launching the player on landing.
-                // Keep only the slide-relative exit velocity in world
-                // orientation, converted to blocks/tick.
+                // do not inherit the contraption structure velocity on landing
                 val cAccess = ContraptionSlideSpaceAccess(level, cp)
                 cAccess.toWorldNormal(localVel).scale(localVel.length()).scale(1.0 / 20.0)
             } else {
@@ -792,20 +746,14 @@ object PlayerSlideController {
         )
 
         cleanupSit(session, entity)
-        // The rider lands with the exit velocity, then the plot lock is
-        // released after a short grace period (see releaseStickAfterRide).
+        // land with the exit velocity, release the plot lock on a grace period
         entity.setPos(worldPos)
         entity.setDeltaMovement(worldVel)
         restoreEntity(entity)
         releaseStickAfterRide(level, entity, session.subLevel(level))
         sessions.remove(entity.uuid)
         if (player != null) {
-            // The end position is a WORLD-space respawn point (setPos on both
-            // sides). Do not send the local/plot-global trajectory position:
-            // on sub-levels it is ~2e7 magnitude (float32 ulp ~ 2 blocks) and
-            // would require the client to re-derive world coords via the pose.
-            // World coords are small enough for float32. This matches the
-            // cancel path (onCancel), which already sends worldPos.
+            // send world space respawn coords, plot local coords are too large for float32
             SlidePackets.sendTo(player, SlideEndPayload(
                 session.id, reason.ordinal.toByte(),
                 worldPos.x.toFloat(), worldPos.y.toFloat(), worldPos.z.toFloat(),
@@ -837,10 +785,7 @@ object PlayerSlideController {
         (entity as? EntityMovementExtension)?.`sable$setTrackingSubLevel`(null)
     }
 
-    // After a sub-level ride, release the plot lock either immediately (the
-    // rider is already inside a sub-level and Sable collision can take over)
-    // or after a short grace period that lets the rider land on sub-level
-    // terrain instead of falling through into the main-world void.
+    // release the plot lock now or after a grace period
     private fun releaseStickAfterRide(level: ServerLevel, entity: Entity, sub: ServerSubLevel?) {
         if (sub == null) {
             clearStick(entity)
@@ -876,8 +821,7 @@ object PlayerSlideController {
         localPos: Vec3,
         localVel: Vec3
     ): Vec3 {
-        // Contraption spaces rotate/translate as a unit; the conventional
-        // helper keeps Sable sub-level scale semantics untouched.
+        // contraption spaces rotate as a unit, sub level scale stays untouched
         val cp = session.contraption
         if (cp != null) {
             val access = ContraptionSlideSpaceAccess(level, cp)

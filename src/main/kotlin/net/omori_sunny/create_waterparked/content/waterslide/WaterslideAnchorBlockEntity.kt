@@ -56,15 +56,32 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
 // watered curves, keyed by peer
     val wateredCurves: MutableMap<BlockPos, Boolean> = mutableMapOf()
 
-// support structure copycat materials, stored per anchor exactly like Create's
-// CopycatBlockEntity: material BlockState + the consumed item (returned on
-// wrench reset). The bracket shell and the beam each keep their own material.
+// support copycat materials per part, like Create's copycat block
     var supportBracketMaterial: BlockState = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
         private set
     var supportBeamMaterial: BlockState = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
         private set
     private var supportBracketConsumedItem: ItemStack = ItemStack.EMPTY
     private var supportBeamConsumedItem: ItemStack = ItemStack.EMPTY
+    // axle-axe deletes a support part; wrench restores it
+    var supportBracketVisible: Boolean = true
+        private set
+    var supportBeamVisible: Boolean = true
+        private set
+
+    fun setSupportVisible(part: WaterslideSupportPart, visible: Boolean) {
+        when (part) {
+            WaterslideSupportPart.BRACKET -> supportBracketVisible = visible
+            WaterslideSupportPart.BEAM -> supportBeamVisible = visible
+        }
+        setChanged()
+        notifyBlockUpdated()
+    }
+
+    fun isSupportVisible(part: WaterslideSupportPart): Boolean = when (part) {
+        WaterslideSupportPart.BRACKET -> supportBracketVisible
+        WaterslideSupportPart.BEAM -> supportBeamVisible
+    }
 
     fun supportMaterial(part: WaterslideSupportPart): BlockState = when (part) {
         WaterslideSupportPart.BRACKET -> supportBracketMaterial
@@ -144,6 +161,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         if (watered) wateredCurves[key] = true else wateredCurves.remove(key)
         setChanged()
         notifyBlockUpdated()
+        waterStructureChanged()
     }
 
     fun hasWater(): Boolean = waterTank.fluidAmount > 0
@@ -190,6 +208,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         sectorConfigs[peer.immutable()] = config
         setChanged()
         notifyBlockUpdated()
+        waterStructureChanged()
     }
 
 // drop the config when the curve is removed
@@ -198,12 +217,14 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         removeWateredCurve(peer)
         setChanged()
         notifyBlockUpdated()
+        waterStructureChanged()
     }
 
     fun removeWateredCurve(peer: BlockPos) {
         if (wateredCurves.remove(peer.immutable()) == null) return
         setChanged()
         notifyBlockUpdated()
+        waterStructureChanged()
     }
 
 // reset the opening when the last curve goes
@@ -214,6 +235,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         radius = def
         setChanged()
         notifyBlockUpdated()
+        waterStructureChanged()
     }
 
 // init missing configs
@@ -246,6 +268,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         waterActive = active
         setChanged()
         notifyBlockUpdated()
+        waterStructureChanged()
     }
 
     override fun onLoad() {
@@ -268,9 +291,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         }
     }
 
-// pick up by contraption assembly removes the block entity from the world
-// immediately; drop our index entries so stale anchors do not linger. Called
-// by SmartBlockEntity#setRemoved when the block entity is not being chunk-unloaded.
+// contraption assembly removes the BE on pickup, drop our index entries
     override fun remove() {
         val lvl = level
         if (lvl?.isClientSide == true) {
@@ -299,6 +320,17 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         radius = clamped
         setChanged()
         notifyBlockUpdated()
+        waterStructureChanged()
+    }
+
+    // any structural edit that changes the water field (radius, curves,
+    // watering, water switch, sector config) marks the space dirty so the
+    // water sim recalcs on the next tick instead of the slow fallback scan
+    private fun waterStructureChanged() {
+        val lvl = level
+        if (lvl != null && !lvl.isClientSide) {
+            net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation.markDirty(lvl)
+        }
     }
 
     private fun notifyBlockUpdated() {
@@ -349,18 +381,44 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         supportBeamConsumedItem = ItemStack.parseOptional(
             registries, tag.getCompound("SupportBeamItem")
         )
+        supportBracketVisible = if (tag.contains("SupportBracketVisible", 1))
+            tag.getBoolean("SupportBracketVisible") else true
+        supportBeamVisible = if (tag.contains("SupportBeamVisible", 1))
+            tag.getBoolean("SupportBeamVisible") else true
         if (tag.contains("WaterTank", 10)) {
             waterTank.readFromNBT(registries, tag.getCompound("WaterTank"))
         }
 // refresh visuals after curve data arrives
         if (level?.isClientSide == true) {
             WaterslideTubeVisual.refreshAnchor(blockPos)
+        } else if (level != null) {
+            // server: curve topology (place/remove/drag) arrives through NBT.
+            // only mark dirty when the curve set actually changed, so regular
+            // block syncing does not spam recalculations
+            val topoSig = StringBuilder()
+            for ((peer, raw) in anchorPeerCurvesView) {
+                if (raw == null) continue
+                val bc = if (raw.isPrimary) raw else raw.secondary()
+                if (bc == null) continue
+                topoSig.append(peer.asLong()).append('=').append(bc.getSegmentCount())
+                    .append(',').append(bc.starts.getFirst().x).append(',').append(bc.starts.getFirst().y).append(',')
+                    .append(bc.starts.getFirst().z).append(',').append(bc.starts.getSecond().x).append(',')
+                    .append(bc.starts.getSecond().y).append(',').append(bc.starts.getSecond().z).append(';')
+            }
+            val sig = topoSig.toString()
+            if (sig != lastPeerTopoSig) {
+                lastPeerTopoSig = sig
+                waterStructureChanged()
+            }
         }
     }
 
-    // Public entry used by contraption-space reconstruction to populate this
-    // (worldless) BE from the captured contraption NBT; read() itself is
-    // protected, so everything else goes through this wrapper.
+    // last NBT curve-topology snapshot on the server, avoids re-dirtying on
+    // every regular block sync; transient across reloads (recovers via the
+    // slow fallback rescan anyway)
+    private var lastPeerTopoSig: String? = null
+
+    // public entry for contraption space reconstruction from captured NBT
     fun readCaptured(tag: CompoundTag, registries: HolderLookup.Provider?) {
         val regs = registries ?: level?.registryAccess() ?: return
         read(tag, regs, false)
@@ -391,23 +449,15 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         tag.put("SupportBeamMaterial", NbtUtils.writeBlockState(supportBeamMaterial))
         tag.put("SupportBracketItem", supportBracketConsumedItem.saveOptional(registries))
         tag.put("SupportBeamItem", supportBeamConsumedItem.saveOptional(registries))
+        tag.putBoolean("SupportBracketVisible", supportBracketVisible)
+        tag.putBoolean("SupportBeamVisible", supportBeamVisible)
         tag.put("WaterTank", waterTank.writeToNBT(registries, CompoundTag()))
         super.write(tag, registries, clientPacket)
     }
 
-// ===== contraption disassembly transform =====
-// Rewrite the inherited peer-curve maps, their tint keys and our own
-// sectorConfigs/wateredCurves so slide data stays intact at the new
-// position/rotation. Translation-only moves also go through here because
-// peer keys must shift. radius/waterActive/waterTank are intentionally left
-// untouched (they are position-independent).
-// Endpoint/vector math is valid for any 90-degree axis, but Create only
-// rotates TrackShape block states around Y (TrackBlockEntity does the same),
-// so horizontal-axis rotations keep the curve data consistent while the rail
-// models may not follow; this matches Create's own track convention.
+// rewrite peer curves, tint keys and sector data for the contraption transform
     override fun transform(blockEntity: BlockEntity, transform: StructureTransform) {
-        // Copycat parity: the stored material states rotate with the structure
-        // even before any curve remapping below.
+        // copycat parity: material states rotate with the structure
         supportBracketMaterial = transform.apply(supportBracketMaterial)
         supportBeamMaterial = transform.apply(supportBeamMaterial)
 
@@ -443,10 +493,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             }
             val selfEndpointIsFirst = selfEndpoint == bc.bePositions.getFirst()
 
-            // Curve-local delta between the two endpoints. Simulated's read()
-            // already re-anchored both endpoints onto the NEW self position
-            // (BezierConnection(tag, getBlockPos())), so subtracting cancels
-            // that pre-translation and leaves the true old endpoint delta.
+            // subtract the read re anchoring, leaves the true endpoint delta
             val oldDelta = Vec3.atLowerCornerOf(peerEndpoint)
                 .subtract(Vec3.atLowerCornerOf(selfEndpoint))
 
@@ -459,11 +506,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             val newPeer = BlockPos.containing(peerGlobal)
             val newSelf = selfPos
 
-            // Starts are absolute vectors; rotate them around the endpoint
-            // block CENTER exactly like Create's own TrackBlockEntity.transform.
-            // Because read() re-anchored the endpoints, selfEndpoint already IS
-            // newSelf here, so endpointCenter == Vec3.atCenterOf(newSelf) - the
-            // two pivots coincide and the handle offset is exact.
+            // starts rotate around the endpoint center like Create's track transform
             val endpointCenter = Vec3.atCenterOf(selfEndpoint)
             val newStarts = Couple.create(
                 transform.applyWithoutOffsetUncentered(

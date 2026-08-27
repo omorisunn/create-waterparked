@@ -17,16 +17,12 @@ import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRend
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.phys.Vec3;
 import net.omori_sunny.create_waterparked.client.compat.IrisColorwheelCompat;
 import net.omori_sunny.create_waterparked.client.compat.IrisWaterInjection;
+import org.joml.Vector3f;
 
-/**
- * Pushes the mounted-slide tube water + thrown water through the SAME GL
- * program + uniforms that Sodium/Iris are currently running for the water
- * (translucent terrain) pass, so whichever shaderpack is active shades them
- * with its own water shader (gbuffers_water). Only registered when Sodium and
- * Iris are installed (see WaterparkedMixinPlugin).
- */
+// draw tube water through the pack water program when Sodium and Iris run it
 @Mixin(ShaderChunkRenderer.class)
 public abstract class IrisWaterPassMixin {
 
@@ -35,12 +31,8 @@ public abstract class IrisWaterPassMixin {
 
     @Inject(method = "begin", at = @At("TAIL"), remap = false)
     private void waterparked$flushWaterPass(TerrainRenderPass pass, CallbackInfo ci) {
-        // With Colorwheel present the water is rendered through the Flywheel
-        // visual path (entity-stamped meshes -> pack water program); the chunk
-        // injection would draw a second, unshaded copy on top. Keep this path
-        // only for iris-without-colorwheel setups.
-        if (!IrisColorwheelCompat.waterShadingActive()) return;
-        if (IrisColorwheelCompat.colorwheelPresent()) return;
+        // keep this path only when Colorwheel is absent
+        if (!IrisColorwheelCompat.waterShadingActive() || IrisColorwheelCompat.colorwheelPresent()) return;
         if (pass != DefaultTerrainRenderPasses.TRANSLUCENT) return;
         GlProgram<ChunkShaderInterface> prog = this.activeProgram;
         if (prog == null) return;
@@ -49,10 +41,10 @@ public abstract class IrisWaterPassMixin {
         Camera cam = mc.gameRenderer.getMainCamera();
         if (mc.level == null || mc.player == null) return;
 
-        // view = inverse camera rotation * -eye (what the terrain shader expects)
+        // view = inverse camera rotation times negative eye position
         Matrix4f view = new Matrix4f().set(cam.rotation());
         view.invert();
-        view.translate(new org.joml.Vector3f(
+        view.translate(new Vector3f(
             (float) -cam.getPosition().x,
             (float) -cam.getPosition().y,
             (float) -cam.getPosition().z));
@@ -63,7 +55,7 @@ public abstract class IrisWaterPassMixin {
         iface.setupState();
         iface.setProjectionMatrix(proj);
         iface.setModelViewMatrix(view);
-        net.minecraft.world.phys.Vec3 off = net.omori_sunny.create_waterparked.client.compat.IrisWaterInjection.currentRegionOffset();
+        Vec3 off = IrisWaterInjection.currentRegionOffset();
         iface.setRegionOffset((float) off.x, (float) off.y, (float) off.z);
         IrisWaterInjection.renderWaterGeometry();
         iface.resetState();

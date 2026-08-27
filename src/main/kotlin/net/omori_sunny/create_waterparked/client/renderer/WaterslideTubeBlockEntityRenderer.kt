@@ -34,13 +34,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
-// Vanilla (non-Flywheel) FALLBACK renderer for the tube around a
-// WaterslideAnchorBlockEntity. It only draws when Flywheel's visualization is
-// unavailable, mirroring how Create/CCS ship a BerRender fallback
-// (AnchorPeerTrackCurveBerRender gates on
-// !VisualizationManager.supportsVisualization). The Flywheel visual
-// (WaterslideTubeVisual / WaterslideTubeMesh) is untouched and remains the
-// primary renderer whenever Flywheel is available.
+// vanilla fallback tube renderer, only used when Flywheel visualization is off
 class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Context) :
     BlockEntityRenderer<WaterslideAnchorBlockEntity> {
 
@@ -55,9 +49,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
     private val cache = HashMap<Long, Pair<String, List<CurveGeometry>>>()
     private var lastSignature = ""
 
-    // Dedicated RenderTypes so the fallback never shares a buffer with the
-    // world's own section rendering (a shared cutoutMipped/translucent buffer
-    // is already ended before the block-entity stage -> "Not building!").
+    // dedicated render types, never share a buffer with world section rendering
     private val tubeCutout: RenderType = RenderType.entityCutout(TextureAtlas.LOCATION_BLOCKS)
     private val tubeTranslucent: RenderType = RenderType.entityTranslucentCull(TextureAtlas.LOCATION_BLOCKS)
 
@@ -70,13 +62,9 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         packedOverlay: Int
     ) {
         val level = be.level
-        // Keep the client anchor index fed: WaterslideCurveRenderer populates
-        // CLIENT_ANCHORS from its own render path; our fallback renderer must
-        // register them too (regardless of the flywheel gate) or
-        // IrisWaterInjection finds nothing to draw.
+        // keep the client anchor index fed for the water injection path
         net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer.registerClientAnchor(be)
-        // Flywheel fallback gate: only render ourselves when visualization is
-        // unavailable (same pattern as Create/CCS BerRender fallbacks).
+        // fallback gate, only draw when visualization is unavailable
         if (level == null || VisualizationManager.supportsVisualization(level)) return
         val eid = be.blockPos.asLong()
         val sig = signature(be, level)
@@ -88,9 +76,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val (_, curves) = cache[eid] ?: return
         if (curves.isEmpty()) return
 
-        // BESR pose: the stack is at the evaluator origin, NOT world space - so
-        // inverse-transform the world frames back to the anchor's local space:
-        // push the anchor's corner, emit relative coords, pop.
+        // inverse transform the world frames back to the anchor local space
         val base = Vec3.atLowerCornerOf(be.blockPos)
         poseStack.pushPose()
         poseStack.translate(base.x.toFloat(), base.y.toFloat(), base.z.toFloat())
@@ -105,10 +91,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         poseStack.popPose()
     }
 
-    // ------------------------------------------------------------------
     // geometry caches
-    // ------------------------------------------------------------------
-
     private fun buildCurves(be: WaterslideAnchorBlockEntity, level: Level): List<CurveGeometry> {
         val out = ArrayList<CurveGeometry>()
         val sub = dev.ryanhcode.sable.Sable.HELPER.getContaining(be)
@@ -193,8 +176,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             .setNormal(p.nx, p.ny, p.nz)
     }
 
-    // frag-shader-style tiling: physical pixel coordinate -> fraction inside the
-    // sprite's usable (center) region, wrapping so there is no stretching.
+    // pixel fraction inside the sprite usable region, no stretching
     private fun tileFraction(px: Float, center: Float, border: Float, tex: Float): Float {
         var m = px % center
         if (m < 0f) m += center
@@ -246,8 +228,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                 .getBlockModel(block.defaultBlockState())
                 .getParticleIcon(ModelData.EMPTY) ?: continue
             val span = sector.endAngle - sector.startAngle
-            // undistorted texture: 16 texture px per world block, sector width in
-            // pixels = sectorRadians * texRadius * 16 (mirrors the vertex shader)
+            // undistorted texture, 16 texture px per world block
             val texW = sprite.contents().width().toFloat()
             val texH = sprite.contents().height().toFloat()
             val border = ModConfig.sectorBorderPx().toFloat()
@@ -261,7 +242,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             for (i in 0 until frames.size - 1) {
                 val f0 = frames[i]
                 val f1 = frames[i + 1]
-                // real arc at the two rings (16 px per block for py)
+                // real arc at the two rings, 16 px per block
                 val arc0Px = prefix[i] * 16f
                 val arc1Px = prefix[i + 1] * 16f
                 var a = WaterslideSectorLayout.normalize(sector.startAngle).coerceIn(0f, 360f)
@@ -291,10 +272,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         }
     }
 
-    // ------------------------------------------------------------------
-    // water emission: translucent flowing band between frames
-    // ------------------------------------------------------------------
-
+    // water emission, translucent flowing band between frames
     private fun waterVertex(v: VertexConsumer, p: RingPoint, u: Float, vt: Float, light: Int) {
         v.addVertex(p.x, p.y, p.z)
             .setColor(0.24f, 0.6f, 1f, 0.6f)

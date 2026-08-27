@@ -44,6 +44,7 @@ object WaterslideRadiusEdit {
     private var dragging = false
     private var dragAnchor: BlockPos? = null
     private var lastChainRefreshRadius = -1f
+    private var lastDragSoundRadius = Float.NaN
 
     private data class CircleFrame(val lateral: Vec3, val up: Vec3)
 
@@ -95,7 +96,9 @@ object WaterslideRadiusEdit {
         val useDown = mc.options.keyUse.isDown
         if (dragging) {
             val target = dragTarget(eye, view, level, ctx.globalPos) ?: return clear()
-            val radius = radiusFromDistance(target.distanceTo(anchorCenter(level, ctx.globalPos)))
+            val raw = radiusFromDistance(target.distanceTo(anchorCenter(level, ctx.globalPos)))
+            // 0.05-block grid snap, like the sector control points' 2-degree grid
+            val radius = Math.round(raw / 0.05f) * 0.05f
             previewRadii[anchor] = radius
             player.displayClientMessage(
                 Component.translatable(
@@ -104,16 +107,24 @@ object WaterslideRadiusEdit {
                 ).withStyle(Style.EMPTY.withColor(TextColor.fromRgb(0xFFFFFF))),
                 true
             )
+            // drag tick per 0.05-block cell crossed, pitched by the in-cell amount
+            if (lastDragSoundRadius.isNaN() || abs(radius - lastDragSoundRadius) >= 0.05f) {
+                val inCell = if (lastDragSoundRadius.isNaN()) 0f
+                else (abs(radius - lastDragSoundRadius) % 0.05f).coerceIn(0f, 0.05f) / 0.05f
+                WaterslideEditSounds.playDragTick(inCell)
+                lastDragSoundRadius = radius
+            }
             if (!useDown) {
                 PacketDistributor.sendToServer(WaterslideRadiusEditPayload(anchor, radius))
                 previewRadii.remove(anchor)
                 dragging = false
                 dragAnchor = null
+                lastDragSoundRadius = Float.NaN
+                WaterslideEditSounds.playCommitSuccess()
             }
         } else if (useDown) {
             val tip = handleTipWorld(level, ctx.globalPos, be.radius)
-            // Only the control point starts a radius drag. The cyan opening
-            // ring stays a visual indicator and must NOT be grabbable.
+            // only the control point starts a radius drag, the ring stays visual
             val hovering = raySphere(eye, view.normalize(), tip, PICK_RADIUS)
             if (level.gameTime % 20 == 0L) {
                 CreateWaterparked.LOGGER.info(
@@ -330,8 +341,7 @@ object WaterslideRadiusEdit {
         return (t0 >= 1.0E-4) || (t1 >= 1.0E-4)
     }
 
-    // ray against the sampled opening circle, used to make the whole rim a
-    // clickable radius handle target instead of only the small tip billboard
+    // ray against the sampled opening circle, the whole rim is clickable
     private fun rayRing(
         ro: Vec3,
         rd: Vec3,

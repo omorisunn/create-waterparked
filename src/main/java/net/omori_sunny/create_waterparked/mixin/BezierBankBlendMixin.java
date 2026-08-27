@@ -18,7 +18,7 @@ public abstract class BezierBankBlendMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$smooth(ResourceLocation self, Object other, Operation<Boolean> original) {
-        return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
+        return coasterOrWaterslideEquals(self, other, original);
     }
 
     @WrapOperation(
@@ -27,6 +27,10 @@ public abstract class BezierBankBlendMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$mix(ResourceLocation self, Object other, Operation<Boolean> original) {
+        return coasterOrWaterslideEquals(self, other, original);
+    }
+
+    private static boolean coasterOrWaterslideEquals(ResourceLocation self, Object other, Operation<Boolean> original) {
         return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
     }
 }

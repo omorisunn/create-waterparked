@@ -6,7 +6,7 @@ import net.neoforged.neoforge.common.ModConfigSpec
 
 object ModConfig {
 
-    // ---- common (both sides) ----
+    // common config (both sides)
     private val BUILDER = ModConfigSpec.Builder()
 
     // slide
@@ -26,7 +26,7 @@ object ModConfig {
 
     lateinit var SPEC: ModConfigSpec
 
-    // ---- server only ----
+    // server only config
     private val SERVER_BUILDER = ModConfigSpec.Builder()
 
     // water

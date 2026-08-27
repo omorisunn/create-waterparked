@@ -15,6 +15,8 @@ import net.minecraft.world.item.DyeItem
 import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
+import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
+import net.omori_sunny.create_waterparked.config.ModClientConfig
 import org.joml.Matrix4f
 import kotlin.math.max
 
@@ -126,27 +128,29 @@ object WaterslideDyeOutline {
         val consumer = bufferSource.getBuffer(WaterslideEditorRenderTypes.COLORED_QUADS)
         val start = Math.toRadians(hit.startAngleDegrees.toDouble())
         val end = Math.toRadians(hit.endAngleDegrees.toDouble())
+        // outline hugs the real outer wall surface: radius + (wallThickness - 0.1)
+        val outer = ModClientConfig.wallThickness() - 0.1f
 
 // longitudinal edges
         for (angle in doubleArrayOf(start, end)) {
-            var prev = ringPoint(c[0]!!, la[0]!!, u[0]!!, ra[0], angle)
+            var prev = ringPoint(c[0]!!, la[0]!!, u[0]!!, ra[0] + outer, angle)
             for (i in 1 until pointCount) {
-                val curr = ringPoint(c[i]!!, la[i]!!, u[i]!!, ra[i], angle)
+                val curr = ringPoint(c[i]!!, la[i]!!, u[i]!!, ra[i] + outer, angle)
                 WaterslideEditorRenderTypes.billboardStrip(
                     poseStack, consumer, cameraPos, cameraRotation, prev, curr, 0.05f, r, g, b, 0.9f
                 )
                 prev = curr
             }
         }
-// end arcs
+// end arcs as polygon segments (cross-section grid angles, like the walls)
         drawArc(
             poseStack, consumer, cameraPos, cameraRotation,
-            c[0]!!, la[0]!!, u[0]!!, ra[0], start, end, r, g, b
+            c[0]!!, la[0]!!, u[0]!!, ra[0] + outer, start, end, r, g, b
         )
         drawArc(
             poseStack, consumer, cameraPos, cameraRotation,
             c[pointCount - 1]!!, la[pointCount - 1]!!, u[pointCount - 1]!!,
-            ra[pointCount - 1], start, end, r, g, b
+            ra[pointCount - 1] + outer, start, end, r, g, b
         )
     }
 
@@ -172,11 +176,25 @@ object WaterslideDyeOutline {
         g: Float,
         b: Float
     ) {
-        val steps = max(1, (ARC_SEGMENTS * Math.abs(end - start) / (2.0 * Math.PI)).toInt())
-        var prev = ringPoint(center, lat, up, radius, start)
-        for (i in 1..steps) {
-            val a = start + (end - start) * i / steps
-            val curr = ringPoint(center, lat, up, radius, a)
+        // polygon segments sample the grid angles between the sector edges
+        val startD = Math.toDegrees(start)
+        val endD = Math.toDegrees(end)
+        val crossN = WaterslideTubeMesh.crossSections()
+        val degStep = 360.0 / crossN
+        val gridAnchor = 90.0
+        val angles = ArrayList<Double>(crossN + 2)
+        angles.add(startD)
+        var j = 0
+        while (true) {
+            val a = gridAnchor + j * degStep
+            if (a > endD) break
+            if (a > startD) angles.add(a)
+            j++
+        }
+        angles.add(endD)
+        var prev = ringPoint(center, lat, up, radius, Math.toRadians(angles[0]))
+        for (i in 1 until angles.size) {
+            val curr = ringPoint(center, lat, up, radius, Math.toRadians(angles[i]))
             WaterslideEditorRenderTypes.billboardStrip(
                 poseStack, consumer, cameraPos, cameraRotation, prev, curr, 0.05f, r, g, b, 0.9f
             )

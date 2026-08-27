@@ -11,8 +11,10 @@ import net.minecraft.network.codec.StreamCodec
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket
 import net.minecraft.resources.ResourceLocation
+import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
 import net.neoforged.neoforge.network.handling.IPayloadContext
+import java.util.Optional
 
 // Sector block edit packet.
 class WaterslideSectorBlockEditPayload(
@@ -29,34 +31,20 @@ class WaterslideSectorBlockEditPayload(
             val player = ctx.player() ?: return@enqueueWork
             if (player !is ServerPlayer) return@enqueueWork
             val level = player.serverLevel()
-            val globalA = resolveSubPos(level, curveA)
-            val globalB = resolveSubPos(level, curveB)
+            val globalA = resolveSubLevelPos(level, curveA)
+            val globalB = resolveSubLevelPos(level, curveB)
             val range = CoasterTrackGauge.maxCoasterCurvePacketInteractionRangeBlocks().toDouble()
             if (!player.canInteractWithBlock(globalA, range)) return@enqueueWork
             if (!WaterslideSectorBlockEdit.setSectorBlock(level, globalA, globalB, sectorId, blockId)) {
                 return@enqueueWork
             }
 
-// fresh BE data to the player
+            // send fresh BE data to the player
             for (pos in listOf(globalA, globalB)) {
                 (level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity)
                     ?.let { player.connection.send(ClientboundBlockEntityDataPacket.create(it)) }
             }
         }
-    }
-
-    private fun resolveSubPos(
-        level: net.minecraft.server.level.ServerLevel,
-        pos: BlockPos
-    ): BlockPos {
-        if (level.getBlockEntity(pos) != null) return pos
-        val container = dev.ryanhcode.sable.api.sublevel.SubLevelContainer.getContainer(level)
-        container?.allSubLevels?.forEach { raw ->
-            val sub = raw as? dev.ryanhcode.sable.sublevel.ServerSubLevel ?: return@forEach
-            val candidate = pos.offset(sub.getPlot().getCenterBlock())
-            if (level.getBlockEntity(candidate) != null) return candidate
-        }
-        return pos
     }
 
     companion object {        val TYPE: CustomPacketPayload.Type<WaterslideSectorBlockEditPayload> = CustomPacketPayload.Type(
@@ -76,5 +64,5 @@ class WaterslideSectorBlockEditPayload(
     }
 }
 
-private fun WaterslideSectorBlockEditPayload.optionalBlockId(): java.util.Optional<ResourceLocation> =
-    java.util.Optional.ofNullable(blockId)
+private fun WaterslideSectorBlockEditPayload.optionalBlockId(): Optional<ResourceLocation> =
+    Optional.ofNullable(blockId)

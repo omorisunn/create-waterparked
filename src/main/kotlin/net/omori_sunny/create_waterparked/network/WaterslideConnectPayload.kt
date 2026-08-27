@@ -59,7 +59,7 @@ class WaterslideConnectPayload(val first: BlockPos, val second: BlockPos) : Cust
     }
 
     private fun fail(player: ServerPlayer, key: String) {
-        player.displayClientMessage(net.minecraft.network.chat.Component.translatable(key), true)
+        player.displayClientMessage(Component.translatable(key), true)
     }
 
     companion object {

@@ -8,9 +8,7 @@ import net.minecraft.core.particles.SimpleParticleType
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
 
-// Vanilla splash texture, but with controlled velocity: 1% of the player's
-// velocity, fast per-tick drag, and a linear fade over its short lifetime.
-// Size is left at the vanilla splash size.
+// vanilla splash texture with controlled velocity, fast drag and linear fade
 @OnlyIn(Dist.CLIENT)
 class WaterslideSplashParticle(
     level: ClientLevel,

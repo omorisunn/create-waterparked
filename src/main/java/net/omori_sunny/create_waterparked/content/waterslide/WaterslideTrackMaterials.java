@@ -9,7 +9,7 @@ import net.omori_sunny.create_waterparked.content.registry.ModBlocks;
 import net.minecraft.resources.ResourceLocation;
 
 // Slide track material, registered like CCS's coaster material.
-public final class WaterslideTrackMaterials {
+public class WaterslideTrackMaterials {
 
     public static final ResourceLocation ID =
         ResourceLocation.fromNamespaceAndPath("create_waterparked", "waterslide_track");

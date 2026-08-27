@@ -9,8 +9,7 @@ sealed interface SlideSpace {
     data object Main : SlideSpace
     data class SubLevel(val id: UUID) : SlideSpace
 
-    // A Create contraption carrying a waterslide. `id` is the contraption
-    // entity's id, used to build a stable per-contraption cache key.
+    // a Create contraption carrying a waterslide, keyed by entity id
     data class Contraption(val entityId: Int) : SlideSpace
 
     fun cacheKey(level: Level): String =

@@ -35,12 +35,11 @@ object PhysicsSlideTrajectoryBuilder {
     private const val GRAVITY = 32.0
     private const val DT = 1.0 / 100.0
     private const val SAMPLE_INTERVAL = 1.0 / 20.0
-    // in-tube cap; the free fall keeps going until a solid block or a slide
+    // in tube time cap, free fall continues past it
     private const val TUBE_MAX_TIME = 120.0
     private const val MAX_TIME = 300.0
     private const val MIN_WALL_DIST = 0.05
-    // cooldown (in seconds, 5 ticks) against immediately re-entering the tube
-    // the player just left through its mouth
+    // cooldown against re entering the pipe just left
     private const val SELF_REENTRY_COOLDOWN = 0.25
 
     private data class TubeFrame(
@@ -119,9 +118,7 @@ object PhysicsSlideTrajectoryBuilder {
         var tubeCenter = tube.frames.first().center
         var tubeUp = tube.frames.first().up
         var tubeRadius = tube.frames.first().radius
-        // slides from every OTHER coordinate space, in world coordinates;
-        // contact with one of these ends the trajectory (re-entering across
-        // Sable poses would require per-sample spaces in the payloads)
+        // slides from other spaces in world coords end the trajectory
         val worldSlideGrid = buildWorldSlideGrid(access)
 
         var hit = tube.hit(pos)
@@ -143,17 +140,12 @@ object PhysicsSlideTrajectoryBuilder {
         )
 
         outer@ while (true) {
-            // ================= in-tube segment =================
+            // in tube segment
             val segStart = time
             var leftTube = false
             var lastTraceTime = -1.0
             var lastProgress = 0.0
-            // Start the stall clock at THIS segment's start. It was 0.0, so any
-            // mid-ride re-entry (overall time > 2s) could be judged "stalled"
-            // on the very first physics step - before the wall reflection had
-            // any chance to turn the incoming fall velocity along the tube.
-            // The rider was then ejected again, immediately re-entered, and the
-            // camera roll chattered through the whole throw-and-catch sequence.
+            // stall clock starts here so the first step is never judged stalled
             var lastProgressTime = segStart
             var endApproachTime = Double.MAX_VALUE
             var prevPos = pos
@@ -186,8 +178,7 @@ object PhysicsSlideTrajectoryBuilder {
                         if (after > 1.0E-9) {
                             vel = vel.scale(speed / after)
                         } else {
-                            // fully radial hit: slide along the tube tangent instead
-                            // of zeroing the velocity (keeps the horizontal component)
+                            // fully radial hit: slide along the tube tangent
                             vel = hit.tangent.scale(speed)
                         }
                     }
@@ -209,8 +200,7 @@ object PhysicsSlideTrajectoryBuilder {
                     break
                 }
 
-                // a real block (in any Sable space) overlapping the rider is
-                // an instant hard stop; check every 5 physics steps
+                // block overlap is an instant hard stop, check every 5 steps
                 if (++step % 5 == 0 &&
                     worldBlocksCollide(access.level, access.toWorld(pos), poseWidth, poseHeight)
                 ) {
@@ -284,32 +274,26 @@ object PhysicsSlideTrajectoryBuilder {
             inTubeState = false
 
             if (!leftTube) {
-                // stalled inside the tube (or the length limit cut us off): push
-                // out through the wall and fall until a real block or another slide
+                // stalled or length cut: push out through the wall and fall
                 val radial = pos.subtract(hit.center)
                 val dir = if (radial.lengthSqr() < 1.0E-9) hit.lateral else radial.normalize()
                 pos = hit.center.add(dir.scale(hit.radius + 0.5))
                 vel = hit.tangent.scale(max(vel.length(), 1.0))
             }
 
-            // short cooldown against re-entering the pipe we just left, but only
-            // when leaving through the mouth; the player must actually fly off
-            // the tube axis before the same tube can catch them again
+            // cooldown against re entering the mouth we just left
             val exitAtMouth = leftTube && hit.atEnd
             val selfCurves = if (exitAtMouth) tube.curves.toSet() else null
             val noSelfUntil = if (selfCurves != null) time + SELF_REENTRY_COOLDOWN
             else Double.NEGATIVE_INFINITY
 
-            // ================= free fall segment =================
+            // free fall segment
             val fallStart = time
             val grid = ReentryGrid()
             for (s in allReentrySegments(access)) grid.add(s)
             val fallSampleInterval = SAMPLE_INTERVAL * 4
             var check = 0
-            // a reentry into the pipe we just left is only accepted after the
-            // player has fully left every slide grid, so a slow exit cannot
-            // bounce straight back into the mouth they flew out of; other
-            // slides catch the player immediately
+            // own pipe reentry only after leaving every grid, other slides catch first
             var wasClear = false
             var prevLocal = pos
             var lastWorldLog = -1.0
@@ -323,8 +307,7 @@ object PhysicsSlideTrajectoryBuilder {
                     break
                 }
                 time += DT
-                // real blocks and slides from other Sable spaces are checked
-                // in world coordinates
+                // world coords for blocks and slides from other spaces
                 val worldPos = access.toWorld(pos)
                 val collided = worldBlocksCollide(access.level, worldPos, poseWidth, poseHeight)
                 if (time - lastWorldLog >= 0.5) {
@@ -356,8 +339,7 @@ object PhysicsSlideTrajectoryBuilder {
                     )
                     break
                 }
-                // landing wins over reentry so a pipe mouth sitting on the
-                // ground cannot pull the player back after they touched down
+                // landing wins over reentry at a mouth on the ground
                 if (hitsGround(access, pos, poseHeight)) {
                     val surfaceY = groundSurfaceY(access, pos, poseHeight)
                     if (surfaceY != null) pos = Vec3(pos.x, surfaceY, pos.z)
@@ -627,12 +609,7 @@ object PhysicsSlideTrajectoryBuilder {
         return null
     }
 
-    // AABB collision against the parent level's real block shapes at a world
-    // position. Works for trajectories in main space AND for trajectories
-    // computed inside a Sable sub-level, because the sub-level pose projects
-    // the local position back into world space first.
-    // Trajectory `pos` is the body CENTER (hitsGround/groundSurfaceY use
-    // pos.y - height/2), so the box must span [pos.y - height/2, pos.y + height/2].
+    // AABB collision against real block shapes at a world position, body center based
     fun worldBlocksCollide(level: ServerLevel, pos: Vec3, width: Double, height: Double): Boolean {
         val halfH = height / 2.0
         val box = AABB(
@@ -645,10 +622,7 @@ object PhysicsSlideTrajectoryBuilder {
         val maxX = Mth.floor(box.maxX)
         val maxY = Mth.floor(box.maxY)
         val maxZ = Mth.floor(box.maxZ)
-        // precomputed trajectories can travel far ahead of the player, so make
-        // sure every chunk along the world path is actually loaded before we
-        // ask for block states (otherwise an unloaded chunk reads as air and
-        // the rider falls through main-world terrain)
+        // force load every chunk along the world path before reading states
         for (cx in (minX shr 4)..(maxX shr 4)) {
             for (cz in (minZ shr 4)..(maxZ shr 4)) {
                 level.getChunk(cx, cz)
@@ -662,8 +636,7 @@ object PhysicsSlideTrajectoryBuilder {
                     if (state.isAir) continue
                     val shape = state.getCollisionShape(level, bp)
                     if (shape.isEmpty) continue
-                    // toAabbs() returns LOCAL [0..1] boxes; move them to the
-                    // block position before testing against the world AABB
+                    // move local shape boxes to the block position first
                     for (aabb in shape.toAabbs()) {
                         if (aabb.move(bp).intersects(box)) return true
                     }
@@ -673,9 +646,7 @@ object PhysicsSlideTrajectoryBuilder {
         return false
     }
 
-    // World-space tube segments of every slide space other than the one the
-    // trajectory currently runs in. Used to detect "ran into another slide"
-    // during free fall.
+    // world space tube segments of every other slide space
     private data class WorldTubeSeg(val a: Vec3, val b: Vec3, val radius: Double)
 
     private fun buildWorldSlideGrid(access: SlideSpaceAccess): WorldSlideGrid? {
@@ -782,8 +753,7 @@ object PhysicsSlideTrajectoryBuilder {
         }
     }
 
-    // Keyed per coordinate space: sub-level and main-world trajectories share
-    // the same ServerLevel dimension but must never share segment lists.
+    // keyed per coordinate space, dimensions and spaces must not share lists
     private val reentryCache =
         HashMap<Pair<ResourceKey<Level>, SlideSpace>, Pair<String, List<ReentrySegment>>>()
 
@@ -866,9 +836,7 @@ object PhysicsSlideTrajectoryBuilder {
         return frames
     }
 
-    // Turn a free-fall contact with another slide tube into an entry state:
-    // locate the curve, pick the slide direction from the fall velocity, and
-    // project the player back inside the tube.
+    // turn a free fall contact with another tube into an entry state
     private fun reentryStart(
         access: SlideSpaceAccess,
         seg: ReentrySegment,
@@ -917,12 +885,9 @@ object PhysicsSlideTrajectoryBuilder {
         }
         val entryTan = if (towardSecond) tan else tan.scale(-1.0)
         val center = fa.center.lerp(fb.center, bestT)
-        // keep the player's actual contact position; the in-tube physics slides
-        // them back inside the wall gradually instead of snapping radially
-        // (no "air wall" jump)
+        // keep the actual contact position, the tube physics slides back in
         val entryPos = pos
-        // preserve BOTH the incoming direction and speed when re-entering
-        // another slide; wall collisions are handled by the in-tube physics
+        // keep the incoming direction and speed when re entering
         val entryVel = vel
         return ReentryStart(
             bc, towardSecond, startT, entryPos, entryVel, center, entryTan, lat, up, radius

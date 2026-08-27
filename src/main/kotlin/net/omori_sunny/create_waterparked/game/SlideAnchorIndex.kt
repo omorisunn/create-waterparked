@@ -4,6 +4,7 @@ import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import net.minecraft.core.BlockPos
 import net.minecraft.core.SectionPos
 import net.minecraft.resources.ResourceKey
+import net.minecraft.util.Mth
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.AABB
 
@@ -58,12 +59,12 @@ object SlideAnchorIndex {
 
     fun allInBounds(level: Level, space: SlideSpace, box: AABB): Set<BlockPos> {
         val out = HashSet<BlockPos>()
-        val minX = SectionPos.blockToSectionCoord(net.minecraft.util.Mth.floor(box.minX))
-        val minY = SectionPos.blockToSectionCoord(net.minecraft.util.Mth.floor(box.minY))
-        val minZ = SectionPos.blockToSectionCoord(net.minecraft.util.Mth.floor(box.minZ))
-        val maxX = SectionPos.blockToSectionCoord(net.minecraft.util.Mth.floor(box.maxX))
-        val maxY = SectionPos.blockToSectionCoord(net.minecraft.util.Mth.floor(box.maxY))
-        val maxZ = SectionPos.blockToSectionCoord(net.minecraft.util.Mth.floor(box.maxZ))
+        val minX = SectionPos.blockToSectionCoord(Mth.floor(box.minX))
+        val minY = SectionPos.blockToSectionCoord(Mth.floor(box.minY))
+        val minZ = SectionPos.blockToSectionCoord(Mth.floor(box.minZ))
+        val maxX = SectionPos.blockToSectionCoord(Mth.floor(box.maxX))
+        val maxY = SectionPos.blockToSectionCoord(Mth.floor(box.maxY))
+        val maxZ = SectionPos.blockToSectionCoord(Mth.floor(box.maxZ))
         for (x in minX..maxX) {
             for (y in minY..maxY) {
                 for (z in minZ..maxZ) {

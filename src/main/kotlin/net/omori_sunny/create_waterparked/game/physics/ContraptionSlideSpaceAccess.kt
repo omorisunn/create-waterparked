@@ -29,23 +29,7 @@ import kotlin.math.PI
 import kotlin.math.sin
 import kotlin.math.cos
 
-// Third slide space: a Create contraption carrying a waterslide.
-//
-// Two facts drive the design:
-//  - data-location: the slide's anchors/curves/water configs no longer live in
-//    the world; they are the captured BlockEntity NBT inside the contraption.
-//    Each anchor is reconstructed into a temporary WaterslideAnchorBlockEntity
-//    (read() re-anchors the BezierConnections into contraption-local space,
-//    identical to the client tube visual), and block access routes through
-//    that decode instead of the world.
-//  - moved-frame: the space is a rigid transform (anchor + rotation around the
-//    contraption's axis) taken from the contraption entity, so a precomputed
-//    local trajectory stays valid while the contraption translates/rotates.
-//    worldVelocityAt() returns the structure's linear + rotational velocity so
-//    entry/exit math can subtract it exactly like Sable sub-levels.
-//
-// NOTE: only the anchor host BE matters (curves/frames/water live there); the
-// physics intentionally reads anchors only, never track blocks.
+// slide space over a contraption, anchors decode from captured NBT and the frame moves with it
 object ContraptionSlideSpaces {
 
     private data class Signed(val signature: Int, val data: Map<BlockPos, WaterslideAnchorBlockEntity>)
@@ -67,10 +51,7 @@ object ContraptionSlideSpaces {
             val state = info.state()
             if (state.block !is WaterslideAnchorBlock) continue
             val tag = info.nbt() ?: continue
-            // BlockEntity's constructor validates that the BE type matches the
-            // block state, so construct through the same withPendingType trick
-            // the block's own newBlockEntity uses (otherwise the inherited CCS
-            // coaster_anchorpoint type mismatches waterslide_anchor).
+            // build through the same pending type trick the block uses
             var be: WaterslideAnchorBlockEntity? = null
             WaterslideAnchorBlockEntity.withPendingType(
                 net.omori_sunny.create_waterparked.content.registry.ModBlockEntities.WATERSLIDE_ANCHOR_BE
@@ -89,10 +70,7 @@ object ContraptionSlideSpaces {
             out[localPos.immutable()] = anchor
         }
         cache[id] = Signed(sig, out)
-        // Feature: a mounted slide auto-uses the contraption's fluid storage.
-        // When the contraption carries any water at all, every empty anchor is
-        // filled to capacity and all its curves become watered - and the water
-        // is NEVER consumed (the fill is read-only against captured data).
+        // empty anchors fill from contraption fluid, water is never consumed
         applyAutoWater(entity, out)
         if (carriesSlides(entity)) {
             CreateWaterparked.LOGGER.debug(
@@ -106,15 +84,10 @@ object ContraptionSlideSpaces {
         return out
     }
 
-    // ---------------------------------------------------------------
-    // Auto-water from the contraption's own fluid storage (no consumption).
-    // ---------------------------------------------------------------
-
+    // auto water from the contraption fluid storage, no consumption
     private fun applyAutoWater(entity: AbstractContraptionEntity, anchors: Map<BlockPos, WaterslideAnchorBlockEntity>) {
         if (anchors.isEmpty()) return
-        // water source: any decoded anchor tank with water is authoritative (the
-        // captured tank NBT is already decoded), plus a best-effort scan of any
-        // other on-board fluid container.
+        // anchor tanks are the water source, other containers are best effort
         val hasWater = anchors.values.any { it.hasWater() } || scanForWater(entity)
         if (!hasWater) return
         for ((pos, be) in anchors) {
@@ -127,8 +100,7 @@ object ContraptionSlideSpaces {
         CreateWaterparked.LOGGER.debug("[ContraptionSlide] auto-watered {} anchor(s) on contraption {}", anchors.size, entity.id)
     }
 
-    // True when the captured contraption data contains any water fluid stack
-    // in a non-anchor container (best effort; the anchor tanks are authoritative).
+    // true when any non anchor container carries water
     private fun scanForWater(entity: AbstractContraptionEntity): Boolean {
         val contraption = entity.contraption ?: return false
         for (info in contraption.blocks.values) {
@@ -138,8 +110,7 @@ object ContraptionSlideSpaces {
         return false
     }
 
-    // Recursive scan: any compound that looks like a FluidStack carrying water
-    // (an "Amount" > 0 together with an "Id"/"FluidName" naming water).
+    // recursive scan for fluid stacks that name water
     private fun nbtHasWater(nbt: Tag): Boolean {
         if (nbt !is CompoundTag) return false
         if (nbt.contains("Amount") && nbt.getInt("Amount") > 0) {
@@ -184,19 +155,11 @@ object ContraptionSlideSpaces {
         else SlideAnchorIndex.all(access.level, access.space)
 
     // ---------------------------------------------------------------
-    // Structure-velocity tracking. A ContraptionSlideSpaceAccess is created
-    // fresh in many contexts (entry probe, session, water code), so per-instance
-    // "previous tick pose" would always be the current pose and velocity would
-    // be zero. Instead the previous pose of every slide-carrying contraption is
-    // stored here, updated once per server tick, and any access reads it.
-    // ---------------------------------------------------------------
-
-    // entityId -> (position(), angle) from the previous server tick
+    // structure velocity from the previous pose, tracked once per server tick
+    // entity id to previous pose position and angle
     private val prevPose = HashMap<Int, Pair<Vec3, Float>>()
 
-    // slide-carrying contraption entity ids, per dimension, maintained by
-    // entity join/leave events so the per-tick velocity tracking never has to
-    // scan for entities with an unbounded AABB (Sable rejects those).
+    // slide carrying contraption ids per dimension, kept by join leave events
     private val tracked = HashMap<ResourceKey<Level>, MutableSet<Int>>()
 
     @Volatile
@@ -213,8 +176,7 @@ object ContraptionSlideSpaces {
                 if (lvl !is ServerLevel) return@Consumer
                 if (carriesSlides(e)) {
                     tracked.getOrPut(lvl.dimension()) { HashSet() }.add(e.id)
-                    // One-time contraption-internal water computation at assembly,
-                    // then push the field to every player for rendering.
+                    // one time water computation at assembly, then push the field to players
                     net.omori_sunny.create_waterparked.game.water.ContraptionWaterSimulation.fieldsFor(lvl, e)
                     net.omori_sunny.create_waterparked.game.water.ContraptionWaterSimulation.syncToPlayers(lvl, e)
                 }
@@ -255,10 +217,7 @@ object ContraptionSlideSpaces {
     fun invalidatePose() { prevPose.clear() ; tracked.clear() }
 }
 
-// A SlideSpaceAccess over a contraption. Local coordinates are contraption
-// block positions (BlockPos.ZERO-relative); world mapping comes from the
-// entity's own toGlobalVector/toLocalVector so translation+rotation match the
-// actual rendered contraption every tick.
+// access over a contraption, local coords are contraption block positions
 class ContraptionSlideSpaceAccess(
     override val level: ServerLevel,
     val entity: AbstractContraptionEntity
@@ -279,18 +238,14 @@ class ContraptionSlideSpaceAccess(
         (entity as? com.simibubi.create.content.contraptions.ControlledContraptionEntity)
             ?.getRotationAxis()
 
-    // direction rotation for normals; translation is irrelevant. Matches the
-    // Main/Sub convention: this returns a UNIT direction.
+    // direction rotation for normals, returns a unit direction
     override fun toWorldNormal(local: Vec3): Vec3 {
         val axis = rotationAxis()
         if (axis == null) return local.normalize()
         return VecHelper.rotate(local, currentAngle().toDouble(), axis).normalize()
     }
 
-    // inverse rotation that PRESERVES MAGNITUDE - the same contract as
-    // SubSlideSpaceAccess.worldNormalToLocal (transformNormalInverse). Callers
-    // convert whole velocity vectors through this, so a simple normalize was a
-    // bug that dropped the entry/transition speed to 1.
+    // inverse rotation that preserves magnitude, same as sub level access
     override fun worldNormalToLocal(world: Vec3): Vec3 {
         val axis = rotationAxis()
         if (axis == null) return world
@@ -303,8 +258,7 @@ class ContraptionSlideSpaceAccess(
 
     override fun getBlockEntity(pos: BlockPos): BlockEntity? = anchors[pos.immutable()]
 
-    // local positions of every mounted slide anchor (replaces the world
-    // SlideAnchorIndex lookup for contraption spaces)
+    // local positions of every mounted slide anchor
     fun anchorPositions(): Set<BlockPos> = anchors.keys
 
     override fun getBlockState(pos: BlockPos): BlockState =
@@ -330,8 +284,7 @@ class ContraptionSlideSpaceAccess(
         return gravity!!
     }
 
-    // structure velocity (blocks/s) at a contraption-local point: linear anchor
-    // motion plus the tangential contribution of rotation around the axis
+    // structure velocity at a local point, linear plus rotational terms
     override fun worldVelocityAt(localPos: Vec3): Vec3 {
         val prev = ContraptionSlideSpaces.prevOf(entity.id)
         val anchorVel = if (prev == null) Vec3.ZERO
@@ -343,11 +296,7 @@ class ContraptionSlideSpaceAccess(
         if (kotlin.math.abs(angleDelta) < 1.0E-5) return anchorVel
         val omega = Math.toRadians(angleDelta.toDouble()) * 20.0 // rad/s
 
-        // Rotational arm measured from the rotation pivot. Create rotates
-        // contraption-local vectors about the axis through (0.5,0.5,0.5) (it
-        // subtracts centerOf(BlockPos.ZERO) before rotating in toGlobalVector),
-        // so the arm is localPos - (0.5,0.5,0.5), then brought to the current
-        // world orientation.
+        // rotation arm from the contraption pivot at center of zero
         val pivot = Vec3(0.5, 0.5, 0.5)
         val r = localPos.subtract(pivot)
         val rWorld = VecHelper.rotate(r, angle.toDouble(), axis)

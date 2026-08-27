@@ -7,16 +7,15 @@ import org.spongepowered.asm.mixin.MixinEnvironment;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
-import net.minecraft.client.Minecraft;
 import net.neoforged.fml.ModList;
 
-/**
- * Gates optional-platform mixins so the mod keeps working without Sodium/Iris.
- * The water-pass injection only ever applies when both the full Sodium renderer
- * AND Iris are present at runtime (otherwise the @Mixin would crash a clean
- * installation at class load).
- */
+// gate optional platform mixins when Sodium or Iris are missing
 public class WaterparkedMixinPlugin implements IMixinConfigPlugin {
+
+    private static final String IRIS_PASS_MIXIN = "client.iris.IrisWaterPassMixin";
+    private static final String IRIS_PROBE_MIXIN = "client.iris.GlShaderSourceProbeMixin";
+    private static final String COLORWHEEL_MIXIN = "client.colorwheel.ColorwheelWaterEntityMixin";
+    private static final String COLORWHEEL_TARGET = "dev.djefrey.colorwheel.engine.ClrwlMeshPool";
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -29,32 +28,18 @@ public class WaterparkedMixinPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-        if (mixinClassName.endsWith("client.iris.IrisWaterPassMixin")) {
-            // ModList is NOT available during mixin application (class
-            // transformation runs before mod loading), so decide by target
-            // class presence: the water-pass injection only applies when the
-            // full Sodium chunk renderer is on the classpath.
+        if (mixinClassName.endsWith(IRIS_PASS_MIXIN) || mixinClassName.endsWith(IRIS_PROBE_MIXIN)) {
+            // ModList is unavailable, decide by target class presence
             return classResourceExists(targetClassName);
         }
-        if (mixinClassName.endsWith("client.iris.GlShaderSourceProbeMixin")) {
-            // Water-classification injection for Colorwheel's clrwl programs:
-            // only applies when Iris is present (GlShader is Iris's class).
-            return classResourceExists(targetClassName);
-        }
-        if (mixinClassName.endsWith("client.colorwheel.ColorwheelWaterEntityMixin")) {
-            // NEVER Class.forName here: loading the target class during mixin
-            // config preparation cements it in the JVM without the mixin
-            // applied (the transformer only runs on first load), so the mixin
-            // would silently never apply. A load-free resource probe sees mod
-            // jars at this stage (same mechanism the Sodium guard uses) and
-            // leaves the class untouched until Colorwheel itself instantiates
-            // it, at which point the mixin applies normally.
-            return classResourceExists("dev.djefrey.colorwheel.engine.ClrwlMeshPool");
+        if (mixinClassName.endsWith(COLORWHEEL_MIXIN)) {
+            // never Class.forName here, use a load free resource probe
+            return classResourceExists(COLORWHEEL_TARGET);
         }
         return true;
     }
 
-    // Load-free presence check via the context class loader's resources.
+    // load free presence check through the context class loader
     private static boolean classResourceExists(String binaryName) {
         try {
             String path = binaryName.replace('.', '/') + ".class";

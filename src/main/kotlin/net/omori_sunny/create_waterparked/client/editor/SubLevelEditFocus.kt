@@ -9,12 +9,7 @@ import net.minecraft.world.level.Level
 import net.minecraft.world.phys.BlockHitResult
 import net.omori_sunny.create_waterparked.CreateWaterparked
 
-// Simulated Coasters loses the active edit anchor inside Sable sub-levels
-// (its hit test sees the local content position, but the anchor BE lives at
-// the plot-global position, and its own clientTick clears the field when the
-// BE lookup fails). We therefore keep our own plot-global focus anchor and
-// drive the waterparked edit overlays from it instead of poking SC's private
-// state.
+// keeps our own plot global focus anchor, Simulated Coasters loses it in sub levels
 object SubLevelEditFocus {
 
     private var fallbackAnchor: BlockPos? = null
@@ -41,7 +36,7 @@ object SubLevelEditFocus {
         val hitCtx = hit?.blockPos?.let { SableClientEdit.resolve(level, it) }
 
         if (currentCtx != null) {
-            // never yank the anchor away from an in-flight drag
+            // never yank the anchor away from an in flight drag
             if (BezierHandleDragManager.isDraggingHandle() ||
                 WaterslideRadiusEdit.isDragging() ||
                 WaterslideSectorEdit.isDraggingControlPoint()
@@ -49,8 +44,7 @@ object SubLevelEditFocus {
                 fallbackAnchor = currentCtx.globalPos
                 return
             }
-            // hover switching only inside Sable space; main-world activation
-            // stays with Simulated Coasters' own interaction flow
+            // hover switching only inside Sable space, main world stays with SC
             if (currentCtx.sub != null || hitCtx?.sub != null) {
                 if (hitCtx != null && hitCtx.globalPos != currentCtx.globalPos && hitCtx.be.legCount() > 0) {
                     fallbackAnchor = hitCtx.globalPos

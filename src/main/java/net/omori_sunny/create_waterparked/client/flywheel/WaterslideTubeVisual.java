@@ -1,5 +1,6 @@
 package net.omori_sunny.create_waterparked.client.flywheel;
 
+import com.simibubi.create.AllBlocks;
 import com.simibubi.create.content.trains.track.BezierConnection;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.Instancer;
@@ -66,44 +67,36 @@ import java.util.function.Consumer;
 public class WaterslideTubeVisual extends AbstractVisual
     implements BlockEntityVisual<WaterslideAnchorBlockEntity>, ShaderLightVisual, SimpleDynamicVisual {
 
-    // Sable dispatches sub-level visual creation/deletion to Flywheel worker
-    // threads, so this registry is touched off the render thread while
-    // tickVisibility/refreshAnchor iterate it from the client tick -> must be
-    // concurrent (an IdentityHashMap-backed set threw ConcurrentModificationException).
-    // No equals/hashCode override on this class, so CHM keys keep identity semantics.
+    // concurrent registry, the set is touched off the render thread
     private static final Set<WaterslideTubeVisual> ACTIVE = ConcurrentHashMap.newKeySet();
     private static final float WALL_THICKNESS = 0.1f;
-    // fixed cross-section fractions so every segment shares the SAME water model;
-    // using a per-segment radius made adjacent segments' bed radius jump -> cracks.
-    // The bed arc must stay strictly INSIDE the inner wall surface (radius - 0.1)
-    // for the smallest supported radius: 0.85r < r - 0.1  <=>  r > 2/3. At 0.9 the
-    // bed is exactly coplanar with the inner wall for radius 1 and the water-wall
-    // boundary z-fights into green/teal stripes under shaderpacks.
+    // fixed cross section fractions shared by every segment, bed stays inside the wall
     private static final float WATER_IN_FRAC = 0.85f;
     private static final float WATER_SURF_FRAC = 0.8f;
 
     private static final double SUPPORT_PICK_RANGE = 64.0;
     private static final double SUPPORT_PICK_MARGIN = 0.08;
 
-    // Copycat-style support interaction target: which anchor/part was hit and an
-    // AABB used to outline it. part 0 = beam, 1 = bracket.
+    // copycat support target: anchor, part and an outline AABB
     public static final class SupportPick {
         public final BlockPos anchorPos;
         public final int part;
         public final double distance;
+        public final double arcDistance;
         public final AABB outlineBox;
+        public final List<Vec3> outline;
 
-        public SupportPick(BlockPos anchorPos, int part, double distance, AABB outlineBox) {
+        public SupportPick(BlockPos anchorPos, int part, double distance, AABB outlineBox, List<Vec3> outline, double arcDistance) {
             this.anchorPos = anchorPos;
             this.part = part;
             this.distance = distance;
+            this.arcDistance = arcDistance;
             this.outlineBox = outlineBox;
+            this.outline = outline;
         }
     }
 
-    // Ray-pick the rendered support geometry (beam column + bracket shells)
-    // across every active anchor. Used by WaterslideSupportEdit for hover
-    // outline and copycat-style right-click interaction.
+    // ray pick the rendered support geometry across every anchor
     public static @Nullable SupportPick pickSupport(Vec3 start, Vec3 dir) {
         double best = Double.MAX_VALUE;
         SupportPick bestPick = null;
@@ -148,6 +141,17 @@ public class WaterslideTubeVisual extends AbstractVisual
         return p.distanceTo(a.add(ab.scale(t)));
     }
 
+    private static double raySphereDistance(Vec3 rayStart, Vec3 rayDir, Vec3 center, double radius) {
+        Vec3 oc = rayStart.subtract(center);
+        double b = oc.dot(rayDir);
+        double c = oc.lengthSqr() - radius * radius;
+        double disc = b * b - c;
+        if (disc < 0.0) return -1.0;
+        double s = -b - Math.sqrt(disc);
+        if (s < 0.0) s = -b + Math.sqrt(disc);
+        return s;
+    }
+
     private static double raySegmentDistance(Vec3 rayStart, Vec3 rayDir, Vec3 a, Vec3 b) {
         Vec3 rayEnd = rayStart.add(rayDir.scale(SUPPORT_PICK_RANGE));
         Vec3 u = rayEnd.subtract(rayStart);
@@ -174,17 +178,36 @@ public class WaterslideTubeVisual extends AbstractVisual
         return closestOnRay.distanceTo(closestOnSeg);
     }
 
+    // distance along the ray, same units as block hit distance
+    private static double raySegmentArcDistance(Vec3 rayStart, Vec3 rayDir, Vec3 a, Vec3 b) {
+        Vec3 rayEnd = rayStart.add(rayDir.scale(SUPPORT_PICK_RANGE));
+        Vec3 u = rayEnd.subtract(rayStart);
+        Vec3 v = b.subtract(a);
+        Vec3 w = rayStart.subtract(a);
+        double aCoef = u.dot(u);
+        double bCoef = u.dot(v);
+        double cCoef = v.dot(v);
+        double dCoef = u.dot(w);
+        double eCoef = v.dot(w);
+        double denom = aCoef * cCoef - bCoef * bCoef;
+        double sN;
+        if (denom > 1e-12) {
+            double tN = (aCoef * eCoef - bCoef * dCoef) / denom;
+            sN = (bCoef * eCoef - cCoef * dCoef) / denom;
+            tN = Mth.clamp(tN, 0.0, 1.0);
+        } else {
+            sN = 0.0;
+        }
+        sN = Mth.clamp(sN, 0.0, 1.0);
+        return sN * u.length();
+    }
+
     private static float smoothstep(float edge0, float edge1, float x) {
         float t = Mth.clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
         return t * t * (3f - 2f * t);
     }
 
-    // per-pack water tint (rgb, alpha handled separately). Under iterationRP our
-    // water is classified as the pack's own water (material 6) and the pack's
-    // water program derives the look from fog/scattering - a WHITE tint keeps
-    // the albedo neutral so the result matches vanilla water exactly. Only
-    // applies while the shader stack is actively routing our water - without
-    // shaders (or under any other pack) the 0.1.5-faithful blue is used.
+    // white tint under iterationRP keeps the albedo neutral, blue elsewhere
     private static float[] waterTint() {
         if (IrisColorwheelCompat.iterationRpWaterMode()) {
             return new float[]{1f, 1f, 1f}; // neutral: let the pack shade like vanilla water
@@ -192,10 +215,7 @@ public class WaterslideTubeVisual extends AbstractVisual
         return new float[]{0.3f, 0.6f, 1f}; // 0.1.5-faithful blue
     }
 
-    // iterationRP shades the water through its own refraction/reflection path;
-    // the Flywheel vertex jitter would fight the pack's wave normals, so the
-    // mesh is static under iterationRP and keeps the user-configured jitter
-    // under every other pack / vanilla rendering.
+    // mesh is static under iterationRP, jitter stays for other packs
     private static float waterJitterScale() {
         return IrisColorwheelCompat.iterationRpWaterMode()
             ? 0f
@@ -208,8 +228,7 @@ public class WaterslideTubeVisual extends AbstractVisual
         return new float[]{sprite.getU0(), sprite.getU1(), sprite.getV0(), sprite.getV1()};
     }
 
-    // same light sampling as Coasters Simulated's flywheel/BER renderers, with
-    // a +3 brightness boost for the translucent water surfaces
+    // same light sampling as CCS renderers with a brightness boost for water
     private int tubeLight(Level level, Vec3 pos) {
         return LevelRenderer.getLightColor(level, BlockPos.containing(toWorldPos(pos)));
     }
@@ -230,8 +249,7 @@ public class WaterslideTubeVisual extends AbstractVisual
         return LightTexture.pack(Mth.clamp(block, 0, 15), Mth.clamp(sky, 0, 15));
     }
 
-    // World gravity expressed in the curve's local coordinate space, so thrown
-    // water follows the rotated shape of a Sable sub-level.
+    // world gravity in local space, water follows the rotated sub level
     private Vec3 localGravity() {
         if (subLevel == null) return new Vec3(0.0, -32.0, 0.0);
         Vector3d out = subLevel.logicalPose().transformNormalInverse(
@@ -250,8 +268,7 @@ public class WaterslideTubeVisual extends AbstractVisual
 
     private final WaterslideAnchorBlockEntity be;
     private final SubLevel subLevel;
-    // CopyOnWrite: collect() can rebuild this from a Flywheel worker thread
-    // while the client tick snapshots it (same race as ACTIVE above).
+    // CopyOnWrite, collect can rebuild from a worker thread
     private final List<TubeCurve> curves = new CopyOnWriteArrayList<>();
     private String lastDataSig = "";
     private String lastStreamPoseSig = "";
@@ -315,15 +332,16 @@ public class WaterslideTubeVisual extends AbstractVisual
         Level lvl = be.getLevel();
         for (Map.Entry<BlockPos, BezierConnection> e : be.getAnchorPeerCurvesView().entrySet()) {
             BezierConnection raw = e.getValue();
-            if (raw == null || !raw.isPrimary()) continue;
-            Vec3 h0 = raw.starts.getFirst();
-            Vec3 h1 = raw.starts.getSecond();
+            if (raw == null) continue;
+            BezierConnection bc = raw.isPrimary() ? raw : raw.secondary();
+            Vec3 h0 = bc.starts.getFirst();
+            Vec3 h1 = bc.starts.getSecond();
             sb.append(e.getKey().asLong()).append('=')
-                .append(raw.getSegmentCount()).append(',')
+                .append(bc.getSegmentCount()).append(',')
                 .append(h0.x).append(',').append(h0.y).append(',').append(h0.z).append(',')
                 .append(h1.x).append(',').append(h1.y).append(',').append(h1.z).append(',')
                 .append(WaterslideRadiusEdit.INSTANCE.radiusAt(
-                    lvl, raw.bePositions.getSecond(), ModConfig.INSTANCE.defaultSlideRadius()
+                    lvl, bc.bePositions.getSecond(), ModConfig.INSTANCE.defaultSlideRadius()
                 )).append(';');
         }
         return sb.toString();
@@ -335,15 +353,10 @@ public class WaterslideTubeVisual extends AbstractVisual
         if (lvl == null) return;
         float now = AnimationTickHolder.getRenderTime(lvl);
         lastWaterTime = now;
-        // set the phase directly (no accumulation) and wrap to [0,1): an
-        // ever-growing accumulated phase makes the texture sampling density
-        // degrade over time; direct flow*now keeps every segment's scroll speed
-        // fixed and stable
+        // direct phase set wrapped to 0..1, keeps scroll speed stable
         for (TubeCurve c : curves) {
             for (WaterslideTubeInstance w : c.waterInstances) {
-                // direct per-segment texture scroll (no easing): flowUpstream
-                // carries this instance's own scroll rate while flowStart/End
-                // are reserved for jitter amplitude/time blending
+                // direct per segment scroll, flowStart and End stay for jitter blending
                 w.phaseStart = (w.flowUpstream * now) % 1.0f;
                 w.phaseEnd = (w.flowUpstream * now) % 1.0f;
                 w.phaseUpstream = (w.flowUpstream * now) % 1.0f;
@@ -360,9 +373,14 @@ public class WaterslideTubeVisual extends AbstractVisual
         curves.clear();
         for (Map.Entry<BlockPos, BezierConnection> e : be.getAnchorPeerCurvesView().entrySet()) {
             BezierConnection raw = e.getValue();
-            if (raw == null || !raw.isPrimary()) continue;
-            if (!WaterslideTrackMaterials.isWaterslide(raw)) continue;
-            curves.add(new TubeCurve(e.getKey(), raw));
+            if (raw == null) continue;
+            // primary direction renders the whole tube; the secondary entry is
+            // the same curve seen from the other anchor - register it too so
+            // both anchors build their bracket/beam, without double-drawing
+            // the tube (renderTube flag gates the pipe meshes)
+            BezierConnection bc = raw.isPrimary() ? raw : raw.secondary();
+            if (!WaterslideTrackMaterials.isWaterslide(bc)) continue;
+            curves.add(new TubeCurve(e.getKey(), bc, raw.isPrimary()));
         }
         for (TubeCurve c : curves) {
             c.rebuildInstances();
@@ -373,14 +391,14 @@ public class WaterslideTubeVisual extends AbstractVisual
         }
     }
 
-    // support beam: vertical square column from the anchor top face up to the
-    // tube underside at this anchor (the bracket shell's lowest point)
+    // beam connects anchor top to the bracket bottom face center
     private void buildSupportBeam() {
         if (beamInstance != null) {
             beamInstance.delete();
             beamInstance = null;
         }
         if (curves.isEmpty()) return;
+        if (!be.getSupportBeamVisible()) return; // deleted: air, no mesh
         TubeCurve c = curves.get(0);
         BlockPos anchorPos = be.getBlockPos();
         boolean atFirst = c.curve.bePositions.getFirst().equals(anchorPos);
@@ -388,52 +406,54 @@ public class WaterslideTubeVisual extends AbstractVisual
         if (frames == null || frames.isEmpty()) return;
         WaterslideTubeMesh.TubeSegmentFrame f = atFirst
             ? frames.get(0) : frames.get(frames.size() - 1);
-        Vec3 spine = atFirst ? f.getPrevSpine() : f.getCurrSpine();
-        // the bracket's lowest point is the tube cross-section bottom (270°),
-        // i.e. spine minus faceUp * outer radius. faceUp can deviate from world
-        // up on bends, so compute the true projection instead of assuming the
-        // tube always hangs straight above the anchor.
+        // bracket bottom center is the thickness midpoint of its span
+        Vec3 s0 = atFirst ? f.getPrevSpine() : f.getCurrSpine();
+        Vec3 s1 = atFirst ? f.getCurrSpine() : f.getPrevSpine();
+        Vec3 spine = s0.add(s1).scale(0.5);
         Vec3 tan = atFirst ? f.getPrevTangent() : f.getCurrTangent();
         Vec3 lat = atFirst ? f.getPrevLateral() : f.getCurrLateral();
         Vec3 faceUp = tan.cross(lat).normalize();
-        // the tube's outer wall sits at radius + (wallThickness - BASE_WALL), so
-        // the beam top must reach that real surface + the bracket shelf thickness
-        // (plus a tiny epsilon), NOT the centerline radius + thickness — otherwise
-        // with the default 0.5 wall the beam ends inside the pipe
         float wallOuter = ModClientConfig.INSTANCE.wallThickness() - WaterslideTubeMesh.BASE_WALL;
-        float rOut = Math.max(0.1f, (f.getPrevRadius() + f.getCurrRadius()) * 0.5f)
+        float rOut = Math.max(0.1f, (atFirst ? f.getPrevRadius() : f.getCurrRadius()))
             + wallOuter + ModClientConfig.INSTANCE.supportThickness()
             + WaterslideTubeMesh.SUPPORT_HUG_EPSILON;
+        // connection point = the bracket bottom-face center (frame mid, 270°)
         Vec3 bottomLocal = spine.subtract(faceUp.scale(rOut));
         // anchor top-face center, in INSTANCE space (frames are origin-relative)
         Vec3 anchorCenterLocal = Vec3.atLowerCornerOf(anchorPos)
             .add(0.5, 1.0, 0.5)
             .subtract(c.origin);
-        // girder-style beam axis: anchor top-face center -> bracket lowest point
-        // (like CCS's anchor girder along the span, NOT required to be vertical)
+        // beam axis from anchor top to tube center, half width embedded
         Vec3 axis = bottomLocal.subtract(anchorCenterLocal);
         float len = (float) axis.length();
         if (len < 0.05f) return;
         Vec3 axisN = axis.scale(1.0 / len);
+        // per corner top extension up to the bracket outer shell surface
+        Vec3 refV = Math.abs(axisN.y) < 0.9
+            ? new Vec3(0.0, 1.0, 0.0)
+            : new Vec3(1.0, 0.0, 0.0);
+        Vec3 b1 = refV.cross(axisN).normalize();
+        Vec3 b2 = axisN.cross(b1).normalize();
+        float halfS = ModClientConfig.INSTANCE.supportBeamSize() * 0.5f;
+        // extend to the shell outer cylinder, clamped to the real shell span
+        float[] tops = beamTopOffsets(
+            f, atFirst, rOut, len, axisN, anchorCenterLocal, b1, b2, halfS);
+        // per corner bottom extension straight down to the anchor block top face
+        float[] bottoms = beamBottomOffsets(axisN, anchorCenterLocal, b1, b2, halfS);
         BlockState beamMaterial = be.supportMaterial(WaterslideSupportPart.BEAM);
         TextureAtlasSprite sprite = WaterslideTubeMesh.supportSprite(beamMaterial);
         if (sprite == null) return;
-        CreateWaterparked.INSTANCE.getLOGGER().debug(
-            "[SupportSprite] beam mat={} sprite={}", beamMaterial, sprite.contents().name());
         Model beamModel = WaterslideTubeMesh.INSTANCE.supportBeamModelFor(
-            anchorCenterLocal, axisN, len, sprite, beamMaterial);
+            anchorCenterLocal, axisN, len, sprite, beamMaterial, tops, bottoms);
         Instancer<SupportInstance> beamInstancer =
             instancerProvider().instancer(SupportInstanceType.INSTANCE, beamModel);
         SupportInstance b = beamInstancer.createInstance();
-        // positions are CPU-baked in INSTANCE space (origin-relative frames), so
-        // the visual is a pure translation; light uses the world-space midpoint
+        // positions baked in instance space, light from the world midpoint
         Vec3 midWorld = anchorCenterLocal.add(axis.scale(0.5)).add(c.origin);
         b.setOrigin(Vec3.ZERO)
             .light(tubeLight(level, midWorld))
             .setChanged();
-        // real cull bounds: the baked beam spans [base, base+axis*len] far from
-        // the origin; the old fixed 6.0 sphere at the origin culled it on camera
-        // movement (the flashing/disappearing beam)
+        // real cull bounds, the old origin sphere culled the beam
         b.setBounds(anchorCenterLocal.add(axis.scale(0.5)), len * 0.5f + 0.5f)
             .setChanged();
         b.fullTileMode = 1f;
@@ -443,6 +463,50 @@ public class WaterslideTubeVisual extends AbstractVisual
             b.spriteV0 = bspr[2]; b.spriteV1 = bspr[3];
         }
         beamInstance = b;
+    }
+
+    private float[] beamTopOffsets(
+        WaterslideTubeMesh.TubeSegmentFrame f,
+        boolean atFirst,
+        float rOut,
+        float len,
+        Vec3 axisN,
+        Vec3 anchorCenterLocal,
+        Vec3 b1,
+        Vec3 b2,
+        float halfS
+    ) {
+        // flat top with a fixed embed into the shell. Surface solving proved
+        // unstable for large radii and near vertical tubes (degenerate
+        // cylinder intersects), producing huge phantom extensions; a constant
+        // small embed keeps the beam inside the bracket shell everywhere.
+        float[] tops = new float[4];
+        for (int i = 0; i < 4; i++) tops[i] = 0.15f;
+        return tops;
+    }
+
+    private float[] beamBottomOffsets(
+        Vec3 axisN,
+        Vec3 anchorCenterLocal,
+        Vec3 b1,
+        Vec3 b2,
+        float halfS
+    ) {
+        float[] bottoms = new float[4];
+        int[][] signs = {{-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
+        for (int i = 0; i < 4; i++) {
+            Vec3 corner = anchorCenterLocal
+                .add(b1.scale(signs[i][0] * halfS))
+                .add(b2.scale(signs[i][1] * halfS));
+            if (axisN.y <= 1.0E-6) {
+                bottoms[i] = 0f;
+            } else {
+                // vertical only, never slide the corner off the anchor block
+                double t = corner.y - anchorCenterLocal.y;
+                bottoms[i] = (float) Math.max(t, 0.0);
+            }
+        }
+        return bottoms;
     }
 
     public LongSet collectLightSections() {
@@ -507,10 +571,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             lastEditAnchor = null;
             return;
         }
-        // shaderpack toggle (or pack switch) changes the water normal scheme
-        // (radial without shaders, up-facing under a stamping shaderpack); drop
-        // the model cache and rebuild the active visuals so the water shading
-        // updates immediately instead of on the next block edit
+        // pack switch changes the water normal scheme, drop the model cache
         String pack = IrisColorwheelCompat.shaderpackName();
         boolean shading = IrisColorwheelCompat.waterShadingActive();
         if (pack != null ? !pack.equals(lastShaderPack) : lastShaderPack != null
@@ -608,10 +669,7 @@ public class WaterslideTubeVisual extends AbstractVisual
         }
     }
 
-    // World-space outer/inner polylines for every thrown sheet (main-world AND
-    // sub-level). These are rendered in the AFTER_LEVEL main-world pass so they
-    // depth-test correctly against every sub-level instead of being drawn
-    // inside the Flywheel batch, which Sable's sub-level chunks then overwrite.
+    // world space sheet polylines rendered in the AFTER_LEVEL pass
     public static List<Pair<List<List<Vec3>>, List<List<Vec3>>>> worldStreamSheets() {
         Minecraft mc = Minecraft.getInstance();
         Level level = mc == null ? null : mc.level;
@@ -644,13 +702,9 @@ public class WaterslideTubeVisual extends AbstractVisual
         private final Level level;
         private final Vec3 origin;
         private List<WaterslideTubeMesh.TubeSegmentFrame> frames;
-        // 0.5-block sampling matching the server arc accumulation, so band
-        // placement aligns with the simulated water segments
+        // 0.5 block sampling matching the server arc accumulation
         private List<WaterslideTubeMesh.TubeSegmentFrame> waterFrames;
-        // cumulative shader arc length at each water frame; used instead of the
-        // flat 0.5 chord assumption so arcBase is bit-compatible with the
-        // shader's arcLenTo and adjacent water instances share the same texture
-        // phase at their boundary ring
+        // cumulative shader arc length, arcBase bit compatible with arcLenTo
         private float[] waterPrefixArcs;
         private float waterTotalArc;
         // cumulative arc at each tube frame start, for the glass wall's
@@ -671,20 +725,22 @@ public class WaterslideTubeVisual extends AbstractVisual
         @Nullable
         private SupportInstance bracketInstance;
         private WaterFlowSimulation.CurveWater water;
-        // World-space polylines of the thrown sheet, frozen at the moment the
-        // stream was predicted. Sub-level streams are rendered through the
-        // sub-level's embedded transform, so every rebuild maps these world
-        // points back into the CURRENT plot-global instance space; that keeps
-        // the falling water fixed in the main world while the sub-level moves.
+        // true: this anchor owns the full tube render (primary direction);
+        // false: secondary direction seen from the other end - the bracket and
+        // beam are still built here so BOTH anchors get support, but the pipe
+        // wall/water/caps are skipped to avoid doubling the tube
+        private final boolean renderTube;
+        // world polyline snapshot remapped into the current instance space
         @Nullable
         private List<List<Vec3>> streamWorldOuter;
         @Nullable
         private List<List<Vec3>> streamWorldInner;
         private boolean streamNeedsRebuild = false;
 
-        TubeCurve(BlockPos peer, BezierConnection bc) {
+        TubeCurve(BlockPos peer, BezierConnection bc, boolean renderTube) {
             this.curve = bc;
             this.peer = peer;
+            this.renderTube = renderTube;
             this.level = be.getLevel();
             BlockPos a = bc.bePositions.getFirst();
             BlockPos b = bc.bePositions.getSecond();
@@ -756,11 +812,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             rebuildInstances();
         }
 
-        // 0.5-block sampling matching the server's segIdx = floor(chordArc/0.5)
-        // grid exactly. The old chord-merge drifted on curved segments (needing 3
-        // fine CCS steps to reach 0.5), leaving fewer frames than server segments
-        // and clamping every late arc to the same last frame -> vanishing bed at
-        // the junction. Interpolate at uniform 0.5-chord boundaries instead.
+        // uniform 0.5 chord sampling, the old merge drifted on curves
         private List<WaterslideTubeMesh.TubeSegmentFrame> buildWaterFrames(float r0, float r1) {
             List<SlideCurveGeometry.Frame> sf =
                 SlideCurveGeometry.INSTANCE.sampleFrames(level, curve, r0, r1, 0.5, true);
@@ -776,11 +828,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             if (segCount < 1) segCount = 1;
 
             Vec3 prevCenter = sf.get(0).getCenter();
-            // Start the continuity chain from the REAL rail frame at the first
-            // sample, not from SlideCurveGeometry's stable frame. A sub-level's
-            // rotated pose can make the stable lateral point the opposite way,
-            // flipping the first water band 180° and putting the bed arc on
-            // the ceiling for the whole curve.
+            // start from the real rail frame, the stable frame can flip on rotated poses
             float firstT = sf.get(0).getT();
             Vec3 prevTan = CoasterBezierRailFrames.unitTangentAt(curve, firstT);
             if (prevTan.lengthSqr() < 1.0E-9) prevTan = sf.get(0).getTangent();
@@ -798,11 +846,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 SlideCurveGeometry.Frame a = sf.get(scan - 1);
                 SlideCurveGeometry.Frame b = sf.get(scan);
                 Vec3 center = a.getCenter().add(b.getCenter().subtract(a.getCenter()).scale(f));
-                // sample the real rail frame at the interpolated curve t instead
-                // of linearly blending two tangents/laterals. Lerp can cancel out
-                // on sharp bends and produce a control tangent pointing sideways
-                // or backwards, which makes the cubic loop and spike out of the
-                // tube at the affected ring.
+                // sample the real rail frame at the interpolated t, lerp can cancel on bends
                 float t = (float) (a.getT() + (b.getT() - a.getT()) * f);
                 Vec3 tan = CoasterBezierRailFrames.unitTangentAt(curve, t);
                 if (tan.lengthSqr() < 1.0E-9) tan = a.getTangent();
@@ -810,10 +854,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 Vec3 lat = CoasterBezierRailFrames.lateralAt(curve, t, level);
                 if (lat.lengthSqr() < 1.0E-9) lat = prevLat;
                 if (lat.dot(prevLat) < 0.0) lat = lat.scale(-1.0);
-                // never let a sampled rail tangent point backwards along this
-                // 0.5-chord span: the shader reconstructs a cubic with these
-                // tangents as controls, and a backwards control loops the mesh
-                // into the long spike seen at segment joints
+                // never let a sampled tangent point backwards along the chord span
                 Vec3 chordDir = center.subtract(prevCenter);
                 if (chordDir.lengthSqr() > 1.0E-12) {
                     chordDir = chordDir.normalize();
@@ -861,8 +902,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             }
         }
 
-        // TEMP DIAGNOSTIC for the junction spike: print how the water end-ring
-        // frame compares with the neighboring curve's frame.
+        // diagnostic: junction spike, end ring frame vs neighbor frame
         private void logJunctionDiagnostics() {
             if (waterFrames.size() < 2) return;
             for (boolean atFirst : new boolean[]{true, false}) {
@@ -940,10 +980,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             return out;
         }
 
-        // Map a WORLD-space stream point into this visual's embedded instance
-        // space: plot-global, minus the render origin. For sub-levels this is
-        // inverse-pose transformed with the CURRENT pose each rebuild, which is
-        // what keeps the stream world-fixed while the sub-level moves.
+        // map a world stream point into instance space with the current pose
         private Vec3 toStreamInstancePos(Vec3 world) {
             if (subLevel == null) return world.subtract(origin);
             Vector3d plotGlobal = subLevel.logicalPose().transformPositionInverse(
@@ -958,14 +995,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             if (exit == null) return null;
             if (waterFrames.isEmpty()) return null;
             boolean forward = water.getFlowSign() < 0f;
-            // Use the in-tube WATER frame at the curve endpoint, not the tube
-            // frame: `frames` includes the open-end extension past the mouth
-            // (thrown water only exists at legCount==1 anchors, which always
-            // have an extension), so frames.get(last/first) would start the
-            // sheet one extension length beyond the visible mouth. waterFrames
-            // end exactly at the curve endpoints and are the exact frames the
-            // in-tube band renders with, so the thrown ring lines up with the
-            // band's outlet ring.
+            // use the in tube water frame at the endpoint, not the extension frame
             WaterslideTubeMesh.TubeSegmentFrame outlet = forward
                 ? waterFrames.get(waterFrames.size() - 1)
                 : waterFrames.get(0);
@@ -973,9 +1003,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             Vec3 outletTan = forward
                 ? outlet.getCurrTangent()
                 : outlet.getPrevTangent().scale(-1.0);
-            // use the outlet frame's real lateral so the thrown sheet's
-            // cross-section matches the in-tube band at the mouth; faceUp is
-            // recomputed exactly like the vertex shader (cross(tangent, lateral))
+            // outlet lateral and faceUp match the in tube band exactly
             Vec3 lat0 = forward ? outlet.getCurrLateral() : outlet.getPrevLateral().scale(-1.0);
             Vec3 up0 = outletTan.cross(lat0);
             if (up0.lengthSqr() < 1.0E-9) {
@@ -999,12 +1027,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 own.add(f.getPrevSpine().add(origin));
                 own.add(f.getCurrSpine().add(origin));
             }
-            // Main-world slides keep the original behavior exactly: full exit
-            // speed along the outlet tangent. On sub-levels, take only the
-            // TANGENTIAL component of the simulated exit velocity - using the
-            // full magnitude there fired the sheet too high when gravity had
-            // already added a big normal (down/tilted) component before the
-            // mouth.
+            // tangential exit speed on sub levels, full speed on main world
             double throwSpeed;
             if (subLevel != null) {
                 throwSpeed = Math.max(0.25, exit.getVel().dot(outletTan));
@@ -1033,11 +1056,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             List<List<Vec3>> outer = res.getFirst();
             List<List<Vec3>> inner = res.getSecond();
             if (outer.isEmpty() || inner.isEmpty()) return null;
-            // Freeze the predicted polylines in WORLD space the first time
-            // this water field builds a stream. On every later pose-refresh
-            // rebuild we reuse these frozen points and only remap them into
-            // the current instance space, so a moving sub-level no longer
-            // drags the falling sheet around with it.
+            // freeze the polylines in world space, remap on pose refresh
             if (streamWorldOuter == null || streamWorldInner == null) {
                 streamWorldOuter = toWorldPolylines(outer);
                 streamWorldInner = toWorldPolylines(inner);
@@ -1045,11 +1064,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             List<List<Vec3>> outerW = streamWorldOuter;
             List<List<Vec3>> innerW = streamWorldInner;
             if (outerW.isEmpty() || innerW.isEmpty()) return null;
-            // Pick ONE ray pair (longest outer ray and the matching inner ray).
-            // Choosing the longest outer and longest inner independently
-            // pairs two different angular positions, so o[0]-in[0] is no longer
-            // a pure radial vector and the reconstructed centerline starts at
-            // the rim instead of the tube center.
+            // pick one matched ray pair so the centerline starts at the tube center
             int bestRay = 0;
             int bestLen = outerW.get(0).size();
             for (int i = 1; i < outerW.size(); i++) {
@@ -1086,10 +1101,7 @@ public class WaterslideTubeVisual extends AbstractVisual
 
             Vec3 tan0 = centers.get(1).subtract(centers.get(0)).normalize();
             if (tan0.lengthSqr() < 1.0E-6) tan0 = new Vec3(0.0, 0.0, 1.0);
-            // keep the outlet frame's cross-section (lat0/up0 already computed
-            // from the outlet lateral + faceUp); re-projecting against the
-            // vertical fall direction collapses it to zero, which flattens the
-            // thrown sheet into a ground-hugging strip
+            // keep the outlet cross section, projection flattens the sheet
 
             // shared junction tangents so adjacent segments meet ring-to-ring
             Vec3[] tans = new Vec3[centers.size()];
@@ -1148,17 +1160,13 @@ public class WaterslideTubeVisual extends AbstractVisual
             return null;
         }
 
-        // bridge-style support bracket: one arc band instance at the anchor
-        // end of the first curve, hugging the tube's lower arc. The anchor is
-        // the junction point, so the bracket starts at the curve end and spans
-        // supportBracketThickness blocks along the tube axis. Positions are
-        // baked CPU-side in instance space (frame spines are origin-relative),
-        // so the visual is a pure translation and textures never shear.
+        // bridge bracket, arc band at the anchor end, CPU baked in instance space
         private void buildSupportBracket() {
             if (bracketInstance != null) {
                 bracketInstance.delete();
                 bracketInstance = null;
             }
+            if (!be.getSupportBracketVisible()) return; // deleted: air, no mesh
             if (frames == null || frames.isEmpty()) return;
             BlockPos anchorPos = be.getBlockPos();
             boolean atFirst = curve.bePositions.getFirst().equals(anchorPos);
@@ -1167,8 +1175,6 @@ public class WaterslideTubeVisual extends AbstractVisual
             BlockState bracketMaterial = be.supportMaterial(WaterslideSupportPart.BRACKET);
             TextureAtlasSprite sprite = WaterslideTubeMesh.supportSprite(bracketMaterial);
             if (sprite == null) return;
-            CreateWaterparked.INSTANCE.getLOGGER().debug(
-                "[SupportSprite] bracket mat={} sprite={}", bracketMaterial, sprite.contents().name());
             float segLen = WaterslideTubeMesh.arcLength(f);
             if (segLen < 0.01f) return;
             float thickness = ModClientConfig.INSTANCE.supportBracketThickness();
@@ -1192,8 +1198,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             s.setOrigin(Vec3.ZERO)
                 .light(light)
                 .setChanged();
-            // real cull bounds for the CPU-baked bracket shell (same fix as the
-            // beam: the fixed origin sphere was too small and culled it)
+            // real cull bounds for the baked bracket shell
             float rAvgBracket = Math.max(0.1f, (f.getPrevRadius() + f.getCurrRadius()) * 0.5f)
                 + ModClientConfig.INSTANCE.wallThickness() + ModClientConfig.INSTANCE.supportThickness() + 0.75f;
             s.setBounds(mid.subtract(origin), rAvgBracket)
@@ -1216,18 +1221,22 @@ public class WaterslideTubeVisual extends AbstractVisual
         }
 
         private SupportPick beamSupportPick(Vec3 rayStart, Vec3 rayDir, double currentBest) {
+            // hidden parts stay pickable: the wrench restores them
             BlockPos anchorPos = be.getBlockPos();
             boolean atFirst = curve.bePositions.getFirst().equals(anchorPos);
             WaterslideTubeMesh.TubeSegmentFrame f = anchorFrame(atFirst);
-            Vec3 spine = atFirst ? f.getPrevSpine() : f.getCurrSpine();
+            // frame midpoint = the bracket's thickness center (same as render)
+            Vec3 s0 = atFirst ? f.getPrevSpine() : f.getCurrSpine();
+            Vec3 s1 = atFirst ? f.getCurrSpine() : f.getPrevSpine();
+            Vec3 spine = s0.add(s1).scale(0.5);
             Vec3 tangent = atFirst ? f.getPrevTangent() : f.getCurrTangent();
             Vec3 lateral = atFirst ? f.getPrevLateral() : f.getCurrLateral();
             Vec3 faceUp = tangent.cross(lateral).normalize();
-
             float wallOuter = ModClientConfig.INSTANCE.wallThickness() - WaterslideTubeMesh.BASE_WALL;
-            float rAvg = Math.max(0.1f, (f.getPrevRadius() + f.getCurrRadius()) * 0.5f);
-            float rOut = rAvg + wallOuter + ModClientConfig.INSTANCE.supportThickness()
+            float rOut = Math.max(0.1f, (atFirst ? f.getPrevRadius() : f.getCurrRadius()))
+                + wallOuter + ModClientConfig.INSTANCE.supportThickness()
                 + WaterslideTubeMesh.SUPPORT_HUG_EPSILON;
+            // connection point = tube cross-section BOTTOM CENTER (270°)
             Vec3 bottomLocal = spine.subtract(faceUp.scale(rOut));
             Vec3 anchorCenterLocal = Vec3.atLowerCornerOf(anchorPos)
                 .add(0.5, 1.0, 0.5)
@@ -1235,18 +1244,64 @@ public class WaterslideTubeVisual extends AbstractVisual
             Vec3 axis = bottomLocal.subtract(anchorCenterLocal);
             double len = axis.length();
             if (len < 0.05) return null;
+            Vec3 axisN = axis.scale(1.0 / len);
 
-            Vec3 worldBase = worldSupportPoint(anchorCenterLocal);
-            Vec3 worldTop = worldSupportPoint(bottomLocal);
+            Vec3 ref = Math.abs(axisN.y) < 0.9
+                ? new Vec3(0.0, 1.0, 0.0)
+                : new Vec3(1.0, 0.0, 0.0);
+            Vec3 uv1 = ref.cross(axisN).normalize();
+            Vec3 uv2 = axisN.cross(uv1).normalize();
             float half = ModClientConfig.INSTANCE.supportBeamSize() * 0.5f;
-            double dist = raySegmentDistance(rayStart, rayDir, worldBase, worldTop);
-            if (dist > half + SUPPORT_PICK_MARGIN || dist >= currentBest) return null;
+            float topExt = 0f;
+            float botExt = 0f;
+            float[] tops = beamTopOffsets(
+                f, atFirst, rOut, (float) len, axisN,
+                anchorCenterLocal, uv1, uv2, half);
+            for (float t : tops) topExt = Math.max(topExt, t);
+            float[] bottoms = beamBottomOffsets(axisN, anchorCenterLocal, uv1, uv2, half);
+            for (float bt : bottoms) botExt = Math.max(botExt, bt);
 
-            AABB box = new AABB(worldBase, worldTop).inflate(half);
-            return new SupportPick(anchorPos, 0, dist, box);
+            Vec3 worldBase = worldSupportPoint(anchorCenterLocal.subtract(0.0, botExt, 0.0));
+            Vec3 worldTop = worldSupportPoint(
+                anchorCenterLocal.add(axisN.scale(len + topExt)));
+            // same pick target as the rendered instance bounds: a sphere around
+            // the beam body, large enough to cover both extensions
+            Vec3 worldCenter = worldSupportPoint(anchorCenterLocal.add(axis.scale(0.5)));
+            double pickRadius = len * 0.5 + 0.5 + topExt + botExt + 0.25;
+            double dist = raySphereDistance(rayStart, rayDir, worldCenter, pickRadius);
+            if (dist < 0.0 || dist >= currentBest) return null;
+            // tighten: the ray must also run close to the beam axis line, so
+            // sphere edge hits never steal the pointer from another part
+            double axisDist = raySegmentDistance(rayStart, rayDir, worldBase, worldTop);
+            if (axisDist > half + SUPPORT_PICK_MARGIN) return null;
+            double arcDist = raySegmentArcDistance(rayStart, rayDir, worldBase, worldTop);
+
+            // angled beam outline: the four long edges along the beam axis
+            // (bottom ring -> top ring), hugging the beam incl. its angle
+            Vec3 eb1 = uv1.scale(half);
+            Vec3 eb2 = uv2.scale(half);
+            List<Vec3> outline = new ArrayList<>(8);
+            Vec3[] baseCorners = new Vec3[]{
+                worldBase.add(eb1).add(eb2), worldBase.subtract(eb1).add(eb2),
+                worldBase.subtract(eb1).subtract(eb2), worldBase.add(eb1).subtract(eb2)
+            };
+            Vec3[] topCorners = new Vec3[]{
+                worldTop.add(eb1).add(eb2), worldTop.subtract(eb1).add(eb2),
+                worldTop.subtract(eb1).subtract(eb2), worldTop.add(eb1).subtract(eb2)
+            };
+            for (int k = 0; k < 4; k++) outline.add(baseCorners[k]);
+            for (int k = 0; k < 4; k++) outline.add(topCorners[k]);
+            // tight outline box: exact volume of the angled beam prism so the
+            // dye/delete style AABB hugs the beam instead of a loose inflate
+            AABB box = null;
+            for (Vec3 corner : outline) {
+                box = box == null ? new AABB(corner, corner) : box.minmax(new AABB(corner, corner));
+            }
+            return new SupportPick(anchorPos, 0, dist, box, outline, arcDist);
         }
 
         private SupportPick bracketSupportPick(Vec3 rayStart, Vec3 rayDir, double currentBest) {
+            // hidden parts stay pickable: the wrench restores them
             boolean hasShell = false;
             for (WaterslideSector s : config.getSectors()) {
                 if (s.getMaterial() != SectorMaterial.OPEN) {
@@ -1281,8 +1336,9 @@ public class WaterslideTubeVisual extends AbstractVisual
             float wallOuter = ModClientConfig.INSTANCE.wallThickness() - WaterslideTubeMesh.BASE_WALL;
             float radiusOffset = wallOuter + WaterslideTubeMesh.SUPPORT_HUG_EPSILON
                 + ModClientConfig.INSTANCE.supportThickness();
-            float arcLo = ModClientConfig.INSTANCE.supportArcLo();
-            float arcHi = ModClientConfig.INSTANCE.supportArcHi();
+            // snapped to the polygon grid, same as the rendered bracket shell
+            float arcLo = WaterslideTubeMesh.INSTANCE.bracketArcLo();
+            float arcHi = WaterslideTubeMesh.INSTANCE.bracketArcHi();
             double arcRadians = Math.toRadians(arcHi - arcLo);
             float rAvg = Math.max(0.1f, (f.getPrevRadius() + f.getCurrRadius()) * 0.5f);
 
@@ -1291,6 +1347,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             angleSteps = Math.min(angleSteps, 160);
 
             double best = currentBest;
+            double bestArc = Double.MAX_VALUE;
             AABB box = null;
             for (int ti = 0; ti <= tSteps; ti++) {
                 float t = tStart + (tEnd - tStart) * ti / tSteps;
@@ -1325,16 +1382,83 @@ public class WaterslideTubeVisual extends AbstractVisual
                     if (dist <= ModClientConfig.INSTANCE.supportThickness() + SUPPORT_PICK_MARGIN) {
                         if (box == null) box = new AABB(world, world);
                         else box = box.minmax(new AABB(world, world));
-                        if (dist < best) best = dist;
+                        if (dist < best) {
+                            best = dist;
+                            bestArc = world.subtract(rayStart).dot(rayDir);
+                        }
                     }
                 }
             }
 
             if (box == null || best >= currentBest) return null;
+            // shape following outline of the shell band outer boundary
+            List<Vec3> outline = bracketOutline(
+                c0, c1, c2, c3, f, tStart, tEnd,
+                arcLo, arcHi, rAvg + radiusOffset
+            );
             return new SupportPick(
                 anchorPos, 1, best,
-                box.inflate(ModClientConfig.INSTANCE.supportThickness())
+                box.inflate(ModClientConfig.INSTANCE.supportThickness()),
+                outline, bestArc
             );
+        }
+
+        private List<Vec3> bracketOutline(
+            Vec3 c0, Vec3 c1, Vec3 c2, Vec3 c3,
+            WaterslideTubeMesh.TubeSegmentFrame f,
+            float tStart, float tEnd,
+            float arcLo, float arcHi, float radius
+        ) {
+            // polygon fitted outline, sample the cross section grid angles
+            int crossN = WaterslideTubeMesh.INSTANCE.crossSections();
+            float degStep = 360f / crossN;
+            java.util.TreeSet<Integer> grid = new java.util.TreeSet<>();
+            for (int j = 0; j < crossN; j++) {
+                double a = 90.0 + j * degStep;
+                if (a >= arcLo - 0.5 && a <= arcHi + 0.5) grid.add((int) Math.round(a * 8.0));
+            }
+            List<Vec3> out = new ArrayList<>();
+            // forward arc at tStart
+            out.add(shellPoint(c0, c1, c2, c3, f, tStart, arcLo, radius));
+            for (int g : grid) {
+                out.add(shellPoint(c0, c1, c2, c3, f, tStart, g / 8f, radius));
+            }
+            out.add(shellPoint(c0, c1, c2, c3, f, tStart, arcHi, radius));
+            // backward arc at tEnd (reverse closes the loop)
+            out.add(shellPoint(c0, c1, c2, c3, f, tEnd, arcHi, radius));
+            for (int g : grid.descendingSet()) {
+                out.add(shellPoint(c0, c1, c2, c3, f, tEnd, g / 8f, radius));
+            }
+            out.add(shellPoint(c0, c1, c2, c3, f, tEnd, arcLo, radius));
+            return out;
+        }
+
+        private Vec3 shellPoint(
+            Vec3 c0, Vec3 c1, Vec3 c2, Vec3 c3,
+            WaterslideTubeMesh.TubeSegmentFrame f,
+            float t, float angleDeg, float radius
+        ) {
+            float omt = 1f - t;
+            Vec3 spine = c0.scale(omt * omt * omt)
+                .add(c1.scale(3.0 * omt * omt * t))
+                .add(c2.scale(3.0 * omt * t * t))
+                .add(c3.scale(t * t * t));
+            Vec3 tangent = c1.subtract(c0).scale(3.0 * omt * omt)
+                .add(c2.subtract(c1).scale(6.0 * omt * t))
+                .add(c3.subtract(c2).scale(3.0 * t * t));
+            tangent = tangent.lengthSqr() > 1e-12 ? tangent.normalize() : f.getPrevTangent();
+            Vec3 latLin = f.getPrevLateral().scale(1.0 - t).add(f.getCurrLateral().scale(t));
+            Vec3 lat = latLin.subtract(tangent.scale(latLin.dot(tangent)));
+            if (lat.lengthSqr() < 1e-8) lat = Math.abs(tangent.y) < 0.9
+                ? new Vec3(0.0, 1.0, 0.0)
+                : new Vec3(1.0, 0.0, 0.0);
+            lat = lat.normalize();
+            Vec3 faceUp = tangent.cross(lat).normalize();
+            double angle = Math.toRadians(angleDeg);
+            Vec3 local = spine
+                .add(lat.scale(Math.cos(angle) * radius))
+                .add(faceUp.scale(Math.sin(angle) * radius));
+            return worldSupportPoint(local);
         }
 
         private void buildWaterBand(float wallThickness, float mirror) {            if (water == null || !water.getExists()) return;
@@ -1347,8 +1471,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 ServerWaterSimulation.WaterSegment seg = segments.get(i);
                 ServerWaterSimulation.WaterSegment nxt = (i + 1 < segments.size())
                     ? segments.get(i + 1) : seg;
-                // per-segment speed = particle speed; keep the same writing as
-                // a normal interior water segment (no junction-specific tweaks)
+                // per segment particle speed, no junction tweaks
                 renderBand(seg.getArc(), seg.getSpeed(), nxt.getSpeed(),
                     wallThickness, mirror, scale, now);
                 // fill a segment the server simulation occasionally misses
@@ -1369,18 +1492,11 @@ public class WaterslideTubeVisual extends AbstractVisual
             boolean segForward = speed >= 0f;
             int frameIdx = frameIndexAtArc(arc);
             WaterslideTubeMesh.TubeSegmentFrame f = waterFrames.get(frameIdx);
-            // use this frame's own radius so the bed/surface fractions stay
-            // correct when the tube narrows along the curve (fixes the
-            // vanishing surface band at narrow mouths)
+            // this frame radius keeps the fractions correct on narrow tubes
             float frameRadius = Math.max(0.1f, (f.getPrevRadius() + f.getCurrRadius()) * 0.5f);
             float rInFrac = WATER_IN_FRAC;
             float rSurfFrac = WATER_SURF_FRAC;
-            // mirror the ring vertices for backward segments: combined with the
-            // reversed instance frame this keeps the same physical vertex order,
-            // so the cross-section U coordinate stays continuous at the seam.
-            // The shader uses a mirror-symmetric angle key (cos(2*ang)) and the
-            // mesh bakes boundaryFactor from -|u|, so the mirrored local angle
-            // no longer breaks jitter or amplitude continuity.
+            // mirrored ring vertices keep the U coordinate continuous at the seam
             List<Float> verts = WaterslideTubeMesh.INSTANCE.bandVertices(rInFrac, rSurfFrac, !segForward);
             int vertsHalf = verts.size() / 2;
             Model waterModel = WaterslideTubeMesh.INSTANCE.waterModelFor(
@@ -1403,9 +1519,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 pl = f.getCurrLateral().scale(-1.0); cl = f.getPrevLateral().scale(-1.0);
                 pr = f.getCurrRadius(); cr = f.getPrevRadius();
             }
-            // flowStart/flowEnd follow the render direction exactly like a
-            // normal interior segment (jitter amplitude/time blends to the next
-            // segment in the same curve; no junction special-casing)
+            // flow follows the render direction like a normal segment
             float k = WaterFlowSimulation.WATER_V_CYCLES_PER_BLOCK * scale;
             float ownFlow = Math.abs(speed) * k / 40f;
             float flow;
@@ -1427,18 +1541,12 @@ public class WaterslideTubeVisual extends AbstractVisual
             w.mirror = mirror;
             w.waterTileSpan = 1f;
             w.isWater = 1f;
-            // atlas-sampling packs (iterationRP) need the water uv pre-folded
-            // into the water sprite rect - but only while colorwheel is actually
-            // routing (without shaders our own fragment shader does the folding
-            // and a pre-folded uv would double-fold into garbage)
+            // pre fold the uv only while colorwheel routes the materials
             w.waterAtlasUV = IrisColorwheelCompat.iterationRpWaterMode() ? 1f : 0f;
             float[] wspr = WaterslideTubeMesh.INSTANCE.waterSpriteRect();
             w.spriteU0 = wspr[0]; w.spriteU1 = wspr[1];
             w.spriteV0 = wspr[2]; w.spriteV1 = wspr[3];
-            // accumulate the shader's own bezier arc length (not the flat 0.5
-            // chord grid) so consecutive instances land on exactly the same UV
-            // coordinate at their shared ring; reverse-flow instances start at
-            // the downstream end of their frame
+            // shader arc length accumulation, shared UV at the shared ring
             w.arcBase = segForward
                 ? waterPrefixArcs[frameIdx]
                 : waterTotalArc - waterPrefixArcs[frameIdx + 1];
@@ -1466,8 +1574,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             return idx;
         }
 
-        // a curve end is a true open end (tube mouth) only when the anchor
-        // carries a single curve; legCount()==2 means an interior junction
+        // true open end only when the anchor carries a single curve
         private boolean isOpenEnd(BlockPos anchor) {
             if (level.getBlockEntity(anchor) instanceof CoasterAnchorpointBlockEntity anchorBe) {
                 return anchorBe.legCount() == 1;
@@ -1484,8 +1591,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 streamNeedsRebuild = false;
                 return;
             }
-            // only throw from a true open end (legCount==1); a junction (legCount==2)
-            // must not spawn thrown water through the seam
+            // throw only from a true open end, junctions stay closed
             boolean streamForward = water.getFlowSign() < 0f;
             BlockPos outletAnchor = streamForward
                 ? curve.bePositions.getSecond()
@@ -1510,8 +1616,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             }
             List<StreamSegment> segs = streamSegments;
             if (segs == null) return;
-            // thrown-water cross-section must match the in-tube band at the
-            // outlet so the bed and surface rings line up (no hardcoded fraction)
+            // thrown cross section matches the band at the outlet
             if (waterFrames.isEmpty()) return;
             WaterslideTubeMesh.TubeSegmentFrame outletF = streamForward
                 ? waterFrames.get(waterFrames.size() - 1) : waterFrames.get(0);
@@ -1531,9 +1636,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             );
             WaterslideTubeInstance[] arr = new WaterslideTubeInstance[segs.size()];
             streamInstancer.createInstances(arr);
-            // last third of the stream fades out; expressed in the shader's arc
-            // coordinates (0.5 per segment) so the fade is continuous across
-            // vertices instead of a per-segment alpha step.
+            // last third fades out in shader arc coordinates
             int fadeStart = Math.max(0, arr.length - arr.length / 3);
             float fadeStartArc = fadeStart * 0.5f;
             float fadeEndArc = arr.length * 0.5f;
@@ -1544,8 +1647,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 float jitterBoost = 1f;
                 if (arr.length > 1 && i >= fadeStart) {
                     float tailT = (float) (i - fadeStart + 1) / (arr.length - fadeStart + 1);
-                    // ramp the jitter up sharply toward the tail so the water
-                    // breaks apart more violently as it thins out
+                    // jitter ramps up sharply toward the tail
                     jitterBoost = 1f + tailT * tailT * 8.0f;
                 }
                 Vec3 mid = s.prevSpine.add(s.currSpine).scale(0.5).add(origin);
@@ -1590,9 +1692,7 @@ public class WaterslideTubeVisual extends AbstractVisual
 
         void refreshStream() {
             if (streamWater == null && streamSegments == null) return;
-            // Rebuild only the instance-space positions from the FROZEN
-            // world-space stream polylines so the thrown water stays fixed in
-            // the main world while the sub-level pose keeps moving.
+            // rebuild instance space positions from the frozen polylines
             streamNeedsRebuild = true;
             rebuildInstances();
         }
@@ -1613,6 +1713,13 @@ public class WaterslideTubeVisual extends AbstractVisual
 
         private void rebuildInstances() {
             delete();
+            // secondary direction seen from the far anchor: build only the
+            // support here, never the tube wall/water/caps (the primary visual
+            // draws the pipe itself)
+            if (!renderTube) {
+                buildSupportBracket();
+                return;
+            }
             float wallThickness = ModClientConfig.INSTANCE.wallThickness();
             float mirror = this.mirror;
             if (translucent) {
@@ -1645,9 +1752,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                     instances.add(wall[i]);
                 }
             } else {
-                // one instancer + instance set per sector so every wall mesh
-                // carries a single sprite through the instance buffer (mesh
-                // attributes must stay clean for Colorwheel/packs)
+                // one instancer per sector, single sprite per mesh
                 for (WaterslideTubeMesh.SectorWall sw : models.getSectorWalls()) {
                     float[] spr = WaterslideTubeMesh.INSTANCE.spriteRectFor(sw.getBlockId());
                     if (spr == null) continue;
@@ -1672,8 +1777,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                         wall[i].isWater = 0f;
                         wall[i].spriteU0 = spr[0]; wall[i].spriteU1 = spr[1];
                         wall[i].spriteV0 = spr[2]; wall[i].spriteV1 = spr[3];
-                        // glass walls frame the axial edges next to the caps;
-                        // the V is folded in the vertex shader with the curve arc
+                        // glass walls frame the axial edges next to the caps
                         if (sw.getTranslucent()) {
                             wall[i].waterTileSpan = 2f;
                             wall[i].arcBase = wallPrefixArcs[i];
@@ -1684,9 +1788,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 }
             }
 
-            // caps only at true open ends (legCount==1); an interior anchor
-            // (legCount==2) is a junction between two curves and must stay open
-            // so no cross-section disc is drawn across the tube there
+            // caps only at true open ends, interior junctions stay open
             WaterslideTubeMesh.TubeSegmentFrame first = frames.get(0);
             WaterslideTubeMesh.TubeSegmentFrame last = frames.get(frames.size() - 1);
 

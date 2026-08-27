@@ -15,13 +15,18 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-// Draws the Waterparked banner inside the Simulated Coasters creative tab,
-// using the same 162x18 banner row layout as the Simulated library sections.
+// draw the Waterparked banner inside the Simulated Coasters tab
 @Mixin(CreativeModeInventoryScreen.class)
 public abstract class CreativeModeInventoryScreenWaterparkedBannerMixin {
 
     private static final ResourceLocation WATERPARKED_BANNER =
         ResourceLocation.fromNamespaceAndPath("create_waterparked", "banner");
+
+    private static final int BANNER_X = 8;
+    private static final int BANNER_TOP = 17;
+    private static final int BANNER_HEIGHT = 18;
+    private static final int BANNER_WIDTH = 162;
+    private static final int TAB_BOTTOM = 166;
 
     @Shadow
     private static CreativeModeTab selectedTab;
@@ -39,11 +44,11 @@ public abstract class CreativeModeInventoryScreenWaterparkedBannerMixin {
         int leftPos = screen.create_waterparked$getLeftPos();
         int topPos = screen.create_waterparked$getTopPos();
 
-        int x = leftPos + 8;
-        int y = topPos + 17 + bannerRow * 18;
-        if (y < topPos || y + 18 > topPos + 166) return;
+        int x = leftPos + BANNER_X;
+        int y = topPos + BANNER_TOP + bannerRow * BANNER_HEIGHT;
+        if (y < topPos || y + BANNER_HEIGHT > topPos + TAB_BOTTOM) return;
 
-        guiGraphics.blitSprite(WATERPARKED_BANNER, x, y, 162, 18);
+        guiGraphics.blitSprite(WATERPARKED_BANNER, x, y, BANNER_WIDTH, BANNER_HEIGHT);
 
         Minecraft mc = Minecraft.getInstance();
         Font font = mc.font;

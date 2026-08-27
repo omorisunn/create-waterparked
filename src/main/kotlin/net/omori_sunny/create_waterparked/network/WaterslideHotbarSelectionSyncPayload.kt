@@ -28,10 +28,10 @@ class WaterslideHotbarSelectionSyncPayload(
         ctx.enqueueWork {
             val player = ctx.player() ?: return@enqueueWork
             if (player !is LocalPlayer) return@enqueueWork
-            if (hotbarSlot !in 0..8) return@enqueueWork
+            if (hotbarSlot !in 0 until HOTBAR_SLOTS) return@enqueueWork
             val stack: ItemStack = player.inventory.getItem(hotbarSlot)
             if (stack.item !is WaterslideTrackItem) return@enqueueWork
-            if (anchorBlockPosLong == 0L) {
+            if (anchorBlockPosLong == NO_ANCHOR) {
                 WaterslideTrackPlacement.clearPendingConnection(stack)
             } else {
                 WaterslideTrackPlacement.setAnchorFirstSelection(stack, BlockPos.of(anchorBlockPosLong))
@@ -41,6 +41,9 @@ class WaterslideHotbarSelectionSyncPayload(
     }
 
     companion object {
+        private const val NO_ANCHOR = 0L
+        private const val HOTBAR_SLOTS = 9
+
         val TYPE: CustomPacketPayload.Type<WaterslideHotbarSelectionSyncPayload> = CustomPacketPayload.Type(
             ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "waterslide_hotbar_selection_sync")
         )
@@ -55,7 +58,7 @@ class WaterslideHotbarSelectionSyncPayload(
             )
 
         fun broadcast(player: ServerPlayer, hotbarSlot: Int, anchorLong: Long) {
-            if (hotbarSlot !in 0..8) return
+            if (hotbarSlot !in 0 until HOTBAR_SLOTS) return
             PacketDistributor.sendToPlayer(
                 player,
                 WaterslideHotbarSelectionSyncPayload(hotbarSlot, anchorLong)

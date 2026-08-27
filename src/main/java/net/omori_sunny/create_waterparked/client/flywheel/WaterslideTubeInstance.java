@@ -32,21 +32,13 @@ public class WaterslideTubeInstance extends ColoredLitOverlayInstance {
     public float jitterTime = 0.0f;
     public float tailFadeStart = 0.0f;
     public float tailFadeEnd = 0.0f;
-    // water texture repeat span in blocks along the flow. 1 = one tile per
-    // block (vanilla-ish); under shaderpacks a larger span softens per-block
-    // striping in the pack's water material/normal sampling.
+    // water texture repeat span in blocks, softens pack striping when larger
     public float waterTileSpan = 1.0f;
-    // sprite rect (u0,u1,v0,v1) of this mesh's texture; passed via the
-    // instance so the mesh vertex attributes stay clean for Colorwheel/packs
+    // sprite rect of this mesh texture, instances keep mesh attributes clean
     public float spriteU0 = 0f, spriteU1 = 1f, spriteV0 = 0f, spriteV1 = 1f;
-    // 1 = water mesh (drives water shading branch in the vertex shader)
+    // 1 = water mesh, drives the shading branch in the vertex shader
     public float isWater = 0f;
-    // 1 = the active shaderpack samples the block atlas directly from the vertex
-    // uv (iterationRP's gbuffers_water does textureGrad(tex, v_texCoord)), so the
-    // water uv must be exported already folded into the water sprite rect (tile
-    // coordinates would sample arbitrary atlas regions = loud garbage water).
-    // Only ever 1 while colorwheel is routing our materials (our fragment shader
-    // does not run then), so the non-pack look is untouched.
+    // 1 while colorwheel routes our materials, uv pre folded into the sprite rect
     public float waterAtlasUV = 0f;
 
     public WaterslideTubeInstance(InstanceType<? extends WaterslideTubeInstance> type, InstanceHandle handle) {

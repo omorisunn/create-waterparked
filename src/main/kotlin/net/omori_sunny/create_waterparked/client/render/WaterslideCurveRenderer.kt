@@ -48,6 +48,8 @@ import net.minecraft.world.phys.Vec3
 import net.neoforged.neoforge.client.model.data.ModelData
 import org.joml.Matrix4f
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -142,10 +144,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             endBatches(bufferSource)
         }
 
-        // Sub-level thrown water, drawn in main-world coordinates after every
-        // level/sub-level geometry has written depth. The Flywheel visual owns
-        // the prediction; this pass only triangulates the cached world polylines
-        // so the sheet is depth-tested against sub-levels in the correct order.
+        // sub level thrown water in world coords, after all geometry wrote depth
         @JvmStatic
         fun renderWorldStreams(
             poseStack: PoseStack,
@@ -160,10 +159,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             val sprite = mc.getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
                 .apply(ResourceLocation.withDefaultNamespace("block/water_still"))
             val consumer = bufferSource.getBuffer(TUBE_STREAM_TRANSLUCENT)
-            // AFTER_LEVEL hands us an identity PoseStack and a camera-rotation
-            // matrix (no translation). Convert every world point to eye space
-            // ourselves, exactly like the editor outlines do; then the vertex
-            // pose stays identity.
+            // convert every world point to eye space, the vertex pose stays identity
             val pose = poseStack.last()
             val flow = -AnimationTickHolder.getRenderTime(level) * STREAM_FLOW_SPEED
             for ((outer, inner) in sheets) {
@@ -846,7 +842,9 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             val wallExtra = ModClientConfig.wallThickness() - WALL_THICKNESS
             val avgRadius = (rad0 + rad1) / 2f + wallExtra
             val arcLength = placed.sectorWidthRadians() * avgRadius
-            val targetW = arcLength * PIXELS_PER_BLOCK
+            // per corner arc px, tapers never stretch the outer surface
+            val targetW0 = placed.sectorWidthRadians() * (rad0 + wallExtra) * PIXELS_PER_BLOCK
+            val targetW1 = placed.sectorWidthRadians() * (rad1 + wallExtra) * PIXELS_PER_BLOCK
             val targetH = WaterslideTubeMesh.bezierArcLength(center0, center1, tan0, tan1) * PIXELS_PER_BLOCK
             val m = max(1, Math.ceil((targetH / TILE_SUBDIVISION_PX).toDouble()).toInt())
             val pose = poseStack.last()
@@ -885,10 +883,10 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                         val p11 = tubePoint(center1, lat1, up1, rad1 + wallExtra, deg1)
                         val p01 = tubePoint(center0, lat0, up0, rad0 + wallExtra, deg1)
 
-                        val uv00 = nineSliceUv(u0, v0, targetW, targetH, texW, texH, border)
-                        val uv10 = nineSliceUv(u0, v1, targetW, targetH, texW, texH, border)
-                        val uv11 = nineSliceUv(u1, v1, targetW, targetH, texW, texH, border)
-                        val uv01 = nineSliceUv(u1, v0, targetW, targetH, texW, texH, border)
+                        val uv00 = nineSliceUv(u0, v0, targetW0, targetH, texW, texH, border)
+                        val uv10 = nineSliceUv(u0, v1, targetW1, targetH, texW, texH, border)
+                        val uv11 = nineSliceUv(u1, v1, targetW1, targetH, texW, texH, border)
+                        val uv01 = nineSliceUv(u1, v0, targetW0, targetH, texW, texH, border)
 
                         val n00 = radialNormal(p00, center0)
                         val n01 = radialNormal(p01, center0)
@@ -1369,6 +1367,8 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             val samples = outlineSamples(level, primary, r0, r1)
             if (samples.size < 2) return
 
+            // the outline hugs the real tube wall and cross section polygon count
+            val crossN = WaterslideTubeMesh.crossSections()
             val lines = bufferSource.getBuffer(RenderType.lines())
             poseStack.pushPose()
             poseStack.translate(-camera.x, -camera.y, -camera.z)
@@ -1376,9 +1376,9 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             for (i in 1 until samples.size) {
                 val prev = samples[i - 1]
                 val curr = samples[i]
-                for (c in 0 until 4) {
-                    val (u0, v0) = outlineCorner(c, prev.half)
-                    val (u1, v1) = outlineCorner(c, curr.half)
+                for (c in 0 until crossN) {
+                    val (u0, v0) = outlineCorner(c, prev.half, crossN)
+                    val (u1, v1) = outlineCorner(c, curr.half, crossN)
                     outlineSegment(
                         lines, pose,
                         prev.center.add(prev.lat.scale(u0.toDouble())).add(prev.up.scale(v0.toDouble())),
@@ -1387,8 +1387,8 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                     )
                 }
             }
-            outlineEndRing(lines, pose, samples.first(), r, g, b, a)
-            outlineEndRing(lines, pose, samples.last(), r, g, b, a)
+            outlineEndRing(lines, pose, samples.first(), crossN, r, g, b, a)
+            outlineEndRing(lines, pose, samples.last(), crossN, r, g, b, a)
             poseStack.popPose()
         }
 
@@ -1435,7 +1435,9 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                     up = up.scale(-1.0)
                 }
                 prevLat = lat
-                out += OutlineSample(center, lat, up, Mth.lerp(t, r0, r1) + 0.45f)
+                // outer wall surface plus a hairline pad against z fighting
+                val outer = Mth.lerp(t, r0, r1) + ModClientConfig.wallThickness() - 0.1f + 0.05f
+                out += OutlineSample(center, lat, up, outer)
             }
 
             val ext0 = openEndExtensionBlocks(level, bc, atFirst = true)
@@ -1455,25 +1457,25 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             return out
         }
 
-        private fun outlineCorner(corner: Int, half: Float): Pair<Float, Float> = when (corner) {
-            0 -> -half to -half
-            1 -> half to -half
-            2 -> half to half
-            else -> -half to half
+        // polygon corner on the cross section, same grid the wall mesh uses
+        private fun outlineCorner(corner: Int, half: Float, crossN: Int): Pair<Float, Float> {
+            val a = Math.toRadians(90.0 + corner * 360.0 / crossN)
+            return cos(a).toFloat() * half to sin(a).toFloat() * half
         }
 
         private fun outlineEndRing(
             lines: VertexConsumer,
             pose: PoseStack.Pose,
             sample: OutlineSample,
+            crossN: Int,
             r: Float,
             g: Float,
             b: Float,
             a: Float
         ) {
-            for (c in 0 until 4) {
-                val (u0, v0) = outlineCorner(c, sample.half)
-                val (u1, v1) = outlineCorner((c + 1) % 4, sample.half)
+            for (c in 0 until crossN) {
+                val (u0, v0) = outlineCorner(c, sample.half, crossN)
+                val (u1, v1) = outlineCorner((c + 1) % crossN, sample.half, crossN)
                 outlineSegment(
                     lines, pose,
                     sample.center.add(sample.lat.scale(u0.toDouble())).add(sample.up.scale(v0.toDouble())),

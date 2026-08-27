@@ -152,7 +152,7 @@ object ModClientConfig {
 
     fun waterSimDebug(): Boolean = WATER_SIM_DEBUG.get()
 
-    /** Lower arc bound (degrees) of the support shell, centered on 270° (bottom). */
+    // lower arc bound of the support shell, centered on the bottom
     fun supportArcLo(): Float {
         val f = SUPPORT_FRACTION.get().toFloat().coerceIn(0.1f, 0.5f)
         return 270f - 180f * f / 2f

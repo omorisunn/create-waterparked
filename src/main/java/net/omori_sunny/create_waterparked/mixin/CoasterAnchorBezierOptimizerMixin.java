@@ -30,7 +30,7 @@ public abstract class CoasterAnchorBezierOptimizerMixin {
         double h1,
         CallbackInfoReturnable<Boolean> cir
     ) {
-        if (ModConfig.INSTANCE.disableSlideCurveAngleLimit() && WaterslideTrackMaterials.isWaterslide(bc)) {
+        if (slideAngleLimitOff(bc)) {
             cir.setReturnValue(true);
         }
     }
@@ -44,7 +44,7 @@ public abstract class CoasterAnchorBezierOptimizerMixin {
         BezierConnection bc,
         CallbackInfoReturnable<Boolean> cir
     ) {
-        if (ModConfig.INSTANCE.disableSlideCurveAngleLimit() && WaterslideTrackMaterials.isWaterslide(bc)) {
+        if (slideAngleLimitOff(bc)) {
             cir.setReturnValue(true);
         }
     }
@@ -56,9 +56,13 @@ public abstract class CoasterAnchorBezierOptimizerMixin {
         cancellable = true
     )
     private static void waterslide$alwaysValid(BezierConnection bc, CallbackInfoReturnable<Boolean> cir) {
-        if (ModConfig.INSTANCE.disableSlideCurveAngleLimit() && WaterslideTrackMaterials.isWaterslide(bc)) {
+        if (slideAngleLimitOff(bc)) {
             cir.setReturnValue(true);
         }
+    }
+
+    private static boolean slideAngleLimitOff(BezierConnection bc) {
+        return ModConfig.INSTANCE.disableSlideCurveAngleLimit() && WaterslideTrackMaterials.isWaterslide(bc);
     }
 
     @WrapOperation(

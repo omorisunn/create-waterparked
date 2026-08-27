@@ -9,9 +9,7 @@ import net.neoforged.neoforge.common.NeoForge
 import net.neoforged.neoforge.event.RegisterCommandsEvent
 import java.util.function.Consumer
 
-// /waterparked refresh - recompute the physics water fields for every loaded
-// watered slide (main world + Sable sub-levels + mounted contraption slides)
-// and resend them to all players.
+// recompute water fields for all loaded slides and resend them
 object WaterparkedCommands {
 
     @Volatile

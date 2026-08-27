@@ -1,5 +1,7 @@
 package net.omori_sunny.create_waterparked.network
 
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
+import dev.ryanhcode.sable.sublevel.ServerSubLevel
 import dev.silvergold.simulatedcoasters.track.CoasterTrackGauge
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
@@ -9,6 +11,7 @@ import net.minecraft.network.codec.ByteBufCodecs
 import net.minecraft.network.codec.StreamCodec
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import net.minecraft.resources.ResourceLocation
+import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
 import net.neoforged.neoforge.network.handling.IPayloadContext
 
@@ -22,27 +25,28 @@ class WaterslideRadiusEditPayload(val anchorPos: BlockPos, val radius: Float) : 
             val player = ctx.player() ?: return@enqueueWork
             if (player !is ServerPlayer) return@enqueueWork
             val level = player.serverLevel()
-            var be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
-            var globalPos = anchorPos
-            if (be == null) {
-                val container = dev.ryanhcode.sable.api.sublevel.SubLevelContainer.getContainer(level)
-                container?.allSubLevels?.forEach { raw ->
-                    val sub = raw as? dev.ryanhcode.sable.sublevel.ServerSubLevel ?: return@forEach
-                    val candidate = anchorPos.offset(sub.getPlot().getCenterBlock())
-                    val found = level.getBlockEntity(candidate) as? WaterslideAnchorBlockEntity
-                    if (found != null) {
-                        be = found
-                        globalPos = candidate
-                    }
-                }
-            }
-            if (be == null) return@enqueueWork
+            val anchor = resolveAnchor(level, anchorPos) ?: return@enqueueWork
             val range = CoasterTrackGauge.maxCoasterCurvePacketInteractionRangeBlocks().toDouble()
-            if (!player.canInteractWithBlock(globalPos, range)) {
-                return@enqueueWork
-            }
-            be.setRadius(radius)
+            if (!player.canInteractWithBlock(anchor.globalPos, range)) return@enqueueWork
+            anchor.be.setRadius(radius)
         }
+    }
+
+    private data class AnchorTarget(val be: WaterslideAnchorBlockEntity, val globalPos: BlockPos)
+
+    private fun resolveAnchor(level: ServerLevel, pos: BlockPos): AnchorTarget? {
+        (level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity)?.let {
+            return AnchorTarget(it, pos)
+        }
+        val subLevels = SubLevelContainer.getContainer(level)?.allSubLevels ?: return null
+        var last: AnchorTarget? = null
+        for (raw in subLevels) {
+            val sub = raw as? ServerSubLevel ?: continue
+            val candidate = pos.offset(sub.getPlot().getCenterBlock())
+            val be = level.getBlockEntity(candidate) as? WaterslideAnchorBlockEntity ?: continue
+            last = AnchorTarget(be, candidate)
+        }
+        return last
     }
 
     companion object {

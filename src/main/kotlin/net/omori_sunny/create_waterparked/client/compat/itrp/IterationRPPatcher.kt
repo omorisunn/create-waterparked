@@ -80,10 +80,8 @@ object IterationRPPatcher {
                 overlay[rel] = bytes
             }
 
-            // Rebuild whenever the embedded patch files differ from the resources:
-            // a plain existence check left stale patched packs (older shader logic)
-            // in place forever, so patch changes silently never reached the game.
-            if (Files.exists(out) && patchContentMatches(out, overlay)) return // up-to-date
+            // rebuild whenever embedded patch files differ from the resources
+            if (Files.exists(out) && patchContentMatches(out, overlay)) return // up to date
 
             if (Files.isDirectory(base)) patchFolder(base, out, overlay)
             else patchZip(base, out, overlay)
@@ -115,8 +113,7 @@ object IterationRPPatcher {
         return stem + SUFFIX + if (zip) ".zip" else ""
     }
 
-    /** True when every patched entry in the existing output pack equals the
-     *  current patch resources; any mismatch (or read failure) means rebuild. */
+    // true when every patched entry equals the current patch resources
     private fun patchContentMatches(out: Path, overlay: Map<String, ByteArray>): Boolean {
         return try {
             if (Files.isDirectory(out)) {
@@ -161,9 +158,7 @@ object IterationRPPatcher {
     }
 
     private fun patchZip(base: Path, out: Path, overlay: Map<String, ByteArray>) {
-        // Write to a temp name and atomically rename: Iris may validate the pack
-        // while we are still copying the ~22MB zip, and reading a half-written
-        // file makes the whole pack "not valid" (shaders silently disabled).
+        // write to a temp name and rename atomically, Iris validates the pack
         val tmp = out.resolveSibling(out.fileName.toString() + ".tmp")
         try {
             ZipFile(base.toFile()).use { zin ->
@@ -182,10 +177,7 @@ object IterationRPPatcher {
                     }
                 }
             }
-            // On Windows, REPLACE_EXISTING + ATOMIC_MOVE onto an existing file
-            // throws AccessDenied when the target is transiently locked (Defender
-            // scanning the 22MB zip, a stale handle). Delete the old pack first
-            // (with a short retry), then rename atomically onto fresh ground.
+            // delete the old pack first on Windows, then rename onto fresh ground
             replaceWithRetry(tmp, out)
         } catch (t: Throwable) {
             runCatching { Files.deleteIfExists(tmp) }

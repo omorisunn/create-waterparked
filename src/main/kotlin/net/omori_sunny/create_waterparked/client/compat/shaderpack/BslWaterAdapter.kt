@@ -21,24 +21,14 @@ object BslWaterAdapter : ShaderpackWaterAdapter {
     override fun matches(packName: String): Boolean =
         packName.contains("BSL", ignoreCase = true)
 
-    /**
-     * Re-inject water classification into a clrwl vertex shader. Returns the
-     * rewritten source, or null when this source must NOT be touched (it is a
-     * fragment shader, lacks the entity attribute, already patched, or the
-     * pack computes mat itself).
-     */
+    // re inject water classification into a clrwl vertex shader
     override fun injectWaterMat(source: String): String? {
-        // vertex shaders only (fragment shaders read mat as an input; the
-        // pack's own water branches already consume it)
+        // vertex shaders only
         if (!source.contains("gl_Position")) return null
         if (!source.contains("clrwl_vertexEntity")) return null
         if (!source.contains("void main")) return null
         if (source.contains("WATERPARKED water classification")) return null
-        // If the pack computes mat itself (e.g. Complementary's
-        // "mat = int(mc_Entity.x + 0.5)"), injecting our classification would
-        // conflict with its declaration and clobber its own values. Only
-        // packs whose mat is left unassigned by the Colorwheel transform
-        // (BSL-style) need the injection: declared but never assigned.
+        // skip packs that compute mat themselves, injection would clash
         if (source.contains("mat =")) return null
         if (!source.matches(Regex("(?s).*\\bfloat\\s+mat\\b.*"))) return null
 
@@ -50,8 +40,7 @@ object BslWaterAdapter : ShaderpackWaterAdapter {
         val vm = Regex("#version\\s+(\\d+)").find(source)
         val coreProfile = vm != null && vm.groupValues[1].toIntOrNull()?.let { it >= 130 } == true
         val decl = if (hasMatDecl) "" else if (coreProfile) "out float mat;\n" else "varying float mat;\n"
-        // float-only comparison (no int() cast): compiles on every GLSL
-        // version, including legacy #version 110 packs.
+        // float only comparison, compiles on every GLSL version
         val code = "\t// WATERPARKED water classification\n" +
             "\tmat = 0.0;\n" +
             "\tif (clrwl_vertexEntity.x > 19950.0 && clrwl_vertexEntity.x < 20050.0) mat = 1.0;\n"

@@ -12,7 +12,7 @@ import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.phys.Vec3
 import net.neoforged.neoforge.network.handling.IPayloadContext
 
-// client -> server debug toggle
+// client to server debug toggle
 class WaterslideDebugRequestPayload(val enable: Boolean) : CustomPacketPayload {
 
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
@@ -36,7 +36,7 @@ class WaterslideDebugRequestPayload(val enable: Boolean) : CustomPacketPayload {
     }
 }
 
-// server -> client trajectory polylines for the debug overlay
+// server to client trajectory polylines for the debug overlay
 class WaterslideDebugTrajectoryPayload(val polylines: List<List<Vec3>>) : CustomPacketPayload {
 
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
@@ -53,24 +53,29 @@ class WaterslideDebugTrajectoryPayload(val polylines: List<List<Vec3>>) : Custom
                 ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "water_debug_trajectory")
             )
 
+        private const val COORD_RANGE = 4096.0
+        private const val COORD_SCALE = 16.0
+        private const val MAX_POLYLINE_POINTS = 4000
+        private const val MAX_POLYLINES = 64
+
         private val POLYLINE_CODEC: StreamCodec<RegistryFriendlyByteBuf, List<Vec3>> =
             StreamCodec.of(
                 { buf, pts ->
                     buf.writeVarInt(pts.size)
                     for (p in pts) {
-                        buf.writeShort((p.x.coerceIn(-4096.0, 4096.0) * 16.0).toInt())
-                        buf.writeShort((p.y.coerceIn(-4096.0, 4096.0) * 16.0).toInt())
-                        buf.writeShort((p.z.coerceIn(-4096.0, 4096.0) * 16.0).toInt())
+                        buf.writeShort((p.x.coerceIn(-COORD_RANGE, COORD_RANGE) * COORD_SCALE).toInt())
+                        buf.writeShort((p.y.coerceIn(-COORD_RANGE, COORD_RANGE) * COORD_SCALE).toInt())
+                        buf.writeShort((p.z.coerceIn(-COORD_RANGE, COORD_RANGE) * COORD_SCALE).toInt())
                     }
                 },
                 { buf ->
-                    val n = buf.readVarInt().coerceIn(0, 4000)
+                    val n = buf.readVarInt().coerceIn(0, MAX_POLYLINE_POINTS)
                     val out = ArrayList<Vec3>(n)
                     repeat(n) {
                         out += Vec3(
-                            buf.readShort() / 16.0,
-                            buf.readShort() / 16.0,
-                            buf.readShort() / 16.0
+                            buf.readShort() / COORD_SCALE,
+                            buf.readShort() / COORD_SCALE,
+                            buf.readShort() / COORD_SCALE
                         )
                     }
                     out
@@ -79,7 +84,7 @@ class WaterslideDebugTrajectoryPayload(val polylines: List<List<Vec3>>) : Custom
 
         val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, WaterslideDebugTrajectoryPayload> =
             StreamCodec.composite(
-                POLYLINE_CODEC.apply(ByteBufCodecs.list(64)), WaterslideDebugTrajectoryPayload::polylines,
+                POLYLINE_CODEC.apply(ByteBufCodecs.list(MAX_POLYLINES)), WaterslideDebugTrajectoryPayload::polylines,
                 ::WaterslideDebugTrajectoryPayload
             )
     }

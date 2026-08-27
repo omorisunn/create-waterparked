@@ -31,7 +31,7 @@ import kotlin.math.min
 import kotlin.math.roundToLong
 import kotlin.math.sin
 
-// Client-side water data warehouse fed by the server simulation.
+// client water data warehouse fed by the server simulation
 @OnlyIn(Dist.CLIENT)
 object WaterFlowSimulation {
 
@@ -140,10 +140,7 @@ object WaterFlowSimulation {
         return null
     }
 
-    // Client-side contact check against the RENDERED water data: true when the
-    // position is inside the tube cylinder of a curve that has a synced water
-    // field. This matches what the player sees (the flywheel water band),
-    // independent of the server trajectory's per-frame watered flag.
+    // contact check against the rendered water data, matches the visible band
     @JvmStatic
     fun isInsideWateredTube(level: Level, pos: Vec3, margin: Double = 0.6): Boolean {
         val seen = HashSet<Pair<Long, Long>>()
@@ -172,8 +169,7 @@ object WaterFlowSimulation {
         return false
     }
 
-    // all cached thrown-stream polylines (world coordinates), exposed for the
-    // player splash spawner so flying through the thrown water also counts
+    // cached thrown stream polylines for the splash spawner
     @JvmStatic
     fun hasAnyWaterFields(): Boolean = fields.values.any { map -> map.values.any { it.exists } }
 
@@ -189,15 +185,12 @@ object WaterFlowSimulation {
 
     data class StreamContact(val pos: Vec3, val velocity: Vec3)
 
-    // Velocity of the thrown stream at the closest polyline point to pos.
-    // Stream polylines are traced with fixed 0.05s steps, so finite
-    // differences recover the true ballistic velocity at each point.
+    // stream velocity at the closest polyline point, finite difference of the 0.05s steps
     @JvmStatic
     fun streamVelocityAt(level: Level, pos: Vec3, radius: Double): Vec3? =
         streamContactAt(level, pos, radius)?.velocity
 
-    // Closest point on a thrown stream polyline to pos, plus that point's
-    // water velocity. Returns null when no polyline is within radius.
+    // closest point on a thrown stream polyline within radius, plus its velocity
     @JvmStatic
     fun streamContactAt(level: Level, pos: Vec3, radius: Double): StreamContact? {
         val maxDistSq = radius * radius
@@ -233,10 +226,7 @@ object WaterFlowSimulation {
         return poly[i1].subtract(poly[i0]).scale(1.0 / span)
     }
 
-    // Collision-box version of the contact checks: use the player's actual
-    // AABB instead of a single probe point. Distance is measured to the
-    // closest point of the box (clamped sphere test), which is exact for a
-    // box-vs-tube check and catches tubes passing through the box centre.
+    // collision box contact check, clamped sphere distance to the tube
     @JvmStatic
     fun intersectsWateredTubeBox(level: Level, box: AABB, space: SlideSpace? = null): Boolean {
         val seen = HashSet<Pair<Long, Long>>()
@@ -296,8 +286,7 @@ object WaterFlowSimulation {
         return false
     }
 
-    // diagnostic: distance from pos to the closest watered curve surface
-    // (negative means inside); used to debug Sable coordinate mismatches
+    // diagnostic distance to the closest watered curve surface, negative inside
     @JvmStatic
     fun debugNearestWateredTube(level: Level, pos: Vec3): Double {
         var best = Double.MAX_VALUE
@@ -341,7 +330,7 @@ object WaterFlowSimulation {
     private fun edgeKey(a: Long, b: Long): Pair<Long, Long> =
         if (a <= b) a to b else b to a
 
-    // ---- exit stream prediction (client side, visual only) ----
+    // exit stream prediction, client side visual only
 
     private class SegGrid {
         private val buckets = HashMap<Long, MutableList<TubeSeg>>()
@@ -433,9 +422,7 @@ object WaterFlowSimulation {
             if (own.contains(hashVec(s.a)) || own.contains(hashVec(s.b))) continue
             grid.add(s)
         }
-        // fixed angular grid (same spacing as the in-tube band) so the thrown
-        // sheet lines up ring-to-ring at the mouth; the ragged cut-off comes from
-        // each ray's independent pipe/ground collision, not from random angles
+        // fixed angular grid so the sheet lines up ring to ring at the mouth
         val count = 16
         val outer = ArrayList<List<Vec3>>(count)
         val inner = ArrayList<List<Vec3>>(count)
@@ -450,8 +437,7 @@ object WaterFlowSimulation {
             outer += traceStream(level, outerPos, exitVel, grid, gravity)
             inner += traceStream(level, innerPos, exitVel, grid, gravity)
         }
-        // keep every ray's full length (no shortest-ray truncation); the end
-        // fades out instead of cutting mid-air
+        // keep every ray full length, the end fades instead of cutting
         if (outer.any { it.size >= 2 } && inner.any { it.size >= 2 }) {
             val result = outer to inner
             streamCache[cacheKey] = result
@@ -467,7 +453,7 @@ object WaterFlowSimulation {
         grid: SegGrid,
         gravity: Vec3
     ): List<Vec3> {
-        // strict physics: dt in seconds, v in blocks/s, gravity in blocks/s^2
+        // strict physics, seconds, blocks per second
         val dt = 0.05
         val poly = ArrayList<Vec3>()
         var p = pos
@@ -477,12 +463,7 @@ object WaterFlowSimulation {
         for (step in 0 until 240) {
             val v0 = v
             val delta = v0.scale(dt)
-            // Fast streams move 1-2 blocks per fixed step, which used to
-            // tunnel straight through other slides between two point samples.
-            // Sweep the same ballistic step in <=0.25-block sub-samples and
-            // stop at the first collision so the sheet is actually cut by
-            // every tube it touches. The p/v updates below are byte-for-byte
-            // the original integration; only the collision probe is denser.
+            // sweep the ballistic step in sub samples so fast streams cannot tunnel
             val subSteps = max(1, Math.ceil(delta.length() / 0.25).toInt())
             var hitFrac: Double? = null
             for (j in 1..subSteps) {
@@ -495,8 +476,7 @@ object WaterFlowSimulation {
                 }
                 val hitSeg = grid.hit(q)
                 if (hitSeg != null && streamHitsWall(level, hitSeg, q)) {
-                    // keep flying a short stretch past the pipe before cutting,
-                    // so the water doesn't vanish right at the flywheel/BE surface
+                    // keep flying a short stretch past the pipe before cutting
                     grace++
                     if (grace >= 8) {
                         hitFrac = f
@@ -515,9 +495,7 @@ object WaterFlowSimulation {
         return poly
     }
 
-    // A thrown-water ray only cuts when the contact lands on a BLOCK sector
-    // wall. Entering through an OPEN sector (the blank opening of the slide)
-    // must keep flying instead of cutting the sheet.
+    // a thrown ray cuts only on a block sector wall, open sectors keep flying
     private fun streamHitsWall(level: Level, seg: TubeSeg, p: Vec3): Boolean {
         val a = BlockPos.of(seg.edge.first)
         val b = BlockPos.of(seg.edge.second)
@@ -554,9 +532,7 @@ object WaterFlowSimulation {
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
                 val r1 = SlideCurveGeometry.radiusAt(level, b)
-                // reuse the exact same sampling as the flywheel renderer
-                // (interpolated radius + open-end extensions) so the collision
-                // surface equals the visible tube, not a fat collision box
+                // same sampling as the flywheel renderer, collision equals the visible tube
                 val segmentSpace = SlideSpace.ofLevelAndSub(level, be.blockPos)
                 val frames = WaterslideTubeMesh.sampleSegments(level, bc, r0, r1, Vec3.ZERO)
                 val radiusScale = radiusScaleBetween(level, segmentSpace, sourceSpace)
@@ -581,10 +557,7 @@ object WaterFlowSimulation {
         return out
     }
 
-    // Collision grid segments are expressed in the SOURCE slide's coordinate
-    // space. Tubes belonging to another Sable space are mapped through their
-    // poses, so a sub-level mouth can cut a main-world thrown sheet and vice
-    // versa.
+    // grid segments live in the source space, other spaces map through their poses
     private fun mapToSpace(level: Level, local: Vec3, from: SlideSpace, to: SlideSpace): Vec3 {
         if (from == to) return local
         val world = spaceToWorld(level, from, local)

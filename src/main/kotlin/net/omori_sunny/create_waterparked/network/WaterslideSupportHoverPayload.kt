@@ -12,10 +12,7 @@ import net.minecraft.resources.ResourceLocation
 import net.minecraft.server.level.ServerPlayer
 import net.neoforged.neoforge.network.handling.IPayloadContext
 
-// Client -> server: which support part is under the player's cursor. The hover
-// state lets the server-side RightClickBlock event cancel the vanilla block
-// interaction behind the Flywheel support geometry. The material operation
-// itself travels in WaterslideSupportApplyPayload.
+// client to server hover state for the support part under the cursor
 class WaterslideSupportHoverPayload(val anchor: BlockPos, val partId: Byte) : CustomPacketPayload {
 
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE

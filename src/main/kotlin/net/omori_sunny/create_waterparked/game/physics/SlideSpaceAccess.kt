@@ -10,9 +10,7 @@ import net.minecraft.world.level.block.state.BlockState
 import net.minecraft.world.phys.Vec3
 import org.joml.Vector3d
 
-// Block/entity access plus coordinate conversion for the space a slide
-// trajectory is computed in. Main space is the ServerLevel itself; sub-level
-// space is a ServerSubLevel with its embedded plot accessor and logical pose.
+// block and coordinate access for main or sub level slide space
 interface SlideSpaceAccess {
     val level: ServerLevel
     val space: SlideSpace
@@ -46,10 +44,7 @@ class SubSlideSpaceAccess(
     override val space: SlideSpace = SlideSpace.SubLevel(sub.uniqueId)
     private val gravity: Vec3 by lazy { worldNormalToLocal(Vec3(0.0, -32.0, 0.0)) }
 
-    // Sable stores sub-level blocks at plot-global positions and its logical
-    // pose maps those plot-global coordinates directly into world space, so
-    // this accessor treats plot-global as its local space with no extra
-    // plot-center offset.
+    // sub level blocks sit at plot global positions, treated as local
     override fun getBlockEntity(pos: BlockPos): BlockEntity? = level.getBlockEntity(pos)
     override fun getBlockState(pos: BlockPos): BlockState = level.getBlockState(pos)
 

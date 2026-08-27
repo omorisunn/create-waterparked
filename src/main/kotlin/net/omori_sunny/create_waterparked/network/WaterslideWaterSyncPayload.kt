@@ -11,7 +11,7 @@ import net.minecraft.world.phys.Vec3
 import net.neoforged.neoforge.network.handling.IPayloadContext
 import java.util.UUID
 
-// server -> client water field sync for one slide space
+// server to client water field sync for one slide space
 class WaterslideWaterSyncPayload(
     val entries: List<Entry>,
     val subLevelId: UUID? = null,
@@ -34,7 +34,7 @@ class WaterslideWaterSyncPayload(
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
 
     fun handleOnClient(ctx: IPayloadContext) {
-        net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
+        CreateWaterparked.LOGGER.info(
             "Water payload arrived entries={}", entries.size
         )
         ctx.enqueueWork {
@@ -48,18 +48,18 @@ class WaterslideWaterSyncPayload(
                 ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "water_sync")
             )
 
-        private fun <T> nullableVec3(
-            codec: StreamCodec<RegistryFriendlyByteBuf, T>
+        private const val MAX_SEGMENTS_PER_ENTRY = 4096
+        private const val MAX_ENTRIES = 256
+
+        private fun <T> nullableCodec(
+            write: (RegistryFriendlyByteBuf, T) -> Unit,
+            read: (RegistryFriendlyByteBuf) -> T
         ): StreamCodec<RegistryFriendlyByteBuf, T?> = StreamCodec.of(
             { buf, v ->
-                if (v != null) {
-                    buf.writeBoolean(true)
-                    codec.encode(buf, v)
-                } else {
-                    buf.writeBoolean(false)
-                }
+                buf.writeBoolean(v != null)
+                if (v != null) write(buf, v)
             },
-            { buf -> if (buf.readBoolean()) codec.decode(buf) else null }
+            { buf -> if (buf.readBoolean()) read(buf) else null }
         )
 
         private val VEC3_CODEC: StreamCodec<RegistryFriendlyByteBuf, Vec3> = StreamCodec.of(
@@ -81,31 +81,21 @@ class WaterslideWaterSyncPayload(
         private val ENTRY_CODEC: StreamCodec<RegistryFriendlyByteBuf, Entry> = StreamCodec.composite(
             ByteBufCodecs.VAR_LONG, Entry::edgeA,
             ByteBufCodecs.VAR_LONG, Entry::edgeB,
-            SEGMENT_CODEC.apply(ByteBufCodecs.list(4096)), Entry::segments,
-            nullableVec3(VEC3_CODEC), Entry::exitPos,
-            nullableVec3(VEC3_CODEC), Entry::exitVel,
+            SEGMENT_CODEC.apply(ByteBufCodecs.list(MAX_SEGMENTS_PER_ENTRY)), Entry::segments,
+            nullableCodec({ buf, v -> VEC3_CODEC.encode(buf, v) }, { buf -> VEC3_CODEC.decode(buf) }), Entry::exitPos,
+            nullableCodec({ buf, v -> VEC3_CODEC.encode(buf, v) }, { buf -> VEC3_CODEC.decode(buf) }), Entry::exitVel,
             ::Entry
         )
 
-        private val NULLABLE_UUID_CODEC: StreamCodec<RegistryFriendlyByteBuf, UUID?> = StreamCodec.of(
-            { buf, v ->
-                buf.writeBoolean(v != null)
-                if (v != null) buf.writeUUID(v)
-            },
-            { buf -> if (buf.readBoolean()) buf.readUUID() else null }
-        )
+        private val NULLABLE_UUID_CODEC: StreamCodec<RegistryFriendlyByteBuf, UUID?> =
+            nullableCodec({ buf, v -> buf.writeUUID(v) }, { buf -> buf.readUUID() })
 
-        private val NULLABLE_INT_CODEC: StreamCodec<RegistryFriendlyByteBuf, Int?> = StreamCodec.of(
-            { buf, v ->
-                buf.writeBoolean(v != null)
-                if (v != null) buf.writeVarInt(v)
-            },
-            { buf -> if (buf.readBoolean()) buf.readVarInt() else null }
-        )
+        private val NULLABLE_INT_CODEC: StreamCodec<RegistryFriendlyByteBuf, Int?> =
+            nullableCodec({ buf, v -> buf.writeVarInt(v) }, { buf -> buf.readVarInt() })
 
         val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, WaterslideWaterSyncPayload> =
             StreamCodec.composite(
-                ENTRY_CODEC.apply(ByteBufCodecs.list(256)), WaterslideWaterSyncPayload::entries,
+                ENTRY_CODEC.apply(ByteBufCodecs.list(MAX_ENTRIES)), WaterslideWaterSyncPayload::entries,
                 NULLABLE_UUID_CODEC, WaterslideWaterSyncPayload::subLevelId,
                 NULLABLE_INT_CODEC, WaterslideWaterSyncPayload::contraptionEntityId,
                 ::WaterslideWaterSyncPayload

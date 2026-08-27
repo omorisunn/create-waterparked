@@ -21,7 +21,7 @@ public abstract class CoasterTrackPlacementMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$syncHubFrame(ResourceLocation self, Object other, Operation<Boolean> original) {
-        return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
+        return coasterOrWaterslideEquals(self, other, original);
     }
 
     @WrapOperation(
@@ -32,7 +32,7 @@ public abstract class CoasterTrackPlacementMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$syncHubEndpoints(ResourceLocation self, Object other, Operation<Boolean> original) {
-        return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
+        return coasterOrWaterslideEquals(self, other, original);
     }
 
     @WrapOperation(
@@ -41,7 +41,7 @@ public abstract class CoasterTrackPlacementMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$validate(ResourceLocation self, Object other, Operation<Boolean> original) {
-        return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
+        return coasterOrWaterslideEquals(self, other, original);
     }
 
     @WrapOperation(
@@ -51,7 +51,7 @@ public abstract class CoasterTrackPlacementMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$withAxis(ResourceLocation self, Object other, Operation<Boolean> original) {
-        return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
+        return coasterOrWaterslideEquals(self, other, original);
     }
 
     @WrapOperation(
@@ -62,6 +62,10 @@ public abstract class CoasterTrackPlacementMixin {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/resources/ResourceLocation;equals(Ljava/lang/Object;)Z")
     )
     private static boolean waterslide$withStart(ResourceLocation self, Object other, Operation<Boolean> original) {
+        return coasterOrWaterslideEquals(self, other, original);
+    }
+
+    private static boolean coasterOrWaterslideEquals(ResourceLocation self, Object other, Operation<Boolean> original) {
         return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
     }
 }
