@@ -28,7 +28,9 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorCon
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
 import net.minecraft.client.Minecraft
+import net.minecraft.client.renderer.RenderType
 import net.minecraft.client.renderer.block.model.BakedQuad
+import net.minecraft.client.renderer.texture.SpriteContents
 import net.minecraft.client.renderer.texture.TextureAtlas
 import net.minecraft.client.renderer.texture.TextureAtlasSprite
 import net.minecraft.core.Direction
@@ -100,7 +102,8 @@ object WaterslideTubeMesh {
             .writeMask(WriteMask.COLOR)
             .build()
 
-// water is single-sided; cull backfaces between instances.
+// water band is an open strip (bed + surface arcs only), so a single-sided
+// material culls whole stretches at grazing angles; render both faces.
 // WriteMask.COLOR_DEPTH: the colorwheel pass must write the real water-surface
 // depth into depthtex0 - iterationRP's composite computes waterDeep from
 // (opaqueDepth - waterDepth); without the depth write waterDepth == the far
@@ -110,12 +113,24 @@ object WaterslideTubeMesh {
         SimpleMaterial.builder()
             .transparency(Transparency.TRANSLUCENT)
             .shaders(TUBE_SHADERS)
-            .backfaceCulling(true)
+            .backfaceCulling(false)
             .writeMask(WriteMask.COLOR_DEPTH)
             .build()
 
 // thrown water is visible from both sides
     val STREAM_TRANSLUCENT_MATERIAL: Material =
+        SimpleMaterial.builder()
+            .transparency(Transparency.TRANSLUCENT)
+            .shaders(TUBE_SHADERS)
+            .backfaceCulling(false)
+            .writeMask(WriteMask.COLOR)
+            .build()
+
+// stream/water variant with a real depth write: iterationRP's composite derives
+// waterDeep from (opaqueDepth - waterDepth), so the water surface depth has to
+// reach depthtex0 - but writing depth makes the pyramid cull the band at some
+// camera angles, so the depth write stays off for every other pack
+    val STREAM_TRANSLUCENT_DEPTH_MATERIAL: Material =
         SimpleMaterial.builder()
             .transparency(Transparency.TRANSLUCENT)
             .shaders(TUBE_SHADERS)
@@ -132,6 +147,17 @@ object WaterslideTubeMesh {
             .writeMask(WriteMask.COLOR)
             .build()
 
+// glass sectors: order-independent transparency - composited back-to-front
+// regardless of draw order, so the inner wall never blends over the outer
+// wall; single-sided like vanilla glass
+    val GLASS_TRANSLUCENT_MATERIAL: Material =
+        SimpleMaterial.builder()
+            .transparency(Transparency.ORDER_INDEPENDENT)
+            .shaders(TUBE_SHADERS)
+            .backfaceCulling(true)
+            .writeMask(WriteMask.COLOR)
+            .build()
+
     private class V(
         var x: Float, var y: Float, var z: Float,
         var r: Float, var g: Float, var b: Float, var a: Float,
@@ -143,7 +169,8 @@ object WaterslideTubeMesh {
 // wall + caps
     data class SectorWall(
         val blockId: String,
-        val model: Model
+        val model: Model,
+        val translucent: Boolean
     )
 
     data class TubeModels(
@@ -423,6 +450,7 @@ object WaterslideTubeMesh {
         val crossN = crossSections()
         val degStep = 360f / crossN
         val gridAnchor = 90f
+        val translucentCache = java.util.HashMap<ResourceLocation, Boolean>()
 
         val wallVerts = ArrayList<V>()
         val sectorBuckets = LinkedHashMap<String, ArrayList<V>>()
@@ -436,7 +464,9 @@ object WaterslideTubeMesh {
             u: Float, v: Float,
             sectorRadians: Float, texW: Float, texH: Float, border: Float,
             spriteU0: Float, spriteU1: Float, spriteV0: Float, spriteV1: Float,
-            sideWall: Boolean = false
+            sideWall: Boolean = false,
+            translucent: Boolean = false,
+            capV: Boolean = false
         ) {
             // Clean attributes (white/opaque, fullbright light, no overlay):
             // Colorwheel forwards the raw mesh attributes verbatim to the
@@ -447,7 +477,7 @@ object WaterslideTubeMesh {
             // Tile widths: walls ~1 tile per block of arc length, side walls
             // 1 tile per wallThickness of radial span, V 2 tiles per frame
             // (frames sample every 0.5 blocks) = 1 tile per block.
-            val uTiles = if (sideWall)
+            val uTilesRaw = if (sideWall)
                 1f // side wall: one full sprite across its thickness (no mod
                    // wrap so the adjacent sector edge never bleeds atlas colors)
             else {
@@ -461,8 +491,11 @@ object WaterslideTubeMesh {
                     (radius - BASE_WALL).coerceAtLeast(0.1f)
                 else
                     radius + (ModClientConfig.wallThickness() - BASE_WALL)
-                (sectorRadians * texRadius).coerceAtLeast(1f)
+                sectorRadians * texRadius
             }
+            // narrow sectors keep at least one tile for the opaque walls; the
+            // glass nine-slice measures against the real arc instead (no stretch)
+            val uTiles = max(uTilesRaw, 1f)
             // 0.1.5-style pixel-domain fold with the 2px border inset restored:
             // sampling at exactly su0/su1 (the sprite rect edges) blends with
             // the neighbouring atlas sprite under mipmapping/linear filtering —
@@ -475,11 +508,33 @@ object WaterslideTubeMesh {
             // which reads as a stretched/offset texture on the side wall.
             val centerW = max(texW - 2f * border, 1f)
             val centerH = max(texH - 2f * border, 1f)
-            val uFrac = if (sideWall)
+            // translucent (glass) sectors: nine-slice on the angular axis -
+            // the tile's border pixels frame the two long edges along the
+            // slide, the interior tiles with the body-style window fold
+            val uFrac = if (translucent) {
+                val sPx = u * uTilesRaw * texW
+                when {
+                    sPx < border -> max(sPx, 0.05f) / texW
+                    sPx > uTilesRaw * texW - border ->
+                        min(texW - border + (sPx - (uTilesRaw * texW - border)), texW - 0.05f) / texW
+                    else -> (border + (sPx % centerW)) / texW
+                }
+            } else if (sideWall)
                 (border + u * centerW) / texW
             else
                 ((border + (u * uTiles * texW % centerW)) % texW) / texW
-            val vFrac = ((border + (v * 0.5f * texH % centerH)) % texH) / texH
+            // capV is the end cap's radial three-zone fold (rim borders); the
+            // walls bake the plain body window fold - the glass wall uses the
+            // exact same UV pipeline as the slide body, plus the U nine-slice
+            val vFrac = if (translucent && capV) {
+                val vPx = v * (ModClientConfig.wallThickness() * 16f)
+                when {
+                    vPx < border -> max(vPx, 0.05f) / texH
+                    vPx > ModClientConfig.wallThickness() * 16f - border ->
+                        min(texH - border + (vPx - (ModClientConfig.wallThickness() * 16f - border)), texH - 0.05f) / texH
+                    else -> (border + (vPx % centerH)) / texH
+                }
+            } else ((border + (v * 0.5f * texH % centerH)) % texH) / texH
             val uAtlas = spriteU0 + uFrac * (spriteU1 - spriteU0)
             val vAtlas = spriteV0 + vFrac * (spriteV1 - spriteV0)
             // Side walls keep a POSITIVE atlas u (no negative flag): the vertex
@@ -550,6 +605,10 @@ object WaterslideTubeMesh {
             val su1 = sprite.u1
             val sv0 = sprite.v0
             val sv1 = sprite.v1
+            val glass = translucentCache.getOrPut(blockId) { isTranslucent(blockId) }
+            // glass sectors use their own sprite border as the fold inset; the
+            // opaque walls keep the configured safety border
+            val effBorder = if (glass) borderPxOf(sprite).toFloat() else border
 
             // global fixed grid, up-axis anchored, identical across tracks
             val startNorm = WaterslideSectorLayout.normalize(p.startAngle)
@@ -588,39 +647,40 @@ object WaterslideTubeMesh {
                             val v0 = k / LENGTH_SUBDIVISIONS.toFloat()
                             val v1 = (k + 1) / LENGTH_SUBDIVISIONS.toFloat()
 
-                            // Outer wall (dup into the sector bucket and the
-                            // composite wallVerts used by the translucent pass)
-                            add(bucket, c0, s0, z0, cm, sm, 0f, f0, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(wallVerts, c0, s0, z0, cm, sm, 0f, f0, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(bucket, c1, s1, z0, cm, sm, 0f, f1, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(wallVerts, c1, s1, z0, cm, sm, 0f, f1, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(bucket, c1, s1, z1, cm, sm, 0f, f1, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(wallVerts, c1, s1, z1, cm, sm, 0f, f1, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(bucket, c0, s0, z1, cm, sm, 0f, f0, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(wallVerts, c0, s0, z1, cm, sm, 0f, f0, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                            // Inner wall first (drawn before the outer wall):
+                            // translucent buckets blend in mesh order, so the
+                            // nearer outer surface must come last to win
+                            add(bucket, c0, s0, z0, -cm, -sm, 0f, f0, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z0, -cm, -sm, 0f, f0, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c0, s0, z1, -cm, -sm, 0f, f0, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z1, -cm, -sm, 0f, f0, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z1, -cm, -sm, 0f, f1, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z1, -cm, -sm, 0f, f1, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z0, -cm, -sm, 0f, f1, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z0, -cm, -sm, 0f, f1, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
 
-                            // Inner wall
-                            add(bucket, c0, s0, z0, -cm, -sm, 0f, f0, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(wallVerts, c0, s0, z0, -cm, -sm, 0f, f0, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(bucket, c0, s0, z1, -cm, -sm, 0f, f0, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(wallVerts, c0, s0, z1, -cm, -sm, 0f, f0, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(bucket, c1, s1, z1, -cm, -sm, 0f, f1, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(wallVerts, c1, s1, z1, -cm, -sm, 0f, f1, v1, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(bucket, c1, s1, z0, -cm, -sm, 0f, f1, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                            add(wallVerts, c1, s1, z0, -cm, -sm, 0f, f1, v0, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                            // Outer wall (drawn last)
+                            add(bucket, c0, s0, z0, cm, sm, 0f, f0, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z0, cm, sm, 0f, f0, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z0, cm, sm, 0f, f1, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z0, cm, sm, 0f, f1, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z1, cm, sm, 0f, f1, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z1, cm, sm, 0f, f1, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c0, s0, z1, cm, sm, 0f, f0, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z1, cm, sm, 0f, f0, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
                         }
 
                         // End cap
-                        add(endCapVerts, c0, s0, 0f, c0, s0, 1f, f0, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                        add(endCapVerts, c1, s1, 0f, c1, s1, 1f, f1, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                        add(endCapVerts, c1, s1, 0f, -c1, -s1, 1f, f1, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                        add(endCapVerts, c0, s0, 0f, -c0, -s0, 1f, f0, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                        add(endCapVerts, c0, s0, 0f, c0, s0, 1f, f0, 1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(endCapVerts, c1, s1, 0f, c1, s1, 1f, f1, 1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(endCapVerts, c1, s1, 0f, -c1, -s1, 1f, f1, 0f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(endCapVerts, c0, s0, 0f, -c0, -s0, 1f, f0, 0f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
 
                         // Start cap
-                        add(startCapVerts, c0, s0, 0f, c0, s0, -1f, f0, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                        add(startCapVerts, c0, s0, 0f, -c0, -s0, -1f, f0, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                        add(startCapVerts, c1, s1, 0f, -c1, -s1, -1f, f1, 0f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
-                        add(startCapVerts, c1, s1, 0f, c1, s1, -1f, f1, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+                        add(startCapVerts, c0, s0, 0f, c0, s0, -1f, f0, 1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c0, s0, 0f, -c0, -s0, -1f, f0, 0f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c1, s1, 0f, -c1, -s1, -1f, f1, 0f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c1, s1, 0f, c1, s1, -1f, f1, 1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
                     }
                 }
             }
@@ -629,16 +689,36 @@ object WaterslideTubeMesh {
             val idx = placed.indexOf(p)
             val prev = placed[(idx - 1 + placed.size) % placed.size]
             val next = placed[(idx + 1) % placed.size]
-            if (prev.sector.material == SectorMaterial.OPEN) {
-                addSideWall(bucket, p.startAngle, -1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+            // translucent (glass) neighbours count as open: the solid side
+            // builds the boundary face; the guard keeps glass-glass seams
+            // wall-less (double faces would z-fight)
+            val prevOpenLike = prev.sector.material == SectorMaterial.OPEN ||
+                (!glass && prev.sector.blockId != null &&
+                    translucentCache.getOrPut(prev.sector.blockId) { isTranslucent(prev.sector.blockId) })
+            val nextOpenLike = next.sector.material == SectorMaterial.OPEN ||
+                (!glass && next.sector.blockId != null &&
+                    translucentCache.getOrPut(next.sector.blockId) { isTranslucent(next.sector.blockId) })
+            if (prevOpenLike) {
+                addSideWall(bucket, p.startAngle, -1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1)
             }
-            if (next.sector.material == SectorMaterial.OPEN) {
-                addSideWall(bucket, p.endAngle, 1f, sectorRadians, texW, texH, border, su0, su1, sv0, sv1)
+            if (nextOpenLike) {
+                addSideWall(bucket, p.endAngle, 1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1)
             }
         }
 
         val sectorWalls = sectorBuckets.entries.map { (k, verts) ->
-            SectorWall(k, SingleMeshModel(meshOf(verts, "waterslide_tube_wall"), TUBE_CUTOUT_MATERIAL))
+            val glass = translucentCache[ResourceLocation.tryParse(k)] == true
+            // glass sectors blend instead of alpha-cutting (the pane interior
+            // is transparent and would vanish under the cutout pass); single
+            // sided like vanilla glass
+            SectorWall(
+                k,
+                SingleMeshModel(
+                    meshOf(verts, "waterslide_tube_wall"),
+                    if (glass) GLASS_TRANSLUCENT_MATERIAL else TUBE_CUTOUT_MATERIAL
+                ),
+                glass
+            )
         }
 
         val wallMesh = meshOf(wallVerts, "waterslide_tube_wall")
@@ -673,7 +753,11 @@ object WaterslideTubeMesh {
             for (f in vertsB) append((f * 20f).roundToInt()).append(',')
         }
         return waterModelCache.getOrPut(key) {
-            buildWaterModel(vertsA, vertsB, radius, STREAM_TRANSLUCENT_MATERIAL, shaderUpNormals)
+            val mat = if (IrisColorwheelCompat.iterationRpWaterMode())
+                STREAM_TRANSLUCENT_DEPTH_MATERIAL
+            else
+                STREAM_TRANSLUCENT_MATERIAL
+            buildWaterModel(vertsA, vertsB, radius, mat, shaderUpNormals)
         }
     }
 
@@ -725,7 +809,7 @@ object WaterslideTubeMesh {
             ringVerts += V(
                 u, v, z,
                 1f, 1f, 1f, 1f,
-                uTex, if (z > 0.25f) 1f else 0f,
+                uTex, if (z > 0.05f) 1f else 0f,
                 0, 0x00F000F0,
                 nx, ny, nz
             )
@@ -884,6 +968,59 @@ object WaterslideTubeMesh {
         }
         counts.entries.maxByOrNull { it.value }?.key?.let { return it }
         return model.getParticleIcon(ModelData.EMPTY)
+    }
+
+    // glass-family sectors: id split on '_' with a glass segment (covers
+    // vanilla glass, stained glass, panes, Create framed/vertical/tiled/
+    // tinted glass and the stained variants)
+    private fun isTranslucent(blockId: ResourceLocation): Boolean =
+        blockId.path.split('_').any { it.contains("glass") }
+
+    // border ring width of a sprite in px (glass frames are 1-2px); scanned
+    // from the native image and cached per sprite
+    private val borderCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    private fun borderPxOf(sprite: TextureAtlasSprite): Int {
+        val key = sprite.contents().name().toString()
+        return borderCache.getOrPut(key) {
+            try {
+                val field = SpriteContents::class.java.getDeclaredField("mipmapLevelsImages")
+                field.isAccessible = true
+                val img = (field.get(sprite.contents()) as? Array<*>)?.firstOrNull()
+                    ?: return@getOrPut 1
+                val cls = img.javaClass
+                val w = cls.getMethod("getWidth").invoke(img) as Int
+                val h = cls.getMethod("getHeight").invoke(img) as Int
+                val rgba = cls.getMethod("getPixelRGBA", Int::class.java, Int::class.java)
+                fun alpha(x: Int, y: Int): Int =
+                    ((rgba.invoke(img, x, y) as Int) ushr 24) and 0xFF
+                // scan every row/col and take the per-side minimum: a single
+                // middle-row scan trips over perpendicular frame lines / grout
+                var left = Int.MAX_VALUE
+                var right = Int.MAX_VALUE
+                var top = Int.MAX_VALUE
+                var bottom = Int.MAX_VALUE
+                for (y in 0 until h) {
+                    var l = 0
+                    for (x in 0 until w) { if (alpha(x, y) >= 128) l++ else break }
+                    var r = 0
+                    for (x in w - 1 downTo 0) { if (alpha(x, y) >= 128) r++ else break }
+                    if (l < left) left = l
+                    if (r < right) right = r
+                }
+                for (x in 0 until w) {
+                    var t = 0
+                    for (y in 0 until h) { if (alpha(x, y) >= 128) t++ else break }
+                    var b = 0
+                    for (y in h - 1 downTo 0) { if (alpha(x, y) >= 128) b++ else break }
+                    if (t < top) top = t
+                    if (b < bottom) bottom = b
+                }
+                maxOf(left, right, top, bottom).coerceIn(1, 8)
+            } catch (e: Throwable) {
+                1
+            }
+        }
     }
 
     /** Sprite rect (u0,u1,v0,v1) for a block id — used to feed the instance. */

@@ -1,6 +1,8 @@
 package net.omori_sunny.create_waterparked
 
 import net.omori_sunny.create_waterparked.client.CreateWaterparkedClient
+import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
+import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
@@ -20,6 +22,7 @@ import net.neoforged.bus.api.EventPriority
 import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.common.EventBusSubscriber
 import net.neoforged.fml.common.Mod
+import net.neoforged.fml.event.config.ModConfigEvent
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent
 import net.neoforged.fml.event.lifecycle.FMLDedicatedServerSetupEvent
 import net.neoforged.neoforge.common.NeoForge
@@ -48,6 +51,7 @@ object CreateWaterparked {
         MOD_BUS.addListener(ModPayloads::register)
         MOD_BUS.addListener(::onCommonSetup)
         MOD_BUS.addListener(CreateWaterparkedDataGen::gatherData)
+        MOD_BUS.addListener(::onConfigReloaded)
 
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onServerTick)
         NeoForge.EVENT_BUS.addListener(
@@ -89,5 +93,16 @@ object CreateWaterparked {
         LOGGER.info("Create Waterparked loaded.")
         WaterslideContraptionIntegration.register()
         net.omori_sunny.create_waterparked.game.command.WaterparkedCommands.register()
+    }
+
+    @SubscribeEvent
+    fun onConfigReloaded(event: ModConfigEvent.Reloading) {
+        // client-side rendering options take effect immediately (like the
+        // per-frame waterSimDebug read) by rebuilding the tube visuals; the
+        // mesh cache is dropped so the rebuild picks up the new values
+        if (event.config.spec === ModClientConfig.SPEC) {
+            WaterslideTubeMesh.clearModels()
+            WaterslideTubeVisual.refreshAll()
+        }
     }
 }

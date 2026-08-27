@@ -178,6 +178,26 @@ void flw_instanceVertex(in FlwInstance i) {
             ? max(radius - BASE_WALL, 0.001)
             : max(radius + (i.wallThickness - BASE_WALL), 0.001);
         worldPos = spine + lp.x * lateral * radial + lp.y * faceUp * radial;
+        // glass wall: frame the axial edges next to the end caps - the mesh
+        // bakes the window fold, this overrides the V only inside the two
+        // end bands with the tile's border rows
+        if (i.waterTileSpan > 1.5) {
+            float arc = i.arcBase + arcLenTo(t, c0, c1, c2, c3);
+            float total = max(i.downstreamMix, 0.1);
+            float gTexH = clamp(round((spriteV1 - spriteV0) * 1024.0), 1.0, 64.0);
+            float vPx = -1.0;
+            if (arc < borderPx / 16.0) {
+                vPx = max(arc * 16.0, 0.05);
+            } else if (arc > total - borderPx / 16.0) {
+                vPx = min(gTexH - borderPx + (arc - (total - borderPx / 16.0)) * 16.0, gTexH - 0.05);
+            }
+            if (vPx >= 0.0) {
+                flw_vertexTexCoord = vec2(
+                    flw_vertexTexCoord.x,
+                    spriteV0 + (vPx / gTexH) * (spriteV1 - spriteV0)
+                );
+            }
+        }
     }
     flw_vertexPos = vec4(worldPos, 1.0);
 

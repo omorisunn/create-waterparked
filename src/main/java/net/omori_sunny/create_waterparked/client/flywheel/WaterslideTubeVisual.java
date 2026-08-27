@@ -653,6 +653,9 @@ public class WaterslideTubeVisual extends AbstractVisual
         // phase at their boundary ring
         private float[] waterPrefixArcs;
         private float waterTotalArc;
+        // cumulative arc at each tube frame start, for the glass wall's
+        // shader-side V fold (one tile per block along the curve)
+        private float[] wallPrefixArcs;
         private WaterslideTubeMesh.TubeModels models;
         private WaterslideSectorConfig config;
         private final List<WaterslideTubeInstance> instances = new ArrayList<>();
@@ -697,6 +700,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             );
             this.waterFrames = buildWaterFrames(r0, r1);
             rebuildWaterArcs();
+            rebuildWallArcs();
             if (subLevel != null) {
                 Vec3 raw0 = curve.getPosition(0);
                 Vec3 raw1 = curve.getPosition(1);
@@ -741,6 +745,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             );
             this.waterFrames = buildWaterFrames(r0, r1);
             rebuildWaterArcs();
+            rebuildWallArcs();
             logJunctionDiagnostics();
             this.config = WaterslideSectorEdit.INSTANCE.previewConfigFor(a, b);
             if (this.config == null) {
@@ -846,6 +851,14 @@ public class WaterslideTubeVisual extends AbstractVisual
                     WaterslideTubeMesh.INSTANCE.arcLength(waterFrames.get(i));
             }
             waterTotalArc = Math.max(waterPrefixArcs[waterFrames.size()], 1.0E-4f);
+        }
+
+        private void rebuildWallArcs() {
+            wallPrefixArcs = new float[frames.size() + 1];
+            for (int i = 0; i < frames.size(); i++) {
+                wallPrefixArcs[i + 1] = wallPrefixArcs[i] +
+                    WaterslideTubeMesh.INSTANCE.arcLength(frames.get(i));
+            }
         }
 
         // TEMP DIAGNOSTIC for the junction spike: print how the water end-ring
@@ -1659,6 +1672,13 @@ public class WaterslideTubeVisual extends AbstractVisual
                         wall[i].isWater = 0f;
                         wall[i].spriteU0 = spr[0]; wall[i].spriteU1 = spr[1];
                         wall[i].spriteV0 = spr[2]; wall[i].spriteV1 = spr[3];
+                        // glass walls frame the axial edges next to the caps;
+                        // the V is folded in the vertex shader with the curve arc
+                        if (sw.getTranslucent()) {
+                            wall[i].waterTileSpan = 2f;
+                            wall[i].arcBase = wallPrefixArcs[i];
+                            wall[i].downstreamMix = wallPrefixArcs[frames.size()];
+                        }
                         instances.add(wall[i]);
                     }
                 }
