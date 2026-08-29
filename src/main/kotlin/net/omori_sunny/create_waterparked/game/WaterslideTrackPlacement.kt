@@ -138,9 +138,6 @@ object WaterslideTrackPlacement {
 
         val result = WaterslideConnectionRules.validate(level, first, secondAnchor)
         if (!result.valid) {
-            if (!level.isClientSide) {
-                AllSoundEvents.DENY.playFrom(player, 1.0f, 1.0f)
-            }
             return false
         }
 

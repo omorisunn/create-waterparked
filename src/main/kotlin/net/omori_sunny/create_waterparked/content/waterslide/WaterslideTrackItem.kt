@@ -66,7 +66,6 @@ class WaterslideTrackItem(properties: Properties) : Item(properties) {
         val first = WaterslideTrackPlacement.readAnchorFirstSelection(stack)
         if (level.isClientSide) {
             if (first == null || first == pos || !WaterslideConnectionRules.validate(level, first, pos).valid) {
-                AllSoundEvents.DENY.playFrom(player, 1.0f, 1.0f)
                 return InteractionResult.FAIL
             }
             WaterslideTrackPlacement.clearPendingConnection(stack)

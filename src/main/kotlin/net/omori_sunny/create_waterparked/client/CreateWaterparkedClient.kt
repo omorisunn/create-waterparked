@@ -59,6 +59,7 @@ object CreateWaterparkedClient {
         MOD_BUS.addListener(::onRegisterParticleProviders)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSupportEdit::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSupportEdit::onRightClickItem)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSupportEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(WaterslidePlacementPreview::onClientTick)
@@ -82,8 +83,15 @@ object CreateWaterparkedClient {
     private fun onClientSetup(event: FMLClientSetupEvent) {
         // safety net if the background patch run has not finished yet
         IterationRPPatcher.runIfNeeded()
-        // ponder stories for waterslide items
-        event.enqueueWork { PonderIndex.addPlugin(WaterslidePonderPlugin()) }
+        // ponder stories for waterslide items - Ponder is an optional mod, so
+        // check for its class on the classpath BEFORE touching any Ponder
+        // reference: a missing Ponder would otherwise NoClassDefFoundError in
+        // the lambda body and crash the whole client
+        if (net.neoforged.fml.ModList.get().isLoaded("ponder") ||
+            Thread.currentThread().contextClassLoader.getResource("net/createmod/ponder/foundation/PonderIndex.class") != null
+        ) {
+            event.enqueueWork { PonderIndex.addPlugin(WaterslidePonderPlugin()) }
+        }
         // flywheel instanced rendering
         SimpleBlockEntityVisualizer.builder(ModBlockEntities.WATERSLIDE_ANCHOR_BE)
             .factory { ctx, be, pt -> WaterslideTubeVisual(ctx, be, pt) }

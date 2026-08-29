@@ -52,6 +52,12 @@ public class WaterslidePonderRestore {
             if (nbt.contains("AnchorPeerCurves")
                 && BlockEntity.loadStatic(pos, info.state(), nbt, registries)
                     instanceof WaterslideAnchorBlockEntity anchor) {
+                // storyboard water: every seeded curve shows a gentle flow, so
+                // the translucent water band is visible in the Ponder scene even
+                // though no server sync ever runs over there
+                for (BlockPos peer : anchor.getAnchorPeerCurvesView().keySet()) {
+                    anchor.setCurveWatered(peer, true);
+                }
                 installBlockEntity(level, pos, anchor);
             }
         }
@@ -71,7 +77,27 @@ public class WaterslidePonderRestore {
             scene.world().modifyBlockEntity(target, WaterslideAnchorBlockEntity.class, be -> {
                 be.reloadCurveDataForPonder(applied, registries);
                 be.repairAnchorPeerCurveKeys();
+                for (BlockPos peer : be.getAnchorPeerCurvesView().keySet()) {
+                    be.setCurveWatered(peer, true);
+                }
                 AnchorPeerCurveClientIndex.refreshMembership(be);
+                VisualizationHelper.queueUpdate(be);
+                WaterslideTubeVisual.refreshAll();
+            });
+        }
+    }
+
+    // hide the tube on the displayed anchors: the anchor blocks stay visible,
+    // but the curve data is removed so the BER draws nothing yet - the tube
+    // only reappears when applyDisplayedAnchorLayer is called again (the
+    // "slide appears" beat of the storyboard)
+    public static void clearDisplayedCurves(
+        CreateSceneBuilder scene, int anchorY, BlockPos... sourceAnchors
+    ) {
+        for (BlockPos source : sourceAnchors) {
+            scene.world().modifyBlockEntity(source.atY(anchorY), WaterslideAnchorBlockEntity.class, be -> {
+                be.reloadCurveDataForPonder(new CompoundTag(), scene.world().getHolderLookupProvider());
+                be.repairAnchorPeerCurveKeys();
                 VisualizationHelper.queueUpdate(be);
                 WaterslideTubeVisual.refreshAll();
             });
@@ -104,6 +130,11 @@ public class WaterslidePonderRestore {
                     }
                 } else {
                     anchor.repairAnchorPeerCurveKeys();
+                }
+                // storyboard water: all restored curves flow, the server never
+                // syncs water data into the Ponder world
+                for (BlockPos peer : anchor.getAnchorPeerCurvesView().keySet()) {
+                    anchor.setCurveWatered(peer, true);
                 }
             }
         }
@@ -140,6 +171,24 @@ public class WaterslidePonderRestore {
         if (template != null && !template.getSize().equals(BlockPos.ZERO)) {
             seedFromStructureTemplate(level, template);
         }
+    }
+
+    /** anchor block positions inside the current scene's schematic (for storyboard layout) */
+    public static BlockPos[] schemaAnchors(PonderLevel level) {
+        PonderScene scene = level == null ? null : level.scene;
+        if (scene == null) return new BlockPos[0];
+        ResourceLocation schematicPath = WaterslidePonderScenes.schematicPathFor(scene.getId());
+        if (schematicPath == null) return new BlockPos[0];
+        StructureTemplate template = PonderSceneRegistry.loadSchematic(schematicPath);
+        if (template == null) return new BlockPos[0];
+        StructurePlaceSettings settings = new StructurePlaceSettings();
+        List<StructureTemplate.StructureBlockInfo> infos = template.filterBlocks(
+            BlockPos.ZERO, settings, ModBlocks.INSTANCE.getWATERSLIDE_ANCHOR());
+        BlockPos[] out = new BlockPos[infos.size()];
+        for (int i = 0; i < infos.size(); i++) {
+            out[i] = infos.get(i).pos();
+        }
+        return out;
     }
 
     private static void installBlockEntity(PonderLevel level, BlockPos pos, BlockEntity blockEntity) {

@@ -83,6 +83,40 @@ object WaterFlowSimulation {
         version++
     }
 
+    // Ponder storyboard: inject a demo flow field so the BER water band scrolls
+    @JvmStatic
+    fun injectPonderField(level: Level, bc: BezierConnection, speed: Float) {
+        val edge = edgeKeyOf(bc)
+        val total = bc.getSegmentCount().coerceAtLeast(1)
+        val segments = (0 until total).map { i ->
+            net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation.WaterSegment(
+                i.toFloat() + 0.5f, speed
+            )
+        }
+        val target = HashMap<Pair<Long, Long>, CurveWater>()
+        target[edge] = CurveWater(true, 1f, segments, null)
+        fields[SlideSpace.Main.cacheKey(level)] = target
+        bumpVersion()
+        WaterslideTubeVisual.refreshAll()
+    }
+
+    @JvmStatic
+    fun clearPonderField(bc: BezierConnection) {
+        val edge = edgeKeyOf(bc)
+        var removed = false
+        for (map in fields.values) {
+            if (map.containsKey(edge)) {
+                @Suppress("UNCHECKED_CAST")
+                (map as? HashMap<Pair<Long, Long>, CurveWater>)?.remove(edge)
+                removed = true
+            }
+        }
+        if (removed) {
+            bumpVersion()
+            WaterslideTubeVisual.refreshAll()
+        }
+    }
+
     @JvmStatic
     fun applySync(payload: WaterslideWaterSyncPayload) {
         val level = Minecraft.getInstance().level ?: return

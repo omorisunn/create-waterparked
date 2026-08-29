@@ -44,3 +44,6 @@ docs/
 /.dsh-tmp-glass/
 /.dsh-highres-vision/
 /.dsh-backup-src/
+
+# AgentTeams runtime state
+/.agent-teams/

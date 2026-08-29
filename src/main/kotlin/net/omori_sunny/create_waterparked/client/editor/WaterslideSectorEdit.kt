@@ -264,7 +264,6 @@ object WaterslideSectorEdit {
         }
         val hit = resolveWallHit(level, hitVec, requireAnchor = pending)
         if (hit == null) {
-            WaterslideEditSounds.playDeny()
             clearPending(level)
             event.isCanceled = true
             event.cancellationResult = InteractionResult.SUCCESS
@@ -504,7 +503,6 @@ object WaterslideSectorEdit {
         if (lastTargetState == state && lastTargetPos == target) return
         lastTargetState = state
         lastTargetPos = target
-        if (state == 2) WaterslideEditSounds.playDeny()
         val player = mc.player ?: return
         player.displayClientMessage(
             Component.translatable(
@@ -631,7 +629,6 @@ object WaterslideSectorEdit {
                     .withStyle(ChatFormatting.RED),
                 true
             )
-            WaterslideEditSounds.playDeny()
             return false
         }
         PacketDistributor.sendToServer(
@@ -658,25 +655,18 @@ object WaterslideSectorEdit {
         val level = mc.level ?: return false
         val dye = heldDye(player)
         if (dye == null) {
-            CreateWaterparked.LOGGER.debug(
-                "dye: no DyeItem in hands main={} off={}",
-                player.mainHandItem.item, player.offhandItem.item
-            )
             return false
         }
         val hit = sectorUnderCursor(mc)
         if (hit == null) {
-            CreateWaterparked.LOGGER.debug("dye: no slide sector under cursor")
             return false
         }
         val blockId = hit.blockId
         if (blockId == null) {
-            CreateWaterparked.LOGGER.debug("dye: sector {} is open", hit.sectorId)
             return false
         }
         val newBlock = WaterslideDyeRules.dyedBlockFor(blockId, dye.dyeColor)
         if (newBlock == null) {
-            CreateWaterparked.LOGGER.debug("dye: no dyed variant for {}", blockId)
             return false
         }
         PacketDistributor.sendToServer(
@@ -688,7 +678,6 @@ object WaterslideSectorEdit {
             )
         )
         WaterslideEditSounds.playCommitSuccess()
-        CreateWaterparked.LOGGER.debug("dye: sector {} {} -> {}", hit.sectorId, blockId, newBlock)
         return true
     }
 
@@ -913,6 +902,11 @@ object WaterslideSectorEdit {
     @JvmStatic
     fun isHoveringOrDraggingControlPoint(mc: Minecraft): Boolean {
         if (dragging || draggingBoundary) return true
+        // a mere hover must not cancel vanilla use: support part clicks next
+        // to the sector control rings would get eaten. Only suppress while the
+        // use key is actually held (about to grab / mid-drag).
+        val player = mc.player ?: return false
+        if (!mc.options.keyUse.isDown) return false
         val level = mc.level ?: return false
         if (!SubLevelEditFocus.isActive(level)) return false
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return false

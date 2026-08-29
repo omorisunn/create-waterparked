@@ -1,6 +1,8 @@
 package net.omori_sunny.create_waterparked.content.waterslide
 
 import com.simibubi.create.AllItems
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
+import dev.ryanhcode.sable.sublevel.ServerSubLevel
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
 import net.minecraft.server.level.ServerLevel
@@ -52,7 +54,24 @@ object WaterslideSupportInteraction {
         val player = event.entity as? Player ?: return
         val hover = hovers.remove(player.uuid) ?: return
         if (level.gameTime - hover.gameTime > HOVER_TTL_TICKS) return
-        if (level.getBlockEntity(hover.anchor) !is WaterslideAnchorBlockEntity) return
+        if (resolveAnchorBe(level, hover.anchor) == null) return
+        if (!canInteract(player.getItemInHand(event.hand))) return
+        event.isCanceled = true
+        event.cancellationResult = InteractionResult.SUCCESS
+    }
+
+    // the item-use stage is where a held BLOCK would be placed: swallow it while
+    // a support click is being processed so right-clicking the beam/bracket never
+    // drops a block into the world. The first of the two handlers wins the hover
+    // entry; a canceled block event already skips the item use on the server.
+    @JvmStatic
+    fun onRightClickItem(event: PlayerInteractEvent.RightClickItem) {
+        if (event.level.isClientSide) return
+        val level = event.level as? ServerLevel ?: return
+        val player = event.entity as? Player ?: return
+        val hover = hovers.remove(player.uuid) ?: return
+        if (level.gameTime - hover.gameTime > HOVER_TTL_TICKS) return
+        if (resolveAnchorBe(level, hover.anchor) == null) return
         if (!canInteract(player.getItemInHand(event.hand))) return
         event.isCanceled = true
         event.cancellationResult = InteractionResult.SUCCESS
@@ -67,14 +86,38 @@ object WaterslideSupportInteraction {
         face: Direction
     ): Boolean {
         val level = player.serverLevel()
-        val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return false
+        // Sable plot payloads carry the plot-local anchor position of the
+        // picked BE (SupportPick.anchorPos = be.getBlockPos()); resolve it the
+        // same way WaterslideAnchorInteraction does: direct hit first, then the
+        // plot-center offset fallback over every server sub level
+        val be = resolveAnchorBe(level, anchor)
+        if (be == null) {
+            // failure-only warn: an unresolvable anchor means the click never
+            // produces a visible action - keep that diagnosable without spamming
+            CreateWaterparked.LOGGER.warn("[SupportApply] anchor miss: {}", anchor)
+            return false
+        }
         val ok = apply(level, player, be, part, face, hand)
         CreateWaterparked.LOGGER.info(
             "[SupportApply] anchor={} part={} item={} ok={} deleted={} filled={}",
-            anchor, part, player.getItemInHand(hand).item.descriptionId, ok,
+            be.blockPos, part, player.getItemInHand(hand).item.descriptionId, ok,
             !be.isSupportVisible(part), be.hasCustomSupportMaterial(part)
         )
         return ok
+    }
+
+    // main world first (sub=null), then the plot-center offset mapping used by
+    // every other sublevel-aware interaction in this mod
+    private fun resolveAnchorBe(level: ServerLevel, pos: BlockPos): WaterslideAnchorBlockEntity? {
+        (level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity)?.let { return it }
+        val container = SubLevelContainer.getContainer(level) ?: return null
+        var found: WaterslideAnchorBlockEntity? = null
+        for (raw in container.allSubLevels) {
+            val sub = raw as? ServerSubLevel ?: continue
+            val candidate = pos.offset(sub.getPlot().getCenterBlock())
+            (level.getBlockEntity(candidate) as? WaterslideAnchorBlockEntity)?.let { found = it }
+        }
+        return found
     }
 
     private fun canInteract(stack: ItemStack): Boolean =
@@ -111,9 +154,12 @@ object WaterslideSupportInteraction {
                 be.setSupportVisible(part, true)
                 return true
             }
+            // nothing to clear: the part already uses the default look
+            if (!be.hasCustomSupportMaterial(part)) return false
             val returned = be.resetSupportMaterial(part)
-            if (returned.isEmpty) return false
-            if (!player.isCreative) player.inventory.placeItemBackInInventory(returned)
+            if (!returned.isEmpty && !player.isCreative) {
+                player.inventory.placeItemBackInInventory(returned)
+            }
             level.levelEvent(
                 LevelEvent.PARTICLES_DESTROY_BLOCK,
                 be.blockPos,

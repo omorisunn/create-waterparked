@@ -47,6 +47,12 @@ base {
     archivesName = mod_id
 }
 
+// build artifact name carries the vendored Coasters Simulated version:
+// create_waterparked-<mod_version>-coaster<simulatedcoasters_version>.jar
+tasks.named('jar') {
+    archiveClassifier = "coaster${project.simulatedcoasters_version}"
+}
+
 // KotlinForForge pulls FancyModLoader's com.mojang:logging:1.1.1 into
 // testRuntimeClasspath, but Minecraft itself pins 1.2.7. Force 1.2.7 there
 // too so offline builds resolve from the local cache.
@@ -147,7 +153,10 @@ dependencies {
 
     // Create addon stack (NeoForge/ModDevGradle: use the :slim classifier, not fg.deobf)
     implementation("com.simibubi.create:create-${minecraft_version}:${create_version}:slim") { transitive = false }
-    implementation("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
+    // Ponder is OPTIONAL at runtime: the client registers ponder plugin only
+    // when the Ponder mod is present (and all ponder mixins are gated), so it
+    // stays compileOnly - missing Ponder must never crash this mod.
+    compileOnly("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
     compileOnly("dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}")
     runtimeOnly("dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}")
 

@@ -22,11 +22,6 @@ object WaterslideEditSounds {
         playUi(SoundEvents.IRON_TRAPDOOR_CLOSE, 0.38f, pitch)
     }
 
-    // invalid edit, low bass thud
-    fun playDeny() {
-        playUi(SoundEvents.NOTE_BLOCK_BASS.value(), 1.0f, 0.5f)
-    }
-
     // drag tick, scroll sound volume and pitch driven by the dragged amount
     fun playDragTick(amount: Float) {
         playUi(AllSoundEvents.SCROLL_VALUE.mainEvent, 0.55f, 0.9f + amount.coerceIn(0f, 1f) * 0.5f)

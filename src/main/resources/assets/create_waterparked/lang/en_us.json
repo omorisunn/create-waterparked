@@ -1,7 +1,7 @@
 {
   "itemGroup.create_waterparked": "Create Waterparked",
   "create_waterparked.simulated_section.waterparked": "Waterparked",
-  "block.create_waterparked.waterslide_track": "Water Slide Track",
+  "block.create_waterparked.waterslide_track_block": "Water Slide Track",
   "block.create_waterparked.waterslide_anchor": "Water Slide Anchor",
   "item.create_waterparked.waterslide_track": "Water Slide Track",
   "item.create_waterparked.waterslide_anchor": "Water Slide Anchor",
@@ -19,6 +19,5 @@
   "create_waterparked.sector.select_second": "Right-click the other waterslide anchor",
   "create_waterparked.sector.delete_last": "Cannot delete the last sector",
   "create_waterparked.track.sector_boundary_snap_hint": "Hold %s to disable snapping",
-  "create_waterparked.slide.exit_hint": "Press %s to exit the slide",
-  "create_waterparked.ponder.ponder_connect.header": "Connecting Waterslide Anchors"
+  "create_waterparked.slide.exit_hint": "Press %s to exit the slide"
 }

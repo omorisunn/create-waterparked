@@ -7,6 +7,8 @@ import net.createmod.ponder.api.registration.PonderSceneRegistrationHelper;
 import net.createmod.ponder.api.registration.PonderTagRegistrationHelper;
 import net.createmod.ponder.api.registration.SharedTextRegistrationHelper;
 import net.minecraft.resources.ResourceLocation;
+import net.omori_sunny.create_waterparked.content.registry.ModBlocks;
+import net.omori_sunny.create_waterparked.content.registry.ModItems;
 
 public class WaterslidePonderPlugin extends CreatePonderPlugin {
 
@@ -35,5 +37,12 @@ public class WaterslidePonderPlugin extends CreatePonderPlugin {
 
     @Override
     public void indexExclusions(IndexExclusionHelper helper) {
+        // the water slide track material is a regular Create TrackMaterial, so
+        // Create's train-track storyboards would otherwise attach to it. CCS
+        // uses excludeBlockVariants for its own material; ours is a distinct
+        // block/item class, so exclude the item likes directly (both the block
+        // and its item get train-track scenes otherwise).
+        helper.exclude(ModBlocks.INSTANCE.getWATERSLIDE_TRACK());
+        helper.exclude(ModItems.INSTANCE.getWATERSLIDE_TRACK());
     }
 }

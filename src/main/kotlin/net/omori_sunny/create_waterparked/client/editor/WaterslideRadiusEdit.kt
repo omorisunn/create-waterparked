@@ -52,12 +52,21 @@ object WaterslideRadiusEdit {
     @JvmStatic
     fun isDragging(): Boolean = dragging
 
-    // hover or drag, for CCS suppression
+    // hover or drag, for CCS suppression. Only an ACTUAL radius drag (button
+    // held = use key down) suppresses vanilla use: a mere hover near the
+    // handle must never cancel the right-click, or support part clicks next
+    // to the tube mouth get eaten (hover hits the handle sphere, the user
+    // aimed at the support bracket).
     @JvmStatic
     fun isHoveringOrDragging(mc: Minecraft): Boolean {
         if (dragging) return true
-        val level = mc.level ?: return false
         val player = mc.player ?: return false
+        return mc.options.keyUse.isDown && isHoveringHandle(mc, player)
+    }
+
+    @JvmStatic
+    fun isHoveringHandle(mc: Minecraft, player: net.minecraft.world.entity.player.Player): Boolean {
+        val level = mc.level ?: return false
         if (!SubLevelEditFocus.isActive(level)) return false
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return false
         val ctx = SableClientEdit.resolve(level, anchor) ?: return false

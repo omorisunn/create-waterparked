@@ -124,23 +124,17 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             val camera = mc.gameRenderer.mainCamera.position
             // Flywheel handles the pipe; this is the fallback.
             val flywheelActive = VisualizationManager.supportsVisualization(level)
-// draw each curve once
-            val seenEdges = mutableSetOf<Pair<Long, Long>>()
-            val snapshot = CLIENT_ANCHORS.toTypedArray()
-            for (be in snapshot) {
-                if (be.isRemoved || be.level !== level) {
-                    CLIENT_ANCHORS.remove(be)
-                    continue
-                }
-                if (be.blockPos.distToCenterSqr(camera.x, camera.y, camera.z) > MAX_DRAW_DISTANCE_SQ) continue
-                poseStack.pushPose()
-                // Pose starts at the world origin.
-                poseStack.translate(-camera.x, -camera.y, -camera.z)
-                renderAllCurves(be, poseStack, bufferSource, seenEdges, flywheelActive)
-                poseStack.popPose()
-            }
+            // The per-anchor tube/water/stream draw below is superseded by
+            // WaterslideTubeBlockEntityRenderer, which renders the complete pipe
+            // in the block-entity pass (it is registered for the anchor and runs
+            // whenever flywheel is inactive). Drawing the tube AGAIN here on the
+            // AFTER_BLOCK_ENTITIES stage double-draws the same geometry - and the
+            // legacy camera-relative translate(-camera) convention double-
+            // subtracts the camera position in the modern render pipeline, which
+            // made the fallback tube ride along with the camera. Keep only the
+            // debug trajectories and the pipe batch flush.
             renderDebugTrajectories(poseStack, bufferSource)
-// flush pipe batches
+            // flush pipe batches
             endBatches(bufferSource)
         }
 

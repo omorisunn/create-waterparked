@@ -1,6 +1,6 @@
 {
   "parent": "minecraft:block/cube_all",
   "textures": {
-    "all": "create_waterparked:block/waterslide_track"
+    "all": "create_waterparked:block/waterslide_track_block"
   }
 }

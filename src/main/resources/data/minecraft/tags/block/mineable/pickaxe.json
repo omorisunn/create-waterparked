@@ -1,7 +1,7 @@
 {
   "replace": false,
   "values": [
-    "create_waterparked:waterslide_track",
+    "create_waterparked:waterslide_track_block",
     "create_waterparked:waterslide_anchor"
   ]
 }

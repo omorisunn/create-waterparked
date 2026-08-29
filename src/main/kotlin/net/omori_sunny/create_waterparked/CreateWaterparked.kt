@@ -64,6 +64,10 @@ object CreateWaterparked {
         )
         NeoForge.EVENT_BUS.addListener(
             EventPriority.HIGHEST,
+            WaterslideSupportInteraction::onRightClickItem
+        )
+        NeoForge.EVENT_BUS.addListener(
+            EventPriority.HIGHEST,
             WaterslideAnchorInteraction::onRightClickBlock
         )
         MOD_BUS.addListener(WaterslideAnchorBlockEntity::registerCapabilities)

@@ -57,66 +57,57 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
     val wateredCurves: MutableMap<BlockPos, Boolean> = mutableMapOf()
 
 // support copycat materials per part, like Create's copycat block
+// NOTE: bracket + beam share ONE material/visibility set (unified support).
+// The per-part write calls update both, the reads return the union - so a
+// right click on EITHER part always applies to the whole support.
     var supportBracketMaterial: BlockState = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
         private set
     var supportBeamMaterial: BlockState = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
         private set
     private var supportBracketConsumedItem: ItemStack = ItemStack.EMPTY
     private var supportBeamConsumedItem: ItemStack = ItemStack.EMPTY
-    // axle-axe deletes a support part; wrench restores it
+    // axle-axe deletes a support part; wrench restores it (unified)
     var supportBracketVisible: Boolean = true
         private set
     var supportBeamVisible: Boolean = true
         private set
 
     fun setSupportVisible(part: WaterslideSupportPart, visible: Boolean) {
-        when (part) {
-            WaterslideSupportPart.BRACKET -> supportBracketVisible = visible
-            WaterslideSupportPart.BEAM -> supportBeamVisible = visible
-        }
+        supportBracketVisible = visible
+        supportBeamVisible = visible
         setChanged()
         notifyBlockUpdated()
     }
 
-    fun isSupportVisible(part: WaterslideSupportPart): Boolean = when (part) {
-        WaterslideSupportPart.BRACKET -> supportBracketVisible
-        WaterslideSupportPart.BEAM -> supportBeamVisible
-    }
+    fun isSupportVisible(part: WaterslideSupportPart): Boolean =
+        supportBracketVisible && supportBeamVisible
 
-    fun supportMaterial(part: WaterslideSupportPart): BlockState = when (part) {
-        WaterslideSupportPart.BRACKET -> supportBracketMaterial
-        WaterslideSupportPart.BEAM -> supportBeamMaterial
-    }
+    // unified: the effective material is whatever either part carries
+    fun supportMaterial(part: WaterslideSupportPart): BlockState =
+        if (!AllBlocks.COPYCAT_BASE.has(supportBracketMaterial)) supportBracketMaterial
+        else supportBeamMaterial
 
-    fun supportConsumedItem(part: WaterslideSupportPart): ItemStack = when (part) {
-        WaterslideSupportPart.BRACKET -> supportBracketConsumedItem
-        WaterslideSupportPart.BEAM -> supportBeamConsumedItem
-    }
+    fun supportConsumedItem(part: WaterslideSupportPart): ItemStack =
+        if (!supportBracketConsumedItem.isEmpty) supportBracketConsumedItem else supportBeamConsumedItem
 
     fun hasCustomSupportMaterial(part: WaterslideSupportPart): Boolean =
-        !AllBlocks.COPYCAT_BASE.has(supportMaterial(part))
+        !AllBlocks.COPYCAT_BASE.has(supportBracketMaterial) ||
+            !AllBlocks.COPYCAT_BASE.has(supportBeamMaterial)
 
     fun setSupportMaterial(part: WaterslideSupportPart, material: BlockState, consumed: ItemStack) {
-        when (part) {
-            WaterslideSupportPart.BRACKET -> {
-                supportBracketMaterial = material
-                supportBracketConsumedItem = consumed.copyWithCount(1)
-            }
-            WaterslideSupportPart.BEAM -> {
-                supportBeamMaterial = material
-                supportBeamConsumedItem = consumed.copyWithCount(1)
-            }
-        }
+        // both parts get the same material (unified support)
+        supportBracketMaterial = material
+        supportBeamMaterial = material
+        supportBracketConsumedItem = consumed.copyWithCount(1)
+        supportBeamConsumedItem = consumed.copyWithCount(1)
         setChanged()
         notifyBlockUpdated()
     }
 
     fun cycleSupportMaterial(part: WaterslideSupportPart): Boolean {
         val cycled = WaterslideSupportMaterials.cycleMaterial(supportMaterial(part)) ?: return false
-        when (part) {
-            WaterslideSupportPart.BRACKET -> supportBracketMaterial = cycled
-            WaterslideSupportPart.BEAM -> supportBeamMaterial = cycled
-        }
+        supportBracketMaterial = cycled
+        supportBeamMaterial = cycled
         setChanged()
         notifyBlockUpdated()
         return true
@@ -124,16 +115,11 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
 
     fun resetSupportMaterial(part: WaterslideSupportPart): ItemStack {
         val returned = supportConsumedItem(part)
-        when (part) {
-            WaterslideSupportPart.BRACKET -> {
-                supportBracketMaterial = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
-                supportBracketConsumedItem = ItemStack.EMPTY
-            }
-            WaterslideSupportPart.BEAM -> {
-                supportBeamMaterial = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
-                supportBeamConsumedItem = ItemStack.EMPTY
-            }
-        }
+        // both parts reset together (unified support)
+        supportBracketMaterial = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
+        supportBeamMaterial = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
+        supportBracketConsumedItem = ItemStack.EMPTY
+        supportBeamConsumedItem = ItemStack.EMPTY
         setChanged()
         notifyBlockUpdated()
         return returned
@@ -381,6 +367,8 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         supportBeamConsumedItem = ItemStack.parseOptional(
             registries, tag.getCompound("SupportBeamItem")
         )
+        val prevBracketVisible = supportBracketVisible
+        val prevBeamVisible = supportBeamVisible
         supportBracketVisible = if (tag.contains("SupportBracketVisible", 1))
             tag.getBoolean("SupportBracketVisible") else true
         supportBeamVisible = if (tag.contains("SupportBeamVisible", 1))
@@ -390,6 +378,12 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         }
 // refresh visuals after curve data arrives
         if (level?.isClientSide == true) {
+            // support visibility is NOT part of the tube visual data signature,
+            // so a visibility-only change (wrench restore / axe delete) would
+            // never rebuild the flywheel visuals - force the rebuild here
+            if (supportBracketVisible != prevBracketVisible || supportBeamVisible != prevBeamVisible) {
+                WaterslideTubeVisual.refreshAll()
+            }
             WaterslideTubeVisual.refreshAnchor(blockPos)
         } else if (level != null) {
             // server: curve topology (place/remove/drag) arrives through NBT.

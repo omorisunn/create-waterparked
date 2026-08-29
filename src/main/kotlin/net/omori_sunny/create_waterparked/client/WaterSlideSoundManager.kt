@@ -80,10 +80,6 @@ object WaterSlideSoundManager {
                         // volume and position must be valid before play
                         it.setVolume(volume)
                         it.setPosition(nearestPos)
-                        CreateWaterparked.LOGGER.info(
-                            "[WaterSound] play key={} pos={} distSq={} volume={}",
-                            key, nearestPos, nearestSq, volume
-                        )
                         mc.soundManager.play(it)
                     }
                 }
@@ -99,14 +95,6 @@ object WaterSlideSoundManager {
                 Minecraft.getInstance().soundManager.stop(e.value)
                 it.remove()
             }
-        }
-
-        if (level.gameTime - debugTick >= 40) {
-            debugTick = level.gameTime
-            CreateWaterparked.LOGGER.info(
-                "[WaterSound] playableCurves={} inRange={} sounds={} player={}",
-                playableCurves, curvesInRange, sounds.size, p
-            )
         }
     }
 

@@ -16,6 +16,8 @@ public class WaterparkedMixinPlugin implements IMixinConfigPlugin {
     private static final String IRIS_PROBE_MIXIN = "client.iris.GlShaderSourceProbeMixin";
     private static final String COLORWHEEL_MIXIN = "client.colorwheel.ColorwheelWaterEntityMixin";
     private static final String COLORWHEEL_TARGET = "dev.djefrey.colorwheel.engine.ClrwlMeshPool";
+    private static final String PONDER_PACKAGE = "ponder.";
+    private static final String PONDER_LEVEL = "net.createmod.ponder.api.level.PonderLevel";
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -35,6 +37,12 @@ public class WaterparkedMixinPlugin implements IMixinConfigPlugin {
         if (mixinClassName.endsWith(COLORWHEEL_MIXIN)) {
             // never Class.forName here, use a load free resource probe
             return classResourceExists(COLORWHEEL_TARGET);
+        }
+        // Ponder is optional: without the Ponder mod all ponder mixins must be
+        // skipped, otherwise the mixin engine fails to apply them (target
+        // classes absent) and the client crashes on load
+        if (mixinClassName.startsWith(PONDER_PACKAGE)) {
+            return classResourceExists(PONDER_LEVEL);
         }
         return true;
     }

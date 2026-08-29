@@ -320,6 +320,16 @@ public class WaterslideTubeVisual extends AbstractVisual
         sb.append(be.getRadius()).append('|');
         sb.append(be.supportMaterial(WaterslideSupportPart.BRACKET)).append('|');
         sb.append(be.supportMaterial(WaterslideSupportPart.BEAM)).append('|');
+        // support visibility + water state drive the emitted instances: without
+        // them in the signature, a wrench restore / axe delete / water toggle
+        // leaves the old instances in place until an unrelated change
+        sb.append(be.isSupportVisible(WaterslideSupportPart.BRACKET)).append('|');
+        sb.append(be.isSupportVisible(WaterslideSupportPart.BEAM)).append('|');
+        sb.append(be.getWaterActive()).append('|');
+        for (Map.Entry<BlockPos, Boolean> w : be.getWateredCurves().entrySet()) {
+            sb.append(w.getKey().asLong()).append('=').append(w.getValue()).append(';');
+        }
+        sb.append('|');
         for (Map.Entry<BlockPos, WaterslideSectorConfig> e : be.getSectorConfigs().entrySet()) {
             sb.append(e.getKey().asLong()).append('=');
             WaterslideSectorConfig cfg = e.getValue();
@@ -563,8 +573,7 @@ public class WaterslideTubeVisual extends AbstractVisual
     }
 
     // translucent when edited; refresh while dragging
-    public static void tickVisibility() {
-        Minecraft mc = Minecraft.getInstance();
+    public static void tickVisibility() {        Minecraft mc = Minecraft.getInstance();
         if (mc.level == null) {
             wasEditing = false;
             wasDragging = false;

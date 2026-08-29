@@ -1,7 +1,7 @@
 {
   "itemGroup.create_waterparked": "机械动力：水上乐园",
   "create_waterparked.simulated_section.waterparked": "水上乐园",
-  "block.create_waterparked.waterslide_track": "水滑梯轨道",
+  "block.create_waterparked.waterslide_track_block": "水滑梯轨道",
   "block.create_waterparked.waterslide_anchor": "水滑梯锚点",
   "item.create_waterparked.waterslide_track": "水滑梯轨道",
   "item.create_waterparked.waterslide_anchor": "水滑梯锚点",
@@ -19,5 +19,20 @@
   "create_waterparked.sector.delete_last": "无法删除最后一个扇区",
   "create_waterparked.track.sector_boundary_snap_hint": "按住 %s 取消对齐",
   "create_waterparked.slide.exit_hint": "按 %s 退出滑梯",
-  "create_waterparked.ponder.ponder_connect.header": "连接水滑梯锚点"
+  "create_waterparked.ponder.ponder_connect.header": "连接水滑梯锚点",
+  "create_waterparked.ponder.ponder_connect.text_1": "用水滑梯轨道右键两个水滑梯锚点进行连接",
+  "create_waterparked.ponder.ponder_connect.text_2": "两个锚点之间创建了一条水滑梯曲线",
+  "create_waterparked.ponder.ponder_connect.text_3": "可以使用扳手调整曲线的路径",
+  "create_waterparked.ponder.slide_ponder_0.header": "使用水滑梯轨道",
+  "create_waterparked.ponder.slide_ponder_0.text_1": "用水滑梯轨道右键两个水滑梯锚点......",
+  "create_waterparked.ponder.slide_ponder_0.text_2": "便可以新建一条水滑梯。",
+  "create_waterparked.ponder.slide_ponder_0.text_3": "水滑梯的一部分控制操作与过山车轨道完全一致。",
+  "create_waterparked.ponder.slide_ponder_0.text_4": "左右拖动可控制管口大小",
+  "create_waterparked.ponder.slide_ponder_0.text_5": "可以使用扳手调整曲线的路径",
+  "create_waterparked.ponder.slide_ponder_1.header": "扇区系统",
+  "create_waterparked.ponder.slide_ponder_1.text_1": "手持方块右键两个锚点...",
+  "create_waterparked.ponder.slide_ponder_1.text_2": "...可以添加一个对应方块贴图的扇区。",
+  "create_waterparked.ponder.slide_ponder_1.text_3": "手持斧头右键两个锚点...",
+  "create_waterparked.ponder.slide_ponder_1.text_4": "...可以添加一个空白扇区。",
+  "create_waterparked.ponder.slide_ponder_1.text_5": "你可以使用扳手来调整扇区的位置和大小"
 }

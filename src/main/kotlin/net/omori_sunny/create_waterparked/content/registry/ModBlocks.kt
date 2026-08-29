@@ -14,8 +14,11 @@ import thedarkcolour.kotlinforforge.neoforge.forge.getValue
 object ModBlocks {
     val REGISTRY: DeferredRegister.Blocks = DeferredRegister.createBlocks(CreateWaterparked.ID)
 
-    // slide curve block
-    val WATERSLIDE_TRACK: WaterslideTrackBlock by REGISTRY.register("waterslide_track") { ->
+    // slide curve block (named separately from the track ITEM: Ponder's scene
+    // registry keys scenes by raw ResourceLocation, so a block and an item with
+    // the same name would collide and the train-track storyboards would attach
+    // to our item - same naming style Coasters Simulated uses)
+    val WATERSLIDE_TRACK: WaterslideTrackBlock by REGISTRY.register("waterslide_track_block") { ->
         WaterslideTrackBlock(
             BlockBehaviour.Properties.of()
                 .mapColor(MapColor.METAL)

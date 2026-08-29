@@ -6,7 +6,7 @@
       "entries": [
         {
           "type": "minecraft:item",
-          "name": "create_waterparked:waterslide_track"
+          "name": "create_waterparked:waterslide_track_block"
         }
       ],
       "conditions": [
