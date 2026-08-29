@@ -151,7 +151,10 @@ object WaterslideTrackPlacement {
         CoasterTrackPropagator.runBatchUpdate(level, Runnable {
             val smoothing = WaterslideNeighborSmoothing.build(level, first, secondAnchor, primary, placement)
             val finalCurve = smoothing?.primary ?: primary
-            beA.putAnchorPeerCurve(level, secondAnchor, finalCurve)
+            // both handles point straight inwards along the anchor-to-anchor
+            // line: --o o--, nothing else is touched
+            val oriented = inlineHandlesTowardPeer(finalCurve)
+            beA.putAnchorPeerCurve(level, secondAnchor, oriented)
             if (smoothing != null) {
                 WaterslideNeighborSmoothing.commitNeighbors(level, smoothing.neighbors)
             }
@@ -200,5 +203,42 @@ object WaterslideTrackPlacement {
         } else {
             null
         }
+    }
+
+    // both handles are forced onto the anchor-to-anchor line, pointing
+    // inwards (A --o o-- B); lengths stay untouched and the actual curve
+    // endpoints (with the anchor lift) stay on the axis
+    private fun inlineHandlesTowardPeer(curve: BezierConnection): BezierConnection {
+        val p0 = curve.getPosition(0.0)
+        val p1 = curve.getPosition(1.0)
+        val u = p1.subtract(p0)
+        val len = u.length()
+        if (len < 1.0E-6) return curve
+        val axis = u.scale(1.0 / len)
+        val s0 = p0.add(axis.scale(curve.starts.getFirst().subtract(p0).length()))
+        val s1 = p1.subtract(axis.scale(curve.starts.getSecond().subtract(p1).length()))
+        return rebuildCurve(curve, s0, s1, axis, axis.scale(-1.0))
+    }
+
+    private fun rebuildCurve(
+        curve: BezierConnection,
+        s0: net.minecraft.world.phys.Vec3,
+        s1: net.minecraft.world.phys.Vec3,
+        ax0: net.minecraft.world.phys.Vec3,
+        ax1: net.minecraft.world.phys.Vec3
+    ): BezierConnection {
+        val out = BezierConnection(
+            curve.bePositions,
+            net.createmod.catnip.data.Couple.create(s0, s1),
+            net.createmod.catnip.data.Couple.create(ax0, ax1),
+            curve.normals,
+            curve.isPrimary,
+            curve.hasGirder,
+            curve.material
+        )
+        if (curve.smoothing != null) {
+            out.smoothing = curve.smoothing?.copy()
+        }
+        return out
     }
 }
