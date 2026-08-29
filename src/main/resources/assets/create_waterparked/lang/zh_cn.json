@@ -34,5 +34,14 @@
   "create_waterparked.ponder.slide_ponder_1.text_2": "...可以添加一个对应方块贴图的扇区。",
   "create_waterparked.ponder.slide_ponder_1.text_3": "手持斧头右键两个锚点...",
   "create_waterparked.ponder.slide_ponder_1.text_4": "...可以添加一个空白扇区。",
-  "create_waterparked.ponder.slide_ponder_1.text_5": "你可以使用扳手来调整扇区的位置和大小"
+  "create_waterparked.ponder.slide_ponder_1.text_5": "你可以使用扳手来调整扇区的位置和大小",
+  "create_waterparked.clipboard.copy_ok": "已复制滑梯配置到剪贴板",
+  "create_waterparked.clipboard.copy_miss": "请瞄准滑梯轨道",
+  "create_waterparked.clipboard.copy_fail": "该锚点没有可复制的滑梯轨道",
+  "create_waterparked.clipboard.paste_enter": "粘贴模式：右键滑梯轨道粘贴 · 潜行右键退出",
+  "create_waterparked.clipboard.paste_hint": "对准滑梯轨道右键粘贴",
+  "create_waterparked.clipboard.paste_ok": "滑梯配置已粘贴",
+  "create_waterparked.clipboard.paste_bad": "目标不是滑梯轨道",
+  "create_waterparked.clipboard.paste_exit": "已退出粘贴模式",
+  "create_waterparked.clipboard.summary": "%s 扇区 · %s°"
 }

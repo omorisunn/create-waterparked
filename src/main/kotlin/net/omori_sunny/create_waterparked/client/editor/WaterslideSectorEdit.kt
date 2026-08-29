@@ -329,8 +329,9 @@ object WaterslideSectorEdit {
         previewConfigs[key] = config
     }
 
-// wall hit test
-    private fun resolveWallHit(
+// wall hit test, shared with the clipboard interactions
+    @JvmStatic
+    fun resolveWallHit(
         level: Level,
         hitVec: Vec3,
         requireAnchor: BlockPos? = null
@@ -344,8 +345,9 @@ object WaterslideSectorEdit {
         if (tracking != null && tracking !== containing) {
             candidates += tracking to SableClientEdit.worldToPlot(tracking, hitVec)
         }
-        // world space is always a candidate once any sub level projection exists
-        if (containing == null) candidates += null to hitVec
+        // world space is ALWAYS a candidate: sublevel curves are stored with
+        // world-offset bePositions, so only the world space can hit them
+        candidates += null to hitVec
         val container = SubLevelContainer.getContainer(level)
         container?.allSubLevels?.forEach { raw ->
             val sub = raw as? ClientSubLevel ?: return@forEach
@@ -360,45 +362,90 @@ object WaterslideSectorEdit {
         var best: WallHit? = null
         var bestScore = Double.MAX_VALUE
         val seen = mutableSetOf<Pair<Long, Long>>()
-        for ((candidateSub, localHit) in candidates) {
-            for (be in WaterslideCurveRenderer.clientAnchors()) {
-                if (be.isRemoved) continue
-                for ((peer, raw) in be.anchorPeerCurvesView) {
-                    val primary = if (raw.isPrimary) raw else raw.secondary()
-                    if (!WaterslideTrackMaterials.isWaterslide(primary)) continue
-                    val key = curveKey(primary.bePositions.getFirst(), primary.bePositions.getSecond())
-                    // each curve stays in its own coordinate space
-                    val curveSub = Sable.HELPER.getContaining(level, primary.bePositions.getFirst())
-                        as? ClientSubLevel
-                    if (curveSub !== candidateSub) continue
-                    if (!seen.add(key)) continue
-                    if (resolvedRequire != null &&
-                        primary.bePositions.getFirst() != resolvedRequire &&
-                        primary.bePositions.getSecond() != resolvedRequire
-                    ) continue
+        // the fallback renderer registers its anchors, but the main world runs
+        // flywheel: SlideAnchorIndex keeps ALL anchors on both sides
+        val clientCount = WaterslideCurveRenderer.clientAnchors().count()
+        val indexCount = net.omori_sunny.create_waterparked.game.SlideAnchorIndex.all(level).size
+        val anchorBEs = LinkedHashMap<WaterslideAnchorBlockEntity, Boolean>()
+        for (be in WaterslideCurveRenderer.clientAnchors()) anchorBEs[be] = true
+        for (pos in net.omori_sunny.create_waterparked.game.SlideAnchorIndex.all(level)) {
+            val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
+            anchorBEs[be] = true
+        }
+        var checked = 0
+        var closestKey = "?"
+        var closestD = Double.MAX_VALUE
+        var closestR = 0f
+        var closestSub = false
+        val curveLogs = ArrayList<String>()
+        for (be in anchorBEs.keys) {
+            if (be.isRemoved) continue
+            for ((_, raw) in be.anchorPeerCurvesView) {
+                val primary = if (raw.isPrimary) raw else raw.secondary() ?: continue
+                if (!WaterslideTrackMaterials.isWaterslide(primary)) continue
+                val key = curveKey(primary.bePositions.getFirst(), primary.bePositions.getSecond())
+                if (!seen.add(key)) continue
+                if (resolvedRequire != null &&
+                    primary.bePositions.getFirst() != resolvedRequire &&
+                    primary.bePositions.getSecond() != resolvedRequire
+                ) continue
+                checked++
 
-                    val r0 = radiusAt(level, primary.bePositions.getFirst())
-                    val r1 = radiusAt(level, primary.bePositions.getSecond())
-                    val samples = max(64, primary.getSegmentCount() * 4)
-                    for (i in 0..samples) {
-                        val t = i.toFloat() / samples
-                        val center = primary.getPosition(t.toDouble())
-                        val rel = localHit.subtract(center)
-                        val dist = rel.length()
-                        val radius = Mth.lerp(t, r0, r1)
-// wall surface
-                        if (dist > radius + 0.4) continue
-                        val score = abs(dist - radius)
-                        if (score >= bestScore) continue
-                        bestScore = score
-                        val lateral = CoasterBezierRailFrames.lateralAt(primary, t, level)
-                        val up = CoasterBezierRailFrames.faceUpAt(primary, t, level)
-                        val degrees = Math.toDegrees(Math.atan2(rel.dot(up), rel.dot(lateral)))
-                        best = WallHit(primary, t, WaterslideSectorLayout.normalize(degrees.toFloat()))
+                // each curve lives in its own coordinate space: project the ray
+                // hit into the curve's plot when it is stored inside one
+                val curveSub = be.level as? ClientSubLevel
+                val localHit = if (curveSub != null) {
+                    SableClientEdit.worldToPlot(curveSub, hitVec)
+                } else {
+                    hitVec
+                }
+                if (curveLogs.size < 6) {
+                    curveLogs += "curve=${key.toString()} a=${primary.bePositions.getFirst()} " +
+                        "b=${primary.bePositions.getSecond()} be=${be.blockPos} " +
+                        "beLevel=${be.level?.javaClass?.simpleName} sub=${curveSub != null} " +
+                        "hit=$hitVec local=$localHit"
+                }
+
+                val r0 = radiusAt(level, primary.bePositions.getFirst())
+                val r1 = radiusAt(level, primary.bePositions.getSecond())
+                val samples = max(64, primary.getSegmentCount() * 4)
+                var curveMin = Double.MAX_VALUE
+                var curveMinR = 0f
+                for (i in 0..samples) {
+                    val t = i.toFloat() / samples
+                    val center = primary.getPosition(t.toDouble())
+                    val rel = localHit.subtract(center)
+                    val dist = rel.length()
+                    val radius = Mth.lerp(t, r0, r1)
+                    if (dist < curveMin) {
+                        curveMin = dist
+                        curveMinR = radius
                     }
+                    // wall surface
+                    if (dist > radius + 0.4) continue
+                    val score = abs(dist - radius)
+                    if (score >= bestScore) continue
+                    bestScore = score
+                    val lateral = CoasterBezierRailFrames.lateralAt(primary, t, level)
+                    val up = CoasterBezierRailFrames.faceUpAt(primary, t, level)
+                    val degrees = Math.toDegrees(Math.atan2(rel.dot(up), rel.dot(lateral)))
+                    best = WallHit(primary, t, WaterslideSectorLayout.normalize(degrees.toFloat()))
+                }
+                if (curveMin < closestD) {
+                    closestD = curveMin
+                    closestR = curveMinR
+                    closestKey = key.toString()
+                    closestSub = curveSub != null
                 }
             }
         }
+        diagLine = "anchorsC=$clientCount anchorsI=$indexCount curves=$checked " +
+            "closest=$closestKey d=${"%.2f".format(closestD)} r=${"%.2f".format(closestR)} sub=$closestSub " +
+            "containing=${containing?.uniqueId ?: "none"} " +
+            anchorBEs.keys.take(6).joinToString(" | ") { be ->
+                "be=${be.blockPos} removed=${be.isRemoved} curves=${be.anchorPeerCurvesView.size} " +
+                    "lvl=${be.level?.javaClass?.simpleName}"
+            } + " || " + curveLogs.joinToString(" | ")
         return best
     }
 
@@ -522,7 +569,33 @@ object WaterslideSectorEdit {
             .lineWidth(0.08f)
     }
 
-    private data class WallHit(val curve: BezierConnection, val t: Float, val angle: Float)
+    // closest-curve diagnostics of the last resolveWallHit call
+    @JvmStatic
+    var diagLine: String = ""
+
+    // closest wall hit along the eye ray, used by the clipboard interactions
+    @JvmStatic
+    fun pickWallAtCursor(mc: Minecraft): WallHit? {
+        val player = mc.player ?: return null
+        val level = mc.level ?: return null
+        val eye = player.eyePosition
+        val view = player.getViewVector(1f)
+        var best: WallHit? = null
+        var bestD = Double.MAX_VALUE
+        var d = 0.0
+        while (d <= 6.0) {
+            val hit = resolveWallHit(level, eye.add(view.scale(d)))
+            if (hit != null && d < bestD) {
+                bestD = d
+                best = hit
+            }
+            d += 0.15
+        }
+        CreateWaterparked.LOGGER.info("[WallHitDiag] eye={} view={} lvl={} {}", eye, view, level.javaClass.simpleName, diagLine)
+        return best
+    }
+
+    data class WallHit(val curve: BezierConnection, val t: Float, val angle: Float)
 
 // cursor sector lookup result
     data class SectorHit(

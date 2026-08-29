@@ -30,6 +30,8 @@
     "client.BezierHandleEditModeMixin",
     "client.BezierHandleOverlayMixin",
     "client.ChainLiftAnchorShaftRendererMixin",
+    "client.ClipboardScreenAccessor",
+    "client.ClipboardScreenMixin",
     "client.CoasterCurveSelectionOutlineRendererMixin",
     "client.CoasterCurveDyeOutlineClientMixin",
     "client.CoasterTrackPlacementPreviewMixin",

@@ -27,6 +27,9 @@ object ModPayloads {
         registrar.server(WaterslideDebugRequestPayload.TYPE, WaterslideDebugRequestPayload.STREAM_CODEC, WaterslideDebugRequestPayload::handleOnServer)
         registrar.server(WaterslideSupportApplyPayload.TYPE, WaterslideSupportApplyPayload.STREAM_CODEC, WaterslideSupportApplyPayload::handleOnServer)
         registrar.server(WaterslideSupportHoverPayload.TYPE, WaterslideSupportHoverPayload.STREAM_CODEC, WaterslideSupportHoverPayload::handleOnServer)
+        registrar.server(WaterslideSlideCopyPayload.TYPE, WaterslideSlideCopyPayload.STREAM_CODEC, WaterslideSlideCopyPayload::handleOnServer)
+        registrar.server(WaterslideSlidePastePayload.TYPE, WaterslideSlidePastePayload.STREAM_CODEC, WaterslideSlidePastePayload::handleOnServer)
+        registrar.server(WaterslideSlidePasteStatePayload.TYPE, WaterslideSlidePasteStatePayload.STREAM_CODEC, WaterslideSlidePasteStatePayload::handleOnServer)
         registrar.client(WaterslideDebugTrajectoryPayload.TYPE, WaterslideDebugTrajectoryPayload.STREAM_CODEC, WaterslideDebugTrajectoryPayload::handleOnClient)
     }
 

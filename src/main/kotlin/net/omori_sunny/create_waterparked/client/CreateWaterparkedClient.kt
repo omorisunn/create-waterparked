@@ -11,6 +11,8 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslideEditorRenderTy
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSupportEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPreview
+import net.omori_sunny.create_waterparked.client.editor.WaterslideClipboardPaste
+import net.omori_sunny.create_waterparked.client.editor.SlideClipboardCopy
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashParticle
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashSpawner
@@ -62,9 +64,13 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSupportEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onUseItemKey)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideClipboardPaste::onUseItemKey)
+        // after the paste listener, so an active paste mode wins the use key
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideClipboardCopy::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(WaterslidePlacementPreview::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideHotbarSync::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideSectorEdit::onClientTick)
+        NeoForge.EVENT_BUS.addListener(WaterslideClipboardPaste::onClientTick)
         NeoForge.EVENT_BUS.addListener(::onClientTick)
         NeoForge.EVENT_BUS.addListener(SlideClientSession::onClientTickPre)
         NeoForge.EVENT_BUS.addListener(SlideClientSession::onClientTickPost)

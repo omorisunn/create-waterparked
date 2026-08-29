@@ -73,8 +73,8 @@ class WaterslideSectorConfig {
         return copy
     }
 
-// repair legacy layouts
-    private fun repairBrokenLayout() {
+// repair legacy layouts (also used by the clipboard codec parse)
+    internal fun repairBrokenLayout() {
         for (i in sectors.indices) {
             val s = sectors[i]
             if (s.type == SectorType.FIXED && s.widthDegrees <= 0.5f) {

@@ -19,5 +19,14 @@
   "create_waterparked.sector.select_second": "Right-click the other waterslide anchor",
   "create_waterparked.sector.delete_last": "Cannot delete the last sector",
   "create_waterparked.track.sector_boundary_snap_hint": "Hold %s to disable snapping",
-  "create_waterparked.slide.exit_hint": "Press %s to exit the slide"
+  "create_waterparked.slide.exit_hint": "Press %s to exit the slide",
+  "create_waterparked.clipboard.copy_ok": "Slide config copied to the clipboard",
+  "create_waterparked.clipboard.copy_miss": "Aim at a waterslide track",
+  "create_waterparked.clipboard.copy_fail": "This anchor has no waterslide track to copy",
+  "create_waterparked.clipboard.paste_enter": "Paste mode: right-click a waterslide track to paste · sneak right-click to exit",
+  "create_waterparked.clipboard.paste_hint": "Right-click a waterslide track to paste",
+  "create_waterparked.clipboard.paste_ok": "Slide config pasted",
+  "create_waterparked.clipboard.paste_bad": "Target is not a waterslide track",
+  "create_waterparked.clipboard.paste_exit": "Paste mode exited",
+  "create_waterparked.clipboard.summary": "%s sectors · %s°"
 }
