@@ -1,4 +1,5 @@
 package net.omori_sunny.create_waterparked.mixin;
+// Mixin: waterslide curve cleanup when an anchor is removed.
 
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity;
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity;
@@ -9,7 +10,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-// drop sector data with the removed curve
 @Mixin(CoasterAnchorpointBlockEntity.class)
 public abstract class CoasterAnchorpointBlockEntityRemoveCurveMixin {
 
@@ -21,9 +21,11 @@ public abstract class CoasterAnchorpointBlockEntityRemoveCurveMixin {
     private void waterslide$clearSectorData(ServerLevel level, BlockPos peer, CallbackInfo ci) {
         if (!((Object) this instanceof WaterslideAnchorBlockEntity be)) return;
         be.removeSectorConfig(peer);
+        be.removeGhostBlocksForPeer(peer);
         be.resetRadiusIfEmpty();
         if (level.getBlockEntity(peer) instanceof WaterslideAnchorBlockEntity peerBe) {
             peerBe.removeSectorConfig(be.getBlockPos());
+            peerBe.removeGhostBlocksForPeer(be.getBlockPos());
             peerBe.resetRadiusIfEmpty();
         }
     }

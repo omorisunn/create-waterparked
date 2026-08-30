@@ -1,10 +1,13 @@
 package net.omori_sunny.create_waterparked.mixin.client;
+// Mixin: radius-aware coaster curve pick + fake ghost block hit for the slide.
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
 import com.simibubi.create.content.trains.track.BezierConnection;
+import dev.silvergold.simulatedcoasters.client.track.AnchorPeerCurveHit;
 import dev.silvergold.simulatedcoasters.client.track.AnchorPeerCurvePick;
+import net.omori_sunny.create_waterparked.client.editor.WaterslideGhostPlacement;
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRadiusEdit;
 import net.omori_sunny.create_waterparked.config.ModConfig;
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials;
@@ -16,14 +19,29 @@ import net.minecraft.world.phys.Vec3;
 import java.util.Optional;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-// radius-aware curve picking
 @Mixin(AnchorPeerCurvePick.class)
 public abstract class AnchorPeerCurvePickMixin {
 
     private static final float RADIUS_PADDING = 0.45f;
 
-// radius-aware coarse curve bounds
+    @Inject(method = "refineAfterCreatePass", at = @At("TAIL"))
+    private static void waterslide$ghostHitAfterRefine(Minecraft mc, CallbackInfo ci) {
+        try {
+            net.minecraft.world.phys.BlockHitResult hit = WaterslideGhostPlacement.fakeGhostHit(mc);
+            if (hit != null) {
+                mc.hitResult = hit;
+                AnchorPeerCurveHit.clear();
+            }
+        } catch (Throwable t) {
+            net.omori_sunny.create_waterparked.CreateWaterparked.INSTANCE.getLOGGER().warn(
+                "[WaterslideGhostHit] refine pass failed", t
+            );
+        }
+    }
+
     @WrapOperation(
         method = "refineAfterCreatePass",
         at = @At(
@@ -61,7 +79,6 @@ public abstract class AnchorPeerCurvePickMixin {
         return original.call(inflateByRadius(box, bc), from, to);
     }
 
-// per-segment radius at the segment midpoint
     @WrapOperation(
         method = "refineAfterCreatePass",
         at = @At(

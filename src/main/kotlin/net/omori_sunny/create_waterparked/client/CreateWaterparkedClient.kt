@@ -1,4 +1,5 @@
 package net.omori_sunny.create_waterparked.client
+// Client bootstrap: events, renderers, mixin hooks and payload handlers.
 
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer
 import net.omori_sunny.create_waterparked.CreateWaterparked
@@ -10,6 +11,7 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslideSupportOutline
 import net.omori_sunny.create_waterparked.client.editor.WaterslideEditorRenderTypes
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSupportEdit
+import net.omori_sunny.create_waterparked.client.editor.WaterslideGhostPlacement
 import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPreview
 import net.omori_sunny.create_waterparked.client.editor.WaterslideClipboardPaste
 import net.omori_sunny.create_waterparked.client.editor.SlideClipboardCopy
@@ -17,6 +19,7 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashParticle
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashSpawner
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
+import net.omori_sunny.create_waterparked.client.render.WaterslideGhostRenderer
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
@@ -45,12 +48,10 @@ import net.neoforged.neoforge.event.level.LevelEvent
 import net.neoforged.neoforge.network.PacketDistributor
 import thedarkcolour.kotlinforforge.neoforge.forge.MOD_BUS
 
-// client init
 @OnlyIn(Dist.CLIENT)
 object CreateWaterparkedClient {
 
     fun registerClientEvents() {
-        // patch the pack on a background thread, before Iris loads it
         Thread { IterationRPPatcher.runIfNeeded() }.apply {
             isDaemon = true
             name = "Waterparked-IterationRPPatcher"
@@ -59,17 +60,22 @@ object CreateWaterparkedClient {
         MOD_BUS.addListener(::onClientSetup)
         MOD_BUS.addListener(::onRegisterRenderers)
         MOD_BUS.addListener(::onRegisterParticleProviders)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onUseItemKey)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickBlock)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickItem)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onLeftClickBlock)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onAttackKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSupportEdit::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSupportEdit::onRightClickItem)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSupportEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideClipboardPaste::onUseItemKey)
-        // after the paste listener, so an active paste mode wins the use key
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideClipboardCopy::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(WaterslidePlacementPreview::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideHotbarSync::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideSectorEdit::onClientTick)
+        NeoForge.EVENT_BUS.addListener(WaterslideGhostPlacement::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideClipboardPaste::onClientTick)
         NeoForge.EVENT_BUS.addListener(::onClientTick)
         NeoForge.EVENT_BUS.addListener(SlideClientSession::onClientTickPre)
@@ -87,18 +93,13 @@ object CreateWaterparkedClient {
     }
 
     private fun onClientSetup(event: FMLClientSetupEvent) {
-        // safety net if the background patch run has not finished yet
         IterationRPPatcher.runIfNeeded()
-        // ponder stories for waterslide items - Ponder is an optional mod, so
-        // check for its class on the classpath BEFORE touching any Ponder
-        // reference: a missing Ponder would otherwise NoClassDefFoundError in
-        // the lambda body and crash the whole client
+        net.omori_sunny.create_waterparked.client.item.WaterslideItemTooltips.register()
         if (net.neoforged.fml.ModList.get().isLoaded("ponder") ||
             Thread.currentThread().contextClassLoader.getResource("net/createmod/ponder/foundation/PonderIndex.class") != null
         ) {
             event.enqueueWork { PonderIndex.addPlugin(WaterslidePonderPlugin()) }
         }
-        // flywheel instanced rendering
         SimpleBlockEntityVisualizer.builder(ModBlockEntities.WATERSLIDE_ANCHOR_BE)
             .factory { ctx, be, pt -> WaterslideTubeVisual(ctx, be, pt) }
             .neverSkipVanillaRender()
@@ -112,7 +113,6 @@ object CreateWaterparkedClient {
                     ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "textures/entity/slide_sit.png")
             }
         }
-        // fallback tube renderer when Flywheel visualization is unavailable
         event.registerBlockEntityRenderer(ModBlockEntities.WATERSLIDE_ANCHOR_BE) { ctx ->
             net.omori_sunny.create_waterparked.client.renderer.WaterslideTubeBlockEntityRenderer(ctx)
         }
@@ -128,13 +128,16 @@ object CreateWaterparkedClient {
         val buffers = Minecraft.getInstance().renderBuffers().bufferSource()
         when (event.stage) {
             RenderLevelStageEvent.Stage.AFTER_BLOCK_ENTITIES ->
-                WaterslideCurveRenderer.renderAllInEvent(event.poseStack, buffers)
-            // flush pipe batches
+                {
+                    WaterslideCurveRenderer.renderAllInEvent(event.poseStack, buffers)
+                    WaterslideGhostRenderer.renderAllInEvent(event.poseStack, buffers)
+                }
             RenderLevelStageEvent.Stage.AFTER_LEVEL ->
                 {
                     val mc = Minecraft.getInstance()
                     val camera = mc.gameRenderer.mainCamera
                     WaterslideCurveRenderer.endBatches(buffers)
+                    WaterslideGhostRenderer.endBatches(buffers)
                     WaterslideDyeOutline.render(
                         mc, event.poseStack, buffers,
                         camera.position, event.modelViewMatrix
@@ -170,6 +173,8 @@ object CreateWaterparkedClient {
         if (event.level.isClientSide) {
             WaterslideCurveRenderer.clearClientAnchors()
             WaterslideSupportEdit.clear()
+            WaterslideGhostPlacement.clear()
+            WaterslideGhostRenderer.clear()
             SlideSableOrientation.clearAll()
             SlideClientSession.resetActive()
             WaterFlowSimulation.clear()

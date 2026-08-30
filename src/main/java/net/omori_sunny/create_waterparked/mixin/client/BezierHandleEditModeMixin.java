@@ -1,4 +1,5 @@
 package net.omori_sunny.create_waterparked.mixin.client;
+// Mixin: wrench curve-editor gate for waterslide anchors.
 
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode;
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSupportEdit;
@@ -15,7 +16,6 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-// no edit UI without curves
 @Mixin(BezierHandleEditMode.class)
 public abstract class BezierHandleEditModeMixin {
 
@@ -32,22 +32,16 @@ public abstract class BezierHandleEditModeMixin {
     private static boolean waterslide$supportOwnsClick(Player player, BlockPos anchorPos) {
         if (player == null) return false;
         try {
-            // same call the click handlers make: hover cache first, slide-native
-            // 0.4m march second - whatever the click resolves to, the editor
-            // gate uses the exact same rule, so the two can never disagree
             WaterslideTubeVisual.SupportPick pick = WaterslideSupportEdit.hoveredPick();
             if (pick != null && pick.anchorPos.equals(anchorPos)) return true;
             pick = WaterslideSupportEdit.freshPick();
             return pick != null && pick.anchorPos.equals(anchorPos);
         } catch (Throwable t) {
-            // never let a pick failure open the editor by accident NOR break the
-            // click - fall back to the cache alone
             try {
                 net.omori_sunny.create_waterparked.CreateWaterparked.INSTANCE.getLOGGER().warn(
                     "[WaterslideBER] support pick failed in editor gate", t
                 );
             } catch (Throwable ignored) {
-                // logging is best effort
             }
             WaterslideTubeVisual.SupportPick cached = WaterslideSupportEdit.hoveredPick();
             return cached != null && cached.anchorPos.equals(anchorPos);
@@ -67,10 +61,8 @@ public abstract class BezierHandleEditModeMixin {
         boolean enforceReach,
         CallbackInfo ci
     ) {
-        if (!(level.getBlockEntity(anchorPos) instanceof WaterslideAnchorBlockEntity be)) return;
-        if (be.legCount() == 0) {
-            ci.cancel();
-        } else if (waterslide$supportOwnsClick(player, anchorPos)) {
+        if (!(level.getBlockEntity(anchorPos) instanceof WaterslideAnchorBlockEntity)) return;
+        if (waterslide$supportOwnsClick(player, anchorPos)) {
             ci.cancel();
         }
     }

@@ -1,4 +1,5 @@
 package net.omori_sunny.create_waterparked.client.editor
+// Sector editor plus the shared wall-hit resolution (used by ghost placement too).
 
 import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
@@ -22,7 +23,9 @@ import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
+import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
+import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial
 import net.omori_sunny.create_waterparked.content.waterslide.SectorType
@@ -65,12 +68,10 @@ import org.joml.Vector3f
 import kotlin.math.abs
 import kotlin.math.max
 
-// Client-side sector editing.
 @OnlyIn(Dist.CLIENT)
 object WaterslideSectorEdit {
 
     private const val PICK_RADIUS = 0.2
-    // control rings sit outside the tube rim, never cover the opening handle
     private const val CONTROL_RING_OFFSET = 0.75f
     private const val BOUNDARY_RING_GAP = 0.55f
     private const val WALL_SEGMENTS = 24
@@ -85,7 +86,6 @@ object WaterslideSectorEdit {
     private var dragCurveKey: Pair<Long, Long>? = null
     private var dragSectorId = -1
     private var dragBoundarySectorId = -1
-    // Eased drag angle.
     private var currentDragAngle = 0f
     private var currentBoundaryAngle = 0f
     private var lastChainRefreshAngle = -1f
@@ -96,8 +96,6 @@ object WaterslideSectorEdit {
 
     fun previewConfigFor(a: BlockPos, b: BlockPos): WaterslideSectorConfig? =
         previewConfigs[curveKey(a, b)]
-
-    // Right-click add/delete.
 
     @JvmStatic
     fun onRightClickBlock(event: PlayerInteractEvent.RightClickBlock) {
@@ -110,7 +108,6 @@ object WaterslideSectorEdit {
         }
 
         if (!event.level.isClientSide) {
-// block vanilla placement
             if (mainBlockId != null && !player.isShiftKeyDown &&
                 event.level.getBlockState(event.pos).block is WaterslideAnchorBlock
             ) {
@@ -126,7 +123,6 @@ object WaterslideSectorEdit {
             return
         }
 
-        // two step block add, only full cube blocks become sectors
         if (mainBlockId != null) {
             val block = BuiltInRegistries.BLOCK.get(mainBlockId)
             if (!net.minecraft.world.level.block.Block.isShapeFullBlock(
@@ -138,17 +134,13 @@ object WaterslideSectorEdit {
             handleAdd(event, player, mainBlockId)
             return
         }
-// axe (not sneaking) adds an empty sector
         if (player.mainHandItem.item is AxeItem && !player.isShiftKeyDown) {
             handleAdd(event, player, null)
             return
         }
-// axe + sneak deletes via the use-key handler's single ray (no wrench needed)
         if (player.mainHandItem.item is AxeItem) return
 
-// add open / delete sector
         if (!AllItems.WRENCH.isIn(player.offhandItem)) return
-// anchor clicks pass through
         if (event.level.getBlockState(event.pos).block is WaterslideAnchorBlock) return
         val hitVec = event.hitVec?.location ?: return
         val hit = resolveWallHit(event.level, hitVec) ?: return
@@ -189,14 +181,12 @@ object WaterslideSectorEdit {
             pos, pending, blockId
         )
 
-// sneak = vanilla place
         if (player.isShiftKeyDown) {
             clearPending(level)
             return
         }
 
         if (pending == null) {
-            // First click selects the anchor.
             if (level.getBlockState(pos).block !is WaterslideAnchorBlock) {
                 CreateWaterparked.LOGGER.debug(
                     "WaterslideSectorEdit: first click not an anchor at {} state={}",
@@ -217,7 +207,6 @@ object WaterslideSectorEdit {
             return
         }
 
-        // Second click targets the other anchor.
         if (level.getBlockState(pos).block is WaterslideAnchorBlock) {
             if (pos == pending) {
                 clearPending(level)
@@ -231,7 +220,6 @@ object WaterslideSectorEdit {
                 pending, pos, curve
             )
             if (curve == null) {
-                // No curve between anchors.
                 player.displayClientMessage(
                     Component.translatable("create_waterparked.track.must_attach_to_slide_anchors")
                         .withStyle(ChatFormatting.RED),
@@ -241,7 +229,6 @@ object WaterslideSectorEdit {
                 event.cancellationResult = InteractionResult.SUCCESS
                 return
             }
-// insert at 0 degrees
             optimisticAdd(level, curve, action, 0f, blockId)
             sendSector(level, curve, action, 0f, blockId)
             spawnParticles(level, Vec3.atCenterOf(pending), 8)
@@ -257,7 +244,6 @@ object WaterslideSectorEdit {
             return
         }
 
-// insert at hit angle
         val hitVec = event.hitVec?.location ?: run {
             clearPending(level)
             return
@@ -301,7 +287,6 @@ object WaterslideSectorEdit {
         )
     }
 
-// local preview
     private fun optimisticAdd(
         level: Level,
         curve: BezierConnection,
@@ -329,14 +314,12 @@ object WaterslideSectorEdit {
         previewConfigs[key] = config
     }
 
-// wall hit test, shared with the clipboard interactions
     @JvmStatic
     fun resolveWallHit(
         level: Level,
         hitVec: Vec3,
         requireAnchor: BlockPos? = null
     ): WallHit? {
-        // one candidate per plausible coordinate space, compare curves in that space
         val player = Minecraft.getInstance().player
         val containing = Sable.HELPER.getContaining(level, hitVec) as? ClientSubLevel
         val tracking = player?.let { Sable.HELPER.getTrackingSubLevel(it) as? ClientSubLevel }
@@ -345,15 +328,12 @@ object WaterslideSectorEdit {
         if (tracking != null && tracking !== containing) {
             candidates += tracking to SableClientEdit.worldToPlot(tracking, hitVec)
         }
-        // world space is ALWAYS a candidate: sublevel curves are stored with
-        // world-offset bePositions, so only the world space can hit them
         candidates += null to hitVec
         val container = SubLevelContainer.getContainer(level)
         container?.allSubLevels?.forEach { raw ->
             val sub = raw as? ClientSubLevel ?: return@forEach
             if (sub === tracking || sub === containing) return@forEach
             val plot = SableClientEdit.worldToPlot(sub, hitVec)
-            // keep the projection only when it lands inside this plot
             if (Sable.HELPER.getContaining(level, plot) === sub) candidates += sub to plot
         }
         if (candidates.isEmpty()) candidates += null to hitVec
@@ -362,22 +342,12 @@ object WaterslideSectorEdit {
         var best: WallHit? = null
         var bestScore = Double.MAX_VALUE
         val seen = mutableSetOf<Pair<Long, Long>>()
-        // the fallback renderer registers its anchors, but the main world runs
-        // flywheel: SlideAnchorIndex keeps ALL anchors on both sides
-        val clientCount = WaterslideCurveRenderer.clientAnchors().count()
-        val indexCount = net.omori_sunny.create_waterparked.game.SlideAnchorIndex.all(level).size
         val anchorBEs = LinkedHashMap<WaterslideAnchorBlockEntity, Boolean>()
         for (be in WaterslideCurveRenderer.clientAnchors()) anchorBEs[be] = true
         for (pos in net.omori_sunny.create_waterparked.game.SlideAnchorIndex.all(level)) {
             val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
             anchorBEs[be] = true
         }
-        var checked = 0
-        var closestKey = "?"
-        var closestD = Double.MAX_VALUE
-        var closestR = 0f
-        var closestSub = false
-        val curveLogs = ArrayList<String>()
         for (be in anchorBEs.keys) {
             if (be.isRemoved) continue
             for ((_, raw) in be.anchorPeerCurvesView) {
@@ -389,68 +359,63 @@ object WaterslideSectorEdit {
                     primary.bePositions.getFirst() != resolvedRequire &&
                     primary.bePositions.getSecond() != resolvedRequire
                 ) continue
-                checked++
-
-                // each curve lives in its own coordinate space: project the ray
-                // hit into the curve's plot when it is stored inside one
                 val curveSub = be.level as? ClientSubLevel
                 val localHit = if (curveSub != null) {
                     SableClientEdit.worldToPlot(curveSub, hitVec)
                 } else {
                     hitVec
                 }
-                if (curveLogs.size < 6) {
-                    curveLogs += "curve=${key.toString()} a=${primary.bePositions.getFirst()} " +
-                        "b=${primary.bePositions.getSecond()} be=${be.blockPos} " +
-                        "beLevel=${be.level?.javaClass?.simpleName} sub=${curveSub != null} " +
-                        "hit=$hitVec local=$localHit"
-                }
 
                 val r0 = radiusAt(level, primary.bePositions.getFirst())
                 val r1 = radiusAt(level, primary.bePositions.getSecond())
                 val samples = max(64, primary.getSegmentCount() * 4)
-                var curveMin = Double.MAX_VALUE
-                var curveMinR = 0f
                 for (i in 0..samples) {
                     val t = i.toFloat() / samples
                     val center = primary.getPosition(t.toDouble())
                     val rel = localHit.subtract(center)
                     val dist = rel.length()
                     val radius = Mth.lerp(t, r0, r1)
-                    if (dist < curveMin) {
-                        curveMin = dist
-                        curveMinR = radius
-                    }
-                    // wall surface
                     if (dist > radius + 0.4) continue
                     val score = abs(dist - radius)
                     if (score >= bestScore) continue
                     bestScore = score
-                    val lateral = CoasterBezierRailFrames.lateralAt(primary, t, level)
-                    val up = CoasterBezierRailFrames.faceUpAt(primary, t, level)
+                    val tangent = CoasterBezierRailFrames.unitTangentAt(primary, t)
+                    val (lateral, up) = SlideCurveGeometry.stableFrame(tangent)
                     val degrees = Math.toDegrees(Math.atan2(rel.dot(up), rel.dot(lateral)))
-                    best = WallHit(primary, t, WaterslideSectorLayout.normalize(degrees.toFloat()))
-                }
-                if (curveMin < closestD) {
-                    closestD = curveMin
-                    closestR = curveMinR
-                    closestKey = key.toString()
-                    closestSub = curveSub != null
+                    best = WallHit(
+                        primary, t, WaterslideSectorLayout.normalize(degrees.toFloat()),
+                        surfacePlot = tubeSurfacePoint(
+                            primary, level, t,
+                            Mth.lerp(t, r0, r1) + (ModClientConfig.wallThickness() - 0.1f),
+                            lateral, up,
+                            WaterslideSectorLayout.normalize(degrees.toFloat())
+                        ),
+                        spaceAnchor = be.blockPos
+                    )
                 }
             }
         }
-        diagLine = "anchorsC=$clientCount anchorsI=$indexCount curves=$checked " +
-            "closest=$closestKey d=${"%.2f".format(closestD)} r=${"%.2f".format(closestR)} sub=$closestSub " +
-            "containing=${containing?.uniqueId ?: "none"} " +
-            anchorBEs.keys.take(6).joinToString(" | ") { be ->
-                "be=${be.blockPos} removed=${be.isRemoved} curves=${be.anchorPeerCurvesView.size} " +
-                    "lvl=${be.level?.javaClass?.simpleName}"
-            } + " || " + curveLogs.joinToString(" | ")
         return best
     }
 
     private fun radiusAt(level: Level, pos: BlockPos): Float =
         SableClientEdit.resolve(level, pos)?.be?.radius ?: ModConfig.defaultSlideRadius()
+
+    private fun tubeSurfacePoint(
+        curve: BezierConnection,
+        level: Level,
+        t: Float,
+        outerRadius: Float,
+        lateral: Vec3,
+        up: Vec3,
+        angle: Float
+    ): Vec3 {
+        val rad = Math.toRadians(angle.toDouble())
+        val center = curve.getPosition(t.toDouble())
+        return center
+            .add(lateral.scale(Math.cos(rad) * outerRadius))
+            .add(up.scale(Math.sin(rad) * outerRadius))
+    }
 
     private fun findCurveByAnchors(level: Level, a: BlockPos, b: BlockPos): BezierConnection? {
         return findCurveOneWay(level, a, b) ?: findCurveOneWay(level, b, a)
@@ -522,7 +487,6 @@ object WaterslideSectorEdit {
     private fun isSectorAddTool(stack: net.minecraft.world.item.ItemStack): Boolean =
         stack.item is BlockItem || stack.item is AxeItem
 
-// second anchor add preview
     private fun updateTargetPreview(mc: Minecraft, level: Level, pending: BlockPos) {
         val target = (mc.hitResult as? BlockHitResult)?.blockPos
         val valid = target != null &&
@@ -569,11 +533,6 @@ object WaterslideSectorEdit {
             .lineWidth(0.08f)
     }
 
-    // closest-curve diagnostics of the last resolveWallHit call
-    @JvmStatic
-    var diagLine: String = ""
-
-    // closest wall hit along the eye ray, used by the clipboard interactions
     @JvmStatic
     fun pickWallAtCursor(mc: Minecraft): WallHit? {
         val player = mc.player ?: return null
@@ -591,13 +550,20 @@ object WaterslideSectorEdit {
             }
             d += 0.15
         }
-        CreateWaterparked.LOGGER.info("[WallHitDiag] eye={} view={} lvl={} {}", eye, view, level.javaClass.simpleName, diagLine)
         return best
     }
 
-    data class WallHit(val curve: BezierConnection, val t: Float, val angle: Float)
+    data class WallHit(
+        val curve: BezierConnection,
+        val t: Float,
+        val angle: Float,
+        val surfacePlot: Vec3? = null,
+        val spaceAnchor: BlockPos? = null
+    )
 
-// cursor sector lookup result
+    @JvmStatic
+    fun isPendingSectorEdit(): Boolean = pendingBlockAnchor != null
+
     data class SectorHit(
         val curve: BezierConnection,
         val sectorId: Int,
@@ -610,11 +576,9 @@ object WaterslideSectorEdit {
         val arcLengthBlocks: Float
     )
 
-// sector id under the cursor
     @JvmStatic
     fun sectorIdUnderCursor(mc: Minecraft): Int? = sectorUnderCursor(mc)?.sectorId
 
-// change the sector block under the cursor
     @JvmStatic
     fun setSectorBlock(mc: Minecraft, sectorId: Int, blockId: net.minecraft.resources.ResourceLocation?): Boolean {
         val hit = sectorUnderCursor(mc) ?: return false
@@ -631,7 +595,6 @@ object WaterslideSectorEdit {
         return true
     }
 
-// sector block and size under the cursor
     @JvmStatic
     fun sectorUnderCursor(mc: Minecraft): SectorHit? {
         val player = mc.player ?: return null
@@ -665,13 +628,11 @@ object WaterslideSectorEdit {
         )
     }
 
-// dye the sector under the cursor on the use key
     @JvmStatic
     fun onUseItemKey(event: InputEvent.InteractionKeyMappingTriggered) {
         if (!event.isUseItem) return
         val mc = Minecraft.getInstance()
         val player = mc.player ?: return
-// axe sneak deletes the sector under the cursor
         if (player.mainHandItem.item is AxeItem && player.isShiftKeyDown) {
             if (trySendAxeDelete(mc)) {
                 event.setCanceled(true)
@@ -722,7 +683,6 @@ object WaterslideSectorEdit {
         return true
     }
 
-// CCS-style dye resolution
     private fun trySendDyeApply(mc: Minecraft): Boolean {
         val player = mc.player ?: return false
         val level = mc.level ?: return false
@@ -759,7 +719,6 @@ object WaterslideSectorEdit {
 
     data class LiveAnchorFrame(val center: Vec3, val lateral: Vec3, val up: Vec3)
 
-// opening frame shared by ring and control points
     private fun anchorOpeningFrame(level: Level, anchor: BlockPos): LiveAnchorFrame? {
         liveAnchorFrame(level, anchor)?.let { return it }
         val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return null
@@ -776,8 +735,6 @@ object WaterslideSectorEdit {
         return null
     }
 
-    // Control point dragging.
-
     @JvmStatic
     fun mixinClientTick(mc: Minecraft) {
         val player = mc.player ?: return clear()
@@ -786,11 +743,9 @@ object WaterslideSectorEdit {
         if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return clear()
         val ctx = SableClientEdit.resolve(level, anchor) ?: return clear()
-        // all sector math happens in plot-global coordinates
         val anchorGlobal = ctx.globalPos
         val be = ctx.be
         if (WaterslideRadiusEdit.isDragging() || BezierHandleDragManager.isDraggingHandle()) return
-        // the opening radius handle wins any shared pick space
         if (WaterslideRadiusEdit.isHoveringOrDragging(mc)) return
         tickPointAnimation(level, be)
 
@@ -812,7 +767,6 @@ object WaterslideSectorEdit {
                 )
             }
             var targetAngle = angleFromDrag(level, anchorGlobal, curve, eye, view) ?: return clear()
-            // control points snap to a 2 degree grid, ALT frees the angle
             val snappedAngle: Float = if (draggingBoundary) {
                 if (AllKeys.ALT_MODIFIER.isPressed()) targetAngle
                 else alignedBoundaryAngle(level, anchorGlobal, curve, key, targetAngle)
@@ -830,7 +784,6 @@ object WaterslideSectorEdit {
                 currentDragAngle = easeAngle(currentDragAngle, snappedAngle)
                 applyMove(config, dragSectorId, currentDragAngle)
             }
-            // drag tick, a soft scroll click per 2 degree cell crossed
             val soundAngle = if (draggingBoundary) currentBoundaryAngle else currentDragAngle
             if (lastDragSoundAngle.isNaN() || abs(soundAngle - lastDragSoundAngle) >= 2f) {
                 val inCell = if (lastDragSoundAngle.isNaN()) 0f
@@ -880,7 +833,6 @@ object WaterslideSectorEdit {
         }
     }
 
-// tick the control point easing
     private fun tickPointAnimation(level: Level, be: WaterslideAnchorBlockEntity) {
         for ((peer, raw) in be.anchorPeerCurvesView) {
             val primary = if (raw.isPrimary) raw else raw.secondary()
@@ -899,7 +851,6 @@ object WaterslideSectorEdit {
         }
     }
 
-// eased angle
     private fun easeAngle(current: Float, target: Float): Float {
         var delta = WaterslideSectorLayout.normalize(target - current)
         if (delta > 180f) delta -= 360f
@@ -947,7 +898,6 @@ object WaterslideSectorEdit {
                 val normal = cp.normal?.let {
                     CoasterAnchorClientSpace.toRenderDirection(level, anchorGlobal, it)
                 } ?: Vec3(0.0, 1.0, 0.0)
-// radial normal alignment
                 WaterslideEditorRenderTypes.billboardOrientedTexturedQuad(
                     poseStack,
                     bufferSource.getBuffer(WaterslideEditorRenderTypes.boundaryHandleBillboard(tex)),
@@ -975,9 +925,6 @@ object WaterslideSectorEdit {
     @JvmStatic
     fun isHoveringOrDraggingControlPoint(mc: Minecraft): Boolean {
         if (dragging || draggingBoundary) return true
-        // a mere hover must not cancel vanilla use: support part clicks next
-        // to the sector control rings would get eaten. Only suppress while the
-        // use key is actually held (about to grab / mid-drag).
         val player = mc.player ?: return false
         if (!mc.options.keyUse.isDown) return false
         val level = mc.level ?: return false
@@ -987,7 +934,6 @@ object WaterslideSectorEdit {
         return pickControlPoint(mc, level, ctx.globalPos, ctx.be) != null
     }
 
-    // Dragging state for the Flywheel visual.
     @JvmStatic
     fun isDraggingControlPoint(): Boolean = dragging || draggingBoundary
 
@@ -1027,10 +973,7 @@ object WaterslideSectorEdit {
                     .add(up.scale(Math.sin(rad) * ringRadius))
                 out += ControlPoint(key, p.sector.id, pos)
             }
-// junction control points
             if (placed.size < 2) continue
-            // fixed radial gap from the center ring so boundary handles stay
-            // pickable even at the smallest slide radius
             val boundaryRadius = ringRadius + BOUNDARY_RING_GAP
             val seenBoundaries = HashSet<Float>()
             for (p in placed) {
@@ -1089,7 +1032,6 @@ object WaterslideSectorEdit {
         WaterslideSectorLayout.applyMove(config, sectorId, newCenterAngle)
     }
 
-    // snap to the nearest boundary of the connected curve on the other side
     private fun alignedBoundaryAngle(
         level: Level,
         anchor: BlockPos,
@@ -1132,8 +1074,6 @@ object WaterslideSectorEdit {
         return best?.let { WaterslideSectorLayout.normalize(it) }
     }
 
-    // Helpers.
-
     private fun findCurve(level: Level, key: Pair<Long, Long>): BezierConnection? {
         val a = BlockPos.of(key.first)
         val b = BlockPos.of(key.second)
@@ -1172,7 +1112,6 @@ object WaterslideSectorEdit {
         return CircleFrame(up.cross(ref).normalize(), up)
     }
 
-// live preview frame (plot-global space; converted to render space by the callers)
     @JvmStatic
     fun liveAnchorFrame(level: Level, anchor: BlockPos): LiveAnchorFrame? {
         val be = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity ?: return null
@@ -1214,8 +1153,6 @@ object WaterslideSectorEdit {
         b: Float,
         a: Float
     ) {
-        // match the tube wall's low-poly cross-section grid (gridAnchor=90,
-        // crossSections() sides) so the outline follows the actual polygon
         val crossN = WaterslideTubeMesh.crossSections()
         val degStep = 360.0 / crossN
         for (i in 0 until crossN) {
@@ -1229,7 +1166,6 @@ object WaterslideSectorEdit {
         }
     }
 
-// texture fallback
     private fun boundaryHandleTexture(
         mc: Minecraft,
         dragging: Boolean,

@@ -38,6 +38,7 @@
     "client.CreativeModeInventoryScreenWaterparkedBannerMixin",
     "client.CreativeModeInventoryScreenWaterparkedTooltipMixin",
     "client.LevelRendererAccessor",
+    "client.MinecraftGhostAttackMixin",
     "client.iris.IrisWaterPassMixin",
     "client.iris.GlShaderSourceProbeMixin",
     "client.colorwheel.ColorwheelWaterEntityMixin",

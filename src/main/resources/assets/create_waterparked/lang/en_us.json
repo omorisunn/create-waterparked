@@ -28,5 +28,12 @@
   "create_waterparked.clipboard.paste_ok": "Slide config pasted",
   "create_waterparked.clipboard.paste_bad": "Target is not a waterslide track",
   "create_waterparked.clipboard.paste_exit": "Paste mode exited",
-  "create_waterparked.clipboard.summary": "%s sectors · %s°"
+  "create_waterparked.clipboard.summary": "%s sectors · %s°",
+  "item.create_waterparked.waterslide_anchor.tooltip.behaviour": "enter the watered state",
+  "item.create_waterparked.waterslide_anchor.tooltip.condition": "When water is pumped in",
+  "item.create_waterparked.waterslide_anchor.tooltip.summary": "Used to _anchor slide endpoint_ positions",
+  "item.create_waterparked.waterslide_track.tooltip.behaviour": "copy the slide sector config into the clipboard",
+  "item.create_waterparked.waterslide_track.tooltip.condition": "When right-clicked with the clipboard",
+  "item.create_waterparked.waterslide_track.tooltip.summary": "Used to _connect_ waterslide anchors",
+  "item.create_waterparked.incomplete_waterslide_track": "Incomplete Water Slide Track"
 }

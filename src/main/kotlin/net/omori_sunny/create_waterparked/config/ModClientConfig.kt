@@ -1,18 +1,16 @@
 package net.omori_sunny.create_waterparked.config
+// Client config: wall thickness, ghost clip mode, polygon scale.
 
 import net.neoforged.fml.ModLoadingContext
 import net.neoforged.fml.config.ModConfig
 import net.neoforged.neoforge.common.ModConfigSpec
 
-// client config
 object ModClientConfig {
     private val BUILDER = ModConfigSpec.Builder()
 
-    // slide (riding)
     lateinit var SHOW_SLIDE_EXIT_HINT: ModConfigSpec.BooleanValue
     lateinit var CAMERA_SMOOTHING: ModConfigSpec.DoubleValue
     lateinit var SHOW_SKELETON_WHEN_TRANSLUCENT: ModConfigSpec.BooleanValue
-    // rendering
     lateinit var POLYGON_SCALE: ModConfigSpec.DoubleValue
     lateinit var WALL_THICKNESS: ModConfigSpec.DoubleValue
     lateinit var WATER_FLOW_SCALE: ModConfigSpec.DoubleValue
@@ -21,18 +19,15 @@ object ModClientConfig {
     lateinit var WATER_JITTER_SCALE: ModConfigSpec.DoubleValue
     lateinit var WATER_JITTER_FREQUENCY: ModConfigSpec.DoubleValue
     lateinit var WATER_JITTER_TIME_SCALE: ModConfigSpec.DoubleValue
-    // water simulation
     lateinit var WATER_PARTICLE_COUNT: ModConfigSpec.IntValue
-    // support structure (copycat-style bracket shell + beam)
     lateinit var SUPPORT_FRACTION: ModConfigSpec.DoubleValue
     lateinit var SUPPORT_THICKNESS: ModConfigSpec.DoubleValue
     lateinit var SUPPORT_BEAM_SIZE: ModConfigSpec.DoubleValue
     lateinit var SUPPORT_BRACKET_THICKNESS: ModConfigSpec.DoubleValue
     lateinit var SHADER_WATER_COMPAT: ModConfigSpec.BooleanValue
-    // slide splash particles
+    lateinit var GHOST_CLIP_MODE: ModConfigSpec.ConfigValue<String>
     lateinit var SPLASH_DENSITY: ModConfigSpec.DoubleValue
     lateinit var SPLASH_MAX_RATE: ModConfigSpec.IntValue
-    // debug
     lateinit var WATER_SIM_DEBUG: ModConfigSpec.BooleanValue
 
     lateinit var SPEC: ModConfigSpec
@@ -81,6 +76,12 @@ object ModClientConfig {
         SHADER_WATER_COMPAT = BUILDER
             .comment("Enable shaderpack water adaptation: the tube water and thrown stream are stamped and shaded through the active shaderpack's own water program (BSL / Complementary / Photon adapters). Turn off to render water with the plain translucent appearance under any shaderpack.")
             .define("shaderWaterCompat", true)
+        BUILDER.pop()
+
+        BUILDER.push("ghost")
+        GHOST_CLIP_MODE = BUILDER
+            .comment("Fake block clipping mode. CLIP cuts the parts of a fake block that the tube wall envelope covers (default). OUTSET skips clipping entirely (fallback if clipping artifacts appear).")
+            .define("ghostClipMode", "CLIP")
         BUILDER.pop()
 
         BUILDER.push("support")
@@ -152,7 +153,6 @@ object ModClientConfig {
 
     fun waterSimDebug(): Boolean = WATER_SIM_DEBUG.get()
 
-    // lower arc bound of the support shell, centered on the bottom
     fun supportArcLo(): Float {
         val f = SUPPORT_FRACTION.get().toFloat().coerceIn(0.1f, 0.5f)
         return 270f - 180f * f / 2f
@@ -171,6 +171,8 @@ object ModClientConfig {
         SUPPORT_BRACKET_THICKNESS.get().toFloat().coerceIn(0.2f, 2.0f)
 
     fun shaderWaterCompat(): Boolean = SHADER_WATER_COMPAT.get()
+
+    fun ghostClipMode(): Boolean = GHOST_CLIP_MODE.get().uppercase() != "OUTSET"
 
     fun register() {
         ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.CLIENT, SPEC)

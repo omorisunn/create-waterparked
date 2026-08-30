@@ -19,6 +19,13 @@ object ModItems {
         Item.Properties().stacksTo(64)
     )
 
+    // sequenced-assembly interim item
+    val INCOMPLETE_WATERSLIDE_TRACK: Item by REGISTRY.registerItem(
+        "incomplete_waterslide_track",
+        ::Item,
+        Item.Properties()
+    )
+
     val WATERSLIDE_ANCHOR: BlockItem by REGISTRY.registerSimpleBlockItem(
         "waterslide_anchor",
         Supplier { ModBlocks.WATERSLIDE_ANCHOR },

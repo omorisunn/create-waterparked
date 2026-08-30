@@ -1,4 +1,5 @@
 package net.omori_sunny.create_waterparked.network
+// Payload registration: ghost place/mine and clipboard slide copy/paste.
 
 import net.minecraft.network.RegistryFriendlyByteBuf
 import net.minecraft.network.codec.StreamCodec
@@ -17,6 +18,8 @@ object ModPayloads {
         registrar.server(WaterslideRadiusEditPayload.TYPE, WaterslideRadiusEditPayload.STREAM_CODEC, WaterslideRadiusEditPayload::handleOnServer)
         registrar.server(WaterslideSectorEditPayload.TYPE, WaterslideSectorEditPayload.STREAM_CODEC, WaterslideSectorEditPayload::handleOnServer)
         registrar.server(WaterslideSectorBlockEditPayload.TYPE, WaterslideSectorBlockEditPayload.STREAM_CODEC, WaterslideSectorBlockEditPayload::handleOnServer)
+        registrar.server(WaterslideGhostPlacePayload.TYPE, WaterslideGhostPlacePayload.STREAM_CODEC, WaterslideGhostPlacePayload::handleOnServer)
+        registrar.server(WaterslideGhostMinePayload.TYPE, WaterslideGhostMinePayload.STREAM_CODEC, WaterslideGhostMinePayload::handleOnServer)
         registrar.client(WaterslideHotbarSelectionSyncPayload.TYPE, WaterslideHotbarSelectionSyncPayload.STREAM_CODEC, WaterslideHotbarSelectionSyncPayload::handleOnClient)
         registrar.client(SlideTrajectoryPayload.TYPE, SlideTrajectoryPayload.STREAM_CODEC, SlideTrajectoryPayload::handleOnClient)
         registrar.client(SlideSegmentPayload.TYPE, SlideSegmentPayload.STREAM_CODEC, SlideSegmentPayload::handleOnClient)

@@ -47,3 +47,4 @@ docs/
 
 # AgentTeams runtime state
 /.agent-teams/
+/.dsh-backup-src-uncommitted/

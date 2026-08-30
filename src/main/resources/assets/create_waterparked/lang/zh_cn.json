@@ -43,5 +43,12 @@
   "create_waterparked.clipboard.paste_ok": "滑梯配置已粘贴",
   "create_waterparked.clipboard.paste_bad": "目标不是滑梯轨道",
   "create_waterparked.clipboard.paste_exit": "已退出粘贴模式",
-  "create_waterparked.clipboard.summary": "%s 扇区 · %s°"
+  "create_waterparked.clipboard.summary": "%s 扇区 · %s°",
+  "item.create_waterparked.waterslide_anchor.tooltip.behaviour": "进入含水状态",
+  "item.create_waterparked.waterslide_anchor.tooltip.condition": "当泵入水时",
+  "item.create_waterparked.waterslide_anchor.tooltip.summary": "用于_锚定滑梯端点_位置",
+  "item.create_waterparked.waterslide_track.tooltip.behaviour": "复制滑梯扇区配置到剪贴板中",
+  "item.create_waterparked.waterslide_track.tooltip.condition": "当用剪贴板右键时",
+  "item.create_waterparked.waterslide_track.tooltip.summary": "用于_连接_水滑梯锚点",
+  "item.create_waterparked.incomplete_waterslide_track": "未完成的水滑梯轨道"
 }

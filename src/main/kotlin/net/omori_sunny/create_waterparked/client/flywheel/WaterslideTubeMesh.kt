@@ -459,7 +459,7 @@ object WaterslideTubeMesh {
             val uTilesRaw = if (sideWall)
                 1f
             else {
-                // faithful tiling: one tile per block at the inner radius for both walls
+                // one tile per block at the inner radius for both walls
                 (radius - BASE_WALL).coerceAtLeast(0.1f) * sectorRadians
             }
             // narrow sectors keep at least one tile for the opaque walls
@@ -468,18 +468,21 @@ object WaterslideTubeMesh {
             val centerW = max(texW - 2f * border, 1f)
             val centerH = max(texH - 2f * border, 1f)
 
+            // per-tile position (0..texW): the fold must wrap per TILE, the old
+            // % centerW wrapped per body window and dragged the texture along u
+            val px = u * uTiles * texW
+            val inTile = ((px % texW) + texW) % texW
             val uFrac = if (translucent) {
-                val sPx = u * uTilesRaw * texW
                 when {
-                    sPx < border -> max(sPx, 0.05f) / texW
-                    sPx > uTilesRaw * texW - border ->
-                        min(texW - border + (sPx - (uTilesRaw * texW - border)), texW - 0.05f) / texW
-                    else -> (border + (sPx % centerW)) / texW
+                    inTile < border -> max(inTile, 0.05f) / texW
+                    inTile > texW - border ->
+                        min(texW - border + (inTile - (texW - border)), texW - 0.05f) / texW
+                    else -> (border + (inTile % centerW)) / texW
                 }
             } else if (sideWall)
                 (border + u * centerW) / texW
             else
-                ((border + (u * uTiles * texW % centerW)) % texW) / texW
+                (inTile.coerceIn(border, texW - border)) / texW
             // cap radial three zone fold, walls use the plain body window fold
             val vFrac = if (translucent && capV) {
                 val vPx = v * (ModClientConfig.wallThickness() * 16f)

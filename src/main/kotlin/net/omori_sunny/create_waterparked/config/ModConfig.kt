@@ -1,4 +1,5 @@
 package net.omori_sunny.create_waterparked.config
+// Shared config: slide defaults and per-curve ghost block limits.
 
 import net.neoforged.fml.ModLoadingContext
 import net.neoforged.fml.config.ModConfig
@@ -6,30 +7,26 @@ import net.neoforged.neoforge.common.ModConfigSpec
 
 object ModConfig {
 
-    // common config (both sides)
     private val BUILDER = ModConfigSpec.Builder()
 
-    // slide
     lateinit var SLIDE_FRICTION: ModConfigSpec.DoubleValue
     lateinit var ENTRANCE_BOOST: ModConfigSpec.DoubleValue
     lateinit var SLIDE_MAX_ENTRY_SPEED: ModConfigSpec.DoubleValue
     lateinit var SLIDE_SAMPLE_SPACING: ModConfigSpec.DoubleValue
     lateinit var SLIDE_MAX_TRAJECTORY_SAMPLES: ModConfigSpec.IntValue
-    // anchor
     lateinit var DEFAULT_SLIDE_RADIUS: ModConfigSpec.DoubleValue
     lateinit var MIN_SLIDE_RADIUS: ModConfigSpec.DoubleValue
     lateinit var MAX_SLIDE_RADIUS: ModConfigSpec.DoubleValue
     lateinit var MAX_SLIDE_LIFT: ModConfigSpec.DoubleValue
     lateinit var MAX_SECTORS: ModConfigSpec.IntValue
+    lateinit var MAX_GHOST_BLOCKS_PER_CURVE: ModConfigSpec.IntValue
     lateinit var SECTOR_BORDER_PX: ModConfigSpec.IntValue
     lateinit var DISABLE_SLIDE_ANGLE_LIMIT: ModConfigSpec.BooleanValue
 
     lateinit var SPEC: ModConfigSpec
 
-    // server only config
     private val SERVER_BUILDER = ModConfigSpec.Builder()
 
-    // water
     lateinit var SLIDE_WATER_FRICTION: ModConfigSpec.DoubleValue
     lateinit var WATER_SIM_PARTICLES: ModConfigSpec.IntValue
     lateinit var WATER_SIM_MAX_BLOCKS: ModConfigSpec.DoubleValue
@@ -37,7 +34,6 @@ object ModConfig {
     lateinit var WATER_SEGMENT_LENGTH: ModConfigSpec.DoubleValue
     lateinit var WATER_DRAIN_RATE_MB: ModConfigSpec.DoubleValue
     lateinit var ANCHOR_FLUID_CAPACITY: ModConfigSpec.IntValue
-    // slide
     lateinit var SLIDE_MAX_TRAJECTORY_BLOCKS: ModConfigSpec.DoubleValue
     lateinit var SLIDE_CANCEL_COOLDOWN_TICKS: ModConfigSpec.IntValue
 
@@ -78,6 +74,9 @@ object ModConfig {
         MAX_SECTORS = BUILDER
             .comment("Maximum number of sectors per water slide curve.")
             .defineInRange("maxSectors", 16, 2, 64)
+        MAX_GHOST_BLOCKS_PER_CURVE = BUILDER
+            .comment("Maximum number of fake (ghost) blocks attached to one water slide curve.")
+            .defineInRange("maxGhostBlocksPerCurve", 64, 1, 512)
         SECTOR_BORDER_PX = BUILDER
             .comment("Border size in pixels used for 9-slice tiling of block textures on sectors.")
             .defineInRange("sectorBorderPx", 2, 0, 8)
@@ -141,6 +140,8 @@ object ModConfig {
     fun entranceBoost(): Double = ENTRANCE_BOOST.get().coerceIn(0.0, 5.0)
 
     fun maxSectors(): Int = MAX_SECTORS.get().coerceIn(2, 128)
+
+    fun maxGhostBlocksPerCurve(): Int = MAX_GHOST_BLOCKS_PER_CURVE.get().coerceIn(1, 512)
 
     fun sectorBorderPx(): Int = SECTOR_BORDER_PX.get().coerceIn(0, 16)
 

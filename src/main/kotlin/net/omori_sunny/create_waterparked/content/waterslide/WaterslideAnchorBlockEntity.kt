@@ -1,4 +1,5 @@
 package net.omori_sunny.create_waterparked.content.waterslide
+// Anchor BE: peer curves, sector config and ghost block mirrors.
 
 import com.simibubi.create.AllBlocks
 import com.simibubi.create.api.contraption.transformable.TransformableBlockEntity
@@ -36,37 +37,29 @@ import net.neoforged.neoforge.fluids.FluidStack
 import net.neoforged.neoforge.fluids.capability.IFluidHandler
 import java.util.function.Consumer
 
-// anchor BE
 class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
     CoasterAnchorpointBlockEntity(pos, state), TransformableBlockEntity {
 
     var waterActive: Boolean = false
         private set
 
-// radius
     var radius: Float = ModConfig.defaultSlideRadius()
         private set
 
-// effective lift includes the pipe radius
     override fun getLiftBlocks(): Float = super.getLiftBlocks() + radius
 
-// sector configs
     val sectorConfigs: MutableMap<BlockPos, WaterslideSectorConfig> = mutableMapOf()
 
-// watered curves, keyed by peer
+    val ghostBlocks: MutableMap<BlockPos, MutableList<GhostBlockEntry>> = mutableMapOf()
+
     val wateredCurves: MutableMap<BlockPos, Boolean> = mutableMapOf()
 
-// support copycat materials per part, like Create's copycat block
-// NOTE: bracket + beam share ONE material/visibility set (unified support).
-// The per-part write calls update both, the reads return the union - so a
-// right click on EITHER part always applies to the whole support.
     var supportBracketMaterial: BlockState = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
         private set
     var supportBeamMaterial: BlockState = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
         private set
     private var supportBracketConsumedItem: ItemStack = ItemStack.EMPTY
     private var supportBeamConsumedItem: ItemStack = ItemStack.EMPTY
-    // axle-axe deletes a support part; wrench restores it (unified)
     var supportBracketVisible: Boolean = true
         private set
     var supportBeamVisible: Boolean = true
@@ -82,7 +75,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
     fun isSupportVisible(part: WaterslideSupportPart): Boolean =
         supportBracketVisible && supportBeamVisible
 
-    // unified: the effective material is whatever either part carries
     fun supportMaterial(part: WaterslideSupportPart): BlockState =
         if (!AllBlocks.COPYCAT_BASE.has(supportBracketMaterial)) supportBracketMaterial
         else supportBeamMaterial
@@ -95,7 +87,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             !AllBlocks.COPYCAT_BASE.has(supportBeamMaterial)
 
     fun setSupportMaterial(part: WaterslideSupportPart, material: BlockState, consumed: ItemStack) {
-        // both parts get the same material (unified support)
         supportBracketMaterial = material
         supportBeamMaterial = material
         supportBracketConsumedItem = consumed.copyWithCount(1)
@@ -115,7 +106,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
 
     fun resetSupportMaterial(part: WaterslideSupportPart): ItemStack {
         val returned = supportConsumedItem(part)
-        // both parts reset together (unified support)
         supportBracketMaterial = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
         supportBeamMaterial = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
         supportBracketConsumedItem = ItemStack.EMPTY
@@ -125,7 +115,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         return returned
     }
 
-    // Copycat parity: destroying the anchor returns the consumed material items.
     fun dropSupportConsumedItems() {
         val lvl = level ?: return
         if (lvl.isClientSide) return
@@ -197,13 +186,49 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         waterStructureChanged()
     }
 
-// drop the config when the curve is removed
     fun removeSectorConfig(peer: BlockPos) {
         if (sectorConfigs.remove(peer.immutable()) == null) return
         removeWateredCurve(peer)
         setChanged()
         notifyBlockUpdated()
         waterStructureChanged()
+    }
+
+    fun ghostBlocksForPeer(peer: BlockPos): List<GhostBlockEntry> =
+        ghostBlocks[peer.immutable()] ?: emptyList()
+
+    fun ghostBlockCount(peer: BlockPos): Int = ghostBlocksForPeer(peer).size
+
+    fun nextGhostId(peer: BlockPos): Int =
+        (ghostBlocksForPeer(peer).maxOfOrNull { it.id } ?: 0) + 1
+
+    fun ghostBlockAtCell(peer: BlockPos, cell: BlockPos): GhostBlockEntry? =
+        ghostBlocksForPeer(peer).firstOrNull { it.cell == cell }
+
+    fun addGhostBlock(peer: BlockPos, entry: GhostBlockEntry): Boolean {
+        val entries = ghostBlocks.getOrPut(peer.immutable()) { mutableListOf() }
+        if (entries.any { it.cell == entry.cell }) return false
+        entries.add(entry)
+        setChanged()
+        notifyBlockUpdated()
+        return true
+    }
+
+    fun removeGhostBlock(peer: BlockPos, cell: BlockPos): Boolean {
+        val entries = ghostBlocks[peer.immutable()] ?: return false
+        val before = entries.size
+        entries.removeAll { it.cell == cell }
+        if (entries.size == before) return false
+        if (entries.isEmpty()) ghostBlocks.remove(peer.immutable())
+        setChanged()
+        notifyBlockUpdated()
+        return true
+    }
+
+    fun removeGhostBlocksForPeer(peer: BlockPos) {
+        if (ghostBlocks.remove(peer.immutable()) == null) return
+        setChanged()
+        notifyBlockUpdated()
     }
 
     fun removeWateredCurve(peer: BlockPos) {
@@ -213,7 +238,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         waterStructureChanged()
     }
 
-// reset the opening when the last curve goes
     fun resetRadiusIfEmpty() {
         if (legCount() != 0) return
         val def = ModConfig.defaultSlideRadius()
@@ -224,14 +248,12 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         waterStructureChanged()
     }
 
-// init missing configs
     fun initCurveSectorConfig(level: ServerLevel, peer: BlockPos) {
         val peerPos = peer.immutable()
         val peerBe = level.getBlockEntity(peerPos) as? WaterslideAnchorBlockEntity
         val remote = peerBe?.sectorConfigs?.get(blockPos.immutable())
         val local = sectorConfigs[peerPos]
 
-// inherit the style of an existing slide at either anchor
         val config = local ?: remote ?: inheritedSectorConfig(level, peerPos)
             ?: WaterslideSectorConfig.defaultConfig()
         if (local == null) setSectorConfig(peerPos, config)
@@ -277,7 +299,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         }
     }
 
-// contraption assembly removes the BE on pickup, drop our index entries
     override fun remove() {
         val lvl = level
         if (lvl?.isClientSide == true) {
@@ -288,7 +309,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         super.remove()
     }
 
-// render bounds
     override fun getRenderBoundingBox(): AABB {
         var box = AABB(blockPos)
         for ((_, raw) in anchorPeerCurvesView) {
@@ -309,9 +329,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         waterStructureChanged()
     }
 
-    // any structural edit that changes the water field (radius, curves,
-    // watering, water switch, sector config) marks the space dirty so the
-    // water sim recalcs on the next tick instead of the slow fallback scan
     private fun waterStructureChanged() {
         val lvl = level
         if (lvl != null && !lvl.isClientSide) {
@@ -321,13 +338,11 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
 
     private fun notifyBlockUpdated() {
         if (level != null && !level!!.isClientSide) {
-// client sync
             notifyUpdate()
         }
     }
 
     override fun read(tag: CompoundTag, registries: HolderLookup.Provider, clientPacket: Boolean) {
-// restore radius first, curve loading may need it
         waterActive = if (tag.contains("WaterActive", 1)) tag.getBoolean("WaterActive") else false
         radius = if (tag.contains("Radius", 5)) {
             ModConfig.clampSlideRadius(tag.getFloat("Radius"))
@@ -342,8 +357,15 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
                     WaterslideSectorConfig.read(entry.getCompound("Config"))
             }
         }
-// drop configs without a live curve
         sectorConfigs.keys.retainAll(anchorPeerCurvesView.keys)
+        ghostBlocks.clear()
+        for (entry in tag.getList("GhostBlocks", 10)) {
+            if (entry !is CompoundTag || !entry.contains("Peer", 4) || !entry.contains("Cell", 4)) continue
+            val state = NbtUtils.readBlockState(blockHolderGetter(), entry.getCompound("State")) ?: continue
+            val ghost = GhostBlockEntry.read(entry, state, registries) ?: continue
+            ghostBlocks.getOrPut(BlockPos.of(entry.getLong("Peer"))) { mutableListOf() }.add(ghost)
+        }
+        ghostBlocks.keys.retainAll(anchorPeerCurvesView.keys)
         wateredCurves.clear()
         for (entry in tag.getList("WateredCurves", 10)) {
             if (entry is CompoundTag && entry.contains("Peer", 4) && entry.contains("Watered", 1)) {
@@ -376,19 +398,12 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         if (tag.contains("WaterTank", 10)) {
             waterTank.readFromNBT(registries, tag.getCompound("WaterTank"))
         }
-// refresh visuals after curve data arrives
         if (level?.isClientSide == true) {
-            // support visibility is NOT part of the tube visual data signature,
-            // so a visibility-only change (wrench restore / axe delete) would
-            // never rebuild the flywheel visuals - force the rebuild here
             if (supportBracketVisible != prevBracketVisible || supportBeamVisible != prevBeamVisible) {
                 WaterslideTubeVisual.refreshAll()
             }
             WaterslideTubeVisual.refreshAnchor(blockPos)
         } else if (level != null) {
-            // server: curve topology (place/remove/drag) arrives through NBT.
-            // only mark dirty when the curve set actually changed, so regular
-            // block syncing does not spam recalculations
             val topoSig = StringBuilder()
             for ((peer, raw) in anchorPeerCurvesView) {
                 if (raw == null) continue
@@ -407,12 +422,8 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         }
     }
 
-    // last NBT curve-topology snapshot on the server, avoids re-dirtying on
-    // every regular block sync; transient across reloads (recovers via the
-    // slow fallback rescan anyway)
     private var lastPeerTopoSig: String? = null
 
-    // public entry for contraption space reconstruction from captured NBT
     fun readCaptured(tag: CompoundTag, registries: HolderLookup.Provider?) {
         val regs = registries ?: level?.registryAccess() ?: return
         read(tag, regs, false)
@@ -431,6 +442,16 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             list.add(entry)
         }
         tag.put("SectorConfigs", list)
+        val ghostList = ListTag()
+        for ((peer, entries) in ghostBlocks) {
+            for (entry in entries) {
+                val entryTag = CompoundTag()
+                entryTag.putLong("Peer", peer.asLong())
+                entry.write(entryTag, registries)
+                ghostList.add(entryTag)
+            }
+        }
+        tag.put("GhostBlocks", ghostList)
         val wateredList = ListTag()
         for ((peer, watered) in wateredCurves) {
             val entry = CompoundTag()
@@ -449,9 +470,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         super.write(tag, registries, clientPacket)
     }
 
-// rewrite peer curves, tint keys and sector data for the contraption transform
     override fun transform(blockEntity: BlockEntity, transform: StructureTransform) {
-        // copycat parity: material states rotate with the structure
         supportBracketMaterial = transform.apply(supportBracketMaterial)
         supportBeamMaterial = transform.apply(supportBeamMaterial)
 
@@ -465,19 +484,15 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         val keyRemap = HashMap<BlockPos, BlockPos>(oldCurves.size)
 
         for ((oldPeer, bc) in oldCurves.toList()) {
-            // Orient the curve: which endpoint belongs to this block entity?
             val selfEndpoint: BlockPos
             val peerEndpoint: BlockPos
             if (oldPeer == bc.bePositions.getSecond()) {
-                // Curve stored with self first, peer second.
                 selfEndpoint = bc.bePositions.getFirst()
                 peerEndpoint = bc.bePositions.getSecond()
             } else if (bc.bePositions.getFirst() == selfPos) {
-                // Curve stored with peer first, self second.
                 selfEndpoint = bc.bePositions.getFirst()
                 peerEndpoint = bc.bePositions.getSecond()
             } else {
-                // Fallback: endpoint closer to this block entity.
                 val first = bc.bePositions.getFirst()
                 val second = bc.bePositions.getSecond()
                 val firstDist = Vec3.atCenterOf(first).distanceToSqr(selfVec)
@@ -487,11 +502,9 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             }
             val selfEndpointIsFirst = selfEndpoint == bc.bePositions.getFirst()
 
-            // subtract the read re anchoring, leaves the true endpoint delta
             val oldDelta = Vec3.atLowerCornerOf(peerEndpoint)
                 .subtract(Vec3.atLowerCornerOf(selfEndpoint))
 
-            // Rebuild the delta from the block's new contraption-local space.
             val selfLocal = transform.unapplyWithoutOffset(
                 selfVec.subtract(Vec3.atLowerCornerOf(transform.offset))
             )
@@ -500,7 +513,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             val newPeer = BlockPos.containing(peerGlobal)
             val newSelf = selfPos
 
-            // starts rotate around the endpoint center like Create's track transform
             val endpointCenter = Vec3.atCenterOf(selfEndpoint)
             val newStarts = Couple.create(
                 transform.applyWithoutOffsetUncentered(
@@ -529,7 +541,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
                 newPositions, newStarts, newAxes, newNormals,
                 bc.primary, bc.hasGirder, bc.getMaterial()
             )
-            // smoothing is mutable and nullable; carry it over verbatim.
             if (bc.smoothing != null) {
                 rebuilt.smoothing = bc.smoothing
             }
@@ -538,15 +549,14 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             keyRemap[oldPeer] = newPeer
         }
 
-        // Apply to inherited maps through the mixin accessor.
         access.`waterparked$anchorPeerCurves`().clear()
         access.`waterparked$anchorPeerCurves`().putAll(newCurves)
         remapKeys(access.`waterparked$railRgb`(), keyRemap)
         remapKeys(access.`waterparked$beamRgb`(), keyRemap)
 
-        // Remap our own data; drop entries whose curve did not survive.
         remapSectorConfigs(keyRemap)
         remapWateredCurves(keyRemap)
+        remapGhostBlocks(keyRemap)
 
         CreateWaterparked.LOGGER.debug(
             "Anchor {} contraption transform: {} curve(s) remapped",
@@ -600,6 +610,24 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         wateredCurves.putAll(remapped)
     }
 
+    private fun remapGhostBlocks(keyRemap: Map<BlockPos, BlockPos>) {
+        if (ghostBlocks.isEmpty()) return
+        val remapped = HashMap<BlockPos, MutableList<GhostBlockEntry>>(ghostBlocks.size)
+        for ((oldPeer, entries) in ghostBlocks) {
+            val newPeer = keyRemap[oldPeer]
+            if (newPeer != null) {
+                remapped[newPeer.immutable()] = entries
+            } else {
+                CreateWaterparked.LOGGER.debug(
+                    "Anchor {}: dropping {} fake block(s) for unmatched peer {}",
+                    blockPos, entries.size, oldPeer
+                )
+            }
+        }
+        ghostBlocks.clear()
+        ghostBlocks.putAll(remapped)
+    }
+
     companion object {
         @JvmStatic
         fun registerCapabilities(event: RegisterCapabilitiesEvent) {
@@ -609,7 +637,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             ) { be, _ -> be.waterHandler }
         }
 
-// sync to both ends
         @JvmStatic
         fun commitSectorConfig(level: ServerLevel, curve: com.simibubi.create.content.trains.track.BezierConnection, config: WaterslideSectorConfig) {
             val primary = if (curve.isPrimary) curve else curve.secondary()
@@ -617,6 +644,36 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             val b = primary.bePositions.getSecond()
             (level.getBlockEntity(a) as? WaterslideAnchorBlockEntity)?.setSectorConfig(b, config)
             (level.getBlockEntity(b) as? WaterslideAnchorBlockEntity)?.setSectorConfig(a, config)
+        }
+
+        @JvmStatic
+        fun commitGhostBlock(
+            level: ServerLevel,
+            curve: com.simibubi.create.content.trains.track.BezierConnection,
+            entry: GhostBlockEntry
+        ): Boolean {
+            val primary = if (curve.isPrimary) curve else curve.secondary()
+            val a = primary.bePositions.getFirst()
+            val b = primary.bePositions.getSecond()
+            val beA = level.getBlockEntity(a) as? WaterslideAnchorBlockEntity ?: return false
+            val beB = level.getBlockEntity(b) as? WaterslideAnchorBlockEntity ?: return false
+            val okA = beA.addGhostBlock(b, entry)
+            val okB = beB.addGhostBlock(a, entry)
+            return okA || okB
+        }
+
+        @JvmStatic
+        fun commitGhostBlockRemoval(
+            level: ServerLevel,
+            curveA: BlockPos,
+            curveB: BlockPos,
+            cell: BlockPos
+        ): Boolean {
+            val beA = level.getBlockEntity(curveA) as? WaterslideAnchorBlockEntity ?: return false
+            val beB = level.getBlockEntity(curveB) as? WaterslideAnchorBlockEntity ?: return false
+            val okA = beA.removeGhostBlock(curveB, cell)
+            val okB = beB.removeGhostBlock(curveA, cell)
+            return okA || okB
         }
 
         private val pendingType = ThreadLocal<BlockEntityType<*>?>()

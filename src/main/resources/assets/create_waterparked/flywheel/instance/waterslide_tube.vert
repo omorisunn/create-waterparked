@@ -172,11 +172,16 @@ void flw_instanceVertex(in FlwInstance i) {
         // and extruded the side wall ~1 block outside the tube at OPEN sector
         // boundaries (the wrong wall width between sectors).
         float radial;
-        float inner = length(lp.xy) < 0.95 ? 1.0
-            : (dot(lp.xy, ln.xy) < 0.0 ? 1.0 : 0.0);
-        radial = inner > 0.5
-            ? max(radius - BASE_WALL, 0.001)
-            : max(radius + (i.wallThickness - BASE_WALL), 0.001);
+        // side-wall inner verts (the only ones below 0.95) stop at the WATER
+        // line: the wall end at an OPEN boundary keeps a visible thickness but
+        // never dips into the tube interior below the water surface
+        if (length(lp.xy) < 0.95) {
+            radial = max(radius, 0.001);
+        } else if (dot(lp.xy, ln.xy) < 0.0) {
+            radial = max(radius - BASE_WALL, 0.001);
+        } else {
+            radial = max(radius + (i.wallThickness - BASE_WALL), 0.001);
+        }
         worldPos = spine + lp.x * lateral * radial + lp.y * faceUp * radial;
         // glass wall: frame the axial edges next to the end caps - the mesh
         // bakes the window fold, this overrides the V only inside the two

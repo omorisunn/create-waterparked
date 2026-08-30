@@ -1,0 +1,59 @@
+{
+  "type": "create:sequenced_assembly",
+  "ingredient": {
+    "item": "create:shaft"
+  },
+  "results": [
+    {
+      "count": 2,
+      "id": "create_waterparked:waterslide_track"
+    }
+  ],
+  "sequence": [
+    {
+      "type": "create:deploying",
+      "ingredients": [
+        {
+          "item": "create_waterparked:incomplete_waterslide_track"
+        },
+        [
+          {
+            "tag": "c:nuggets/iron"
+          },
+          {
+            "tag": "c:nuggets/zinc"
+          }
+        ]
+      ],
+      "results": [
+        {
+          "id": "create_waterparked:incomplete_waterslide_track"
+        }
+      ]
+    },
+    {
+      "type": "create:deploying",
+      "ingredients": [
+        {
+          "item": "create_waterparked:incomplete_waterslide_track"
+        },
+        [
+          {
+            "tag": "c:nuggets/iron"
+          },
+          {
+            "tag": "c:nuggets/zinc"
+          }
+        ]
+      ],
+      "results": [
+        {
+          "id": "create_waterparked:incomplete_waterslide_track"
+        }
+      ]
+    }
+  ],
+  "transitional_item": {
+    "id": "create_waterparked:incomplete_waterslide_track"
+  }
+}

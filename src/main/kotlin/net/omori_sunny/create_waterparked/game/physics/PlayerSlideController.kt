@@ -552,7 +552,9 @@ object PlayerSlideController {
         val radial = p.subtract(closest)
         val axisDist = radial.length()
         val radius = (fa.radius + (fb.radius - fa.radius) * f.toFloat()).toDouble()
-        if (axisDist > radius - SLIDE_WALL_THICKNESS - margin) return null
+        // entry gate widened: half the entity margin (the old full half-width
+        // made narrow tube entries feel unresponsive)
+        if (axisDist > radius - SLIDE_WALL_THICKNESS - margin * 0.5) return null
 
         val tan = fa.tangent.lerp(fb.tangent, f).normalize()
         val lat = fa.lateral.lerp(fb.lateral, f).normalize()
