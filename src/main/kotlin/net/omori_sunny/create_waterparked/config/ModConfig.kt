@@ -119,8 +119,7 @@ object ModConfig {
         SLIDE_CANCEL_COOLDOWN_TICKS = SERVER_BUILDER
             .comment("Cooldown in ticks before a player can start a new slide after cancelling with Shift.")
             .defineInRange("slideCancelCooldownTicks", 20, 0, 200)
-        // whole sub-levels riding slides: heavy feature, on for singleplayer by
-        // default, off for dedicated servers unless explicitly enabled
+        // heavy feature: on for singleplayer, off for dedicated servers
         SUB_LEVEL_SLIDE = SERVER_BUILDER
             .comment(
                 "Whole Sable sub-levels can ride water slides. Enabled by default on integrated (singleplayer/LAN) servers, disabled by default on dedicated servers for performance - set to true in create_waterparked-server.toml to enable."

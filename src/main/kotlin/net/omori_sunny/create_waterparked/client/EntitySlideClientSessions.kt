@@ -16,9 +16,7 @@ import net.omori_sunny.create_waterparked.network.SlideEntityTrajectoryPayload
 import org.joml.Vector3d
 import java.util.UUID
 
-// Client-side playback state for non-player entity rides. The server stays
-// the physics authority (per-tick setPos + move packets); these sessions add
-// render-frame interpolation through the entity render dispatcher mixin.
+// client playback state for entity rides; the server keeps physics authority
 @OnlyIn(Dist.CLIENT)
 object EntitySlideClientSessions {
 

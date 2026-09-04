@@ -61,8 +61,7 @@ object PlayerSlideController {
     private const val RIDER_SIG_CACHE_TICKS = 5L
     // lock the rider to the exit point, release it after the landing
     private const val POST_RIDE_STICK_TICKS = 10L
-    // entity rides pause entirely when no player can see the rider: no tick
-    // computation, no packets, no client smoothing work
+    // entity rides pause entirely when no player is in range
     private const val VIEWER_RANGE_SQ = 48.0 * 48.0
     private val CREATIVE_PHYSICS_STAFF =
         ResourceLocation.fromNamespaceAndPath("simulated", "creative_physics_staff")
@@ -84,8 +83,7 @@ object PlayerSlideController {
     ) {
         var elapsed = 0.0
         var lastSyncTick = 0L
-        // entity rides: trajectory sent to the clients only once a viewer is
-        // nearby; paused until then
+        // entity rides send the trajectory only once a viewer is near
         var sentToClients = false
 
         fun subLevel(level: ServerLevel): ServerSubLevel? {
@@ -171,9 +169,7 @@ object PlayerSlideController {
                 }
             }
             ServerWaterSimulation.tickAll(level)
-            // belt ends near slide mouths feed their end-segment items in
             BeltSlideFeeder.tick(level)
-            // whole sub-levels may ride slides themselves
             SubLevelSlideController.tick(level)
             // track contraption poses so fresh accessors report correct velocity
             ContraptionSlideSpaces.updatePrev(level)
@@ -181,8 +177,7 @@ object PlayerSlideController {
                 if (session.entity.level() != level) continue
                 tickSession(level, session)
             }
-            // entity scan across every slide space: main bounds, sub level
-            // bounds posed into the world and slide-carrying contraptions
+            // scan every slide space: main, sub levels, contraptions
             val seenEntities = HashSet<Entity>()
             for (region in entityScanRegions(level)) {
                 for (entity in level.getEntities(null, region)) {
@@ -327,8 +322,7 @@ object PlayerSlideController {
         }
 
         val dims = entityDimensions(entity)
-        // full box physics for non-player riders: the integration point is the
-        // box centre and the wall margin its circumscribed cross-section radius
+        // entity riders integrate the box centre with its circumscribed radius
         val boxRad = if (player == null)
             kotlin.math.sqrt(dims.width * dims.width + dims.height * dims.height) / 2.0
         else null
@@ -516,13 +510,10 @@ object PlayerSlideController {
     ): Pair<SlideSpaceAccess, SlideEntry>? {
         val dims = entityDimensions(entity)
         val isPlayer = entity is net.minecraft.world.entity.player.Player
-        // players keep the tuned point gate; entities test the full box: the
-        // box overlaps the tube (circumscribed radius added to the gate) and
-        // must roughly fit inside it
+        // players keep the tuned point gate; entities gate by box overlap and fit
         val boxRad = kotlin.math.sqrt(dims.width * dims.width + dims.height * dims.height) / 2.0
         val gateMargin = if (isPlayer) -(dims.width / 2.0) * 0.5 else boxRad
-        // entities test both the feet and the box centre: a tall box can have
-        // its centre inside the tube while the feet are still outside
+        // entities test feet and box centre alike
         val testPoints = if (isPlayer) listOf(access.worldToLocal(entity.position()))
         else listOf(
             entity.localIn(access),
@@ -544,7 +535,6 @@ object PlayerSlideController {
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(access, a)
                 val r1 = SlideCurveGeometry.radiusAt(access, b)
-                // entities larger than the tube cannot enter at all
                 if (!isPlayer && boxRad > minOf(r0, r1) - SLIDE_WALL_THICKNESS + 0.1) continue
                 val cf = curveFrames(access, bc, r0, r1) ?: continue
                 val config = SlideCurveGeometry.sectorConfig(access, a, b)
@@ -620,9 +610,7 @@ object PlayerSlideController {
         val radial = p.subtract(closest)
         val axisDist = radial.length()
         val radius = (fa.radius + (fb.radius - fa.radius) * f.toFloat()).toDouble()
-        // entry gate: players pass a negative margin (tuned half half-width so
-        // narrow tube entries feel responsive), entities a positive circumscribed
-        // radius so any box overlap with the tube interior counts
+        // tuned player gate vs entity box-overlap gate
         if (axisDist > radius - SLIDE_WALL_THICKNESS + gateMargin) return null
 
         val tan = fa.tangent.lerp(fb.tangent, f).normalize()
@@ -681,7 +669,6 @@ object PlayerSlideController {
             }
             if (!viewerNear) return
             if (!session.sentToClients) {
-                // (re)base the client clock so playback resumes mid-trajectory
                 session.sentToClients = true
                 sendEntityTrajectory(level, session, level.gameTime - (session.elapsed * 20.0).toLong())
             }
@@ -706,8 +693,7 @@ object PlayerSlideController {
 
         val at = session.trajectory.sampleAt(session.elapsed)
         val worldPos = toWorldPos(level, session, at.sample.position)
-        // players ride the tuned 0.7 seat, entities anchor the box centre on
-        // the sample so the collision box follows the physics exactly
+        // players keep the 0.7 seat, entities anchor the box centre
         val sitPos = if (sit != null) worldPos.subtract(0.0, SIT_HEIGHT, 0.0)
         else worldPos.subtract(0.0, session.poseHeight / 2.0, 0.0)
         val worldTan = toWorldNormal(level, session, at.sample.tangent)
@@ -851,8 +837,7 @@ object PlayerSlideController {
         )
 
         cleanupSit(session, entity)
-        // land with the exit velocity, release the plot lock on a grace period;
-        // entity samples are box centres, drop to the feet for setPos
+        // entity samples are box centres, drop to the feet
         val landPos = if (player == null) worldPos.subtract(0.0, session.poseHeight / 2.0, 0.0)
         else worldPos
         entity.setPos(landPos)
@@ -861,8 +846,7 @@ object PlayerSlideController {
         releaseStickAfterRide(level, entity, session.subLevel(level))
         sessions.remove(entity.uuid)
         if (player == null) {
-            // brief exit cooldown so an entity landing at a tube mouth does
-            // not instantly re-enter and oscillate
+            // exit cooldown so an entity does not re-enter at the mouth
             entryCooldown[entity.uuid] = level.gameTime + 20L
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayersInDimension(
                 level, net.omori_sunny.create_waterparked.network.SlideEntityEndPayload(session.id)
@@ -957,7 +941,7 @@ object PlayerSlideController {
 
     private val boundsCache = mutableMapOf<ResourceKey<Level>, Pair<Int, AABB?>>()
 
-    // entity scan regions covering every slide space in the level
+    // scan regions for every slide space in the level
     private fun entityScanRegions(level: ServerLevel): List<AABB> {
         val out = ArrayList<AABB>()
         slideBounds(level)?.let { out += it }
@@ -965,9 +949,7 @@ object PlayerSlideController {
             val sub = raw as? ServerSubLevel ?: return@forEach
             val access = SubSlideSpaceAccess(level, sub)
             val local = spaceLocalBounds(level, access) ?: return@forEach
-            // world-posed region for entities passing through in the world
-            // frame, plus the raw plot-coord region: entities STUCK to the
-            // sub level live at plot coordinates in the same level
+            // world-posed region plus the raw plot region for stuck entities
             out += poseToWorldBox(access, local)
             out += local
         }
@@ -978,8 +960,7 @@ object PlayerSlideController {
         return out
     }
 
-    // sub-level entities stuck via Sable report positions in plot coords,
-    // which are already local to their sub space
+    // stuck sub-level entities report plot coords, already local
     private fun trackedSubOf(entity: Entity): UUID? =
         (entity as? EntityMovementExtension)?.`sable$getTrackingSubLevel`()?.uniqueId
 
@@ -987,7 +968,7 @@ object PlayerSlideController {
         if (access is SubSlideSpaceAccess && trackedSubOf(this) == access.sub.uniqueId) position()
         else access.worldToLocal(position())
 
-    // slide tube bounds in the given space's local coordinates
+    // slide tube bounds in the space's local coordinates
     private fun spaceLocalBounds(level: ServerLevel, access: SlideSpaceAccess): AABB? {
         var minX = Double.MAX_VALUE
         var minY = Double.MAX_VALUE
@@ -1031,7 +1012,6 @@ object PlayerSlideController {
         return if (found) AABB(minX, minY, minZ, maxX, maxY, maxZ) else null
     }
 
-    // transform a local box through the space pose (rotation-aware, 8 corners)
     private fun poseToWorldBox(access: SlideSpaceAccess, local: AABB): AABB {
         var minX = Double.MAX_VALUE
         var minY = Double.MAX_VALUE
@@ -1164,8 +1144,6 @@ object PlayerSlideController {
         return JOMLConversion.toMojang(out)
     }
 
-    // ---- belt-end slide feeding: tube mouths available for capture ----
-
     class SlideMouth(
         val access: SlideSpaceAccess,
         val localPos: Vec3,
@@ -1176,9 +1154,7 @@ object PlayerSlideController {
         val towardSecond: Boolean
     )
 
-    // every open tube end in any space, for the belt-end item feeder;
-    // contraption mouths are excluded - their belts are captured blocks
-    // without a live belt inventory to feed from
+    // every open tube end in any space; contraption belts have no live inventory
     @JvmStatic
     fun allSlideMouths(level: ServerLevel): List<SlideMouth> {
         val out = ArrayList<SlideMouth>()

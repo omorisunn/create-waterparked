@@ -6,9 +6,7 @@ import org.joml.Matrix4d;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
-// authoritative frame data for sub-level slide riding: globalBounds is the
-// content bounds in WORLD space and globalBoundsTransform is the physics
-// body -> world matrix - exactly the frame RigidBodyHandle.teleport uses
+// authoritative sub-level world bounds for slide riding
 @Mixin(SubLevel.class)
 public interface SubLevelBoundsAccessor {
 

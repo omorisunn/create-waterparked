@@ -9,17 +9,12 @@ import net.minecraft.world.level.Level
 import net.minecraft.world.phys.Vec3
 import kotlin.math.abs
 
-// Belt-end slide feeding, patterned after CreateZ.io Core's BeltInterception:
-// every tick the slide tube mouths scan nearby running belts and PULL end-
-// segment items straight out of the belt inventory - no eject toss, no belt
-// transfer animation - and place them at the mouth moving into the tube at
-// the belt's speed, where the slide entry scan takes over.
+// belt ends near a slide mouth feed end-segment items into the tube (Core BeltInterception pattern)
 object BeltSlideFeeder {
 
     private const val BELT_SCAN_RADIUS = 3
     private const val MOUTH_REFRESH_TICKS = 20L
     private const val BELT_RESCAN_TICKS = 40L
-    // grab the item only when it essentially reached the belt end
     private const val END_SEGMENT = 0.25f
 
     private class FeederMouth(
@@ -44,9 +39,7 @@ object BeltSlideFeeder {
                 val rebuilt = PlayerSlideController.allSlideMouths(level).map { m ->
                     FeederMouth(
                         m.access,
-                        // belts live at world coords in the main level and at
-                        // plot coords inside sub levels - scan in the mouth's
-                        // own frame
+                        // sub-level belts live at plot coords
                         BlockPos.containing(m.localPos), m.worldPos, m.worldTangent
                     )
                 }.toMutableList()
@@ -85,27 +78,22 @@ object BeltSlideFeeder {
             val iter = items.iterator()
             while (iter.hasNext()) {
                 val tis = iter.next()
-                // only at the exact belt end, so the slide motion starts where
-                // the belt visually drops the item off
                 if (tis.beltPosition < length - END_SEGMENT) continue
                 val stack = tis.stack
                 if (stack.isEmpty) continue
                 iter.remove()
-                // item position on the belt (Core BeltInterception formula)
                 val dirVec = Vec3.atLowerCornerOf(belt.movementFacing.normal)
                 val endLocal = Vec3.atCenterOf(pos)
                     .add(dirVec.scale((tis.beltPosition - length + 0.5).toDouble()))
                 val spawn = mouth.access.toWorld(endLocal)
-                // EXACT belt transport vector: the 3D chain direction (slopes
-                // included) scaled by the signed movement speed
+                // exact 3D transport vector, slopes included
                 val chainDir = Vec3.atLowerCornerOf(belt.beltChainDirection).normalize()
                 val velWorld = mouth.access.toWorldNormal(
                     chainDir.scale(belt.beltMovementSpeed.toDouble())
                 )
                 val entity = ItemEntity(level, spawn.x, spawn.y, spawn.z, stack.copy())
                 entity.deltaMovement = velWorld
-                // yaw AND pitch exactly on the belt direction, so the ride
-                // starts oriented along the belt (the boat entity inherits it)
+                // yaw + pitch exactly on the belt direction
                 val horiz = kotlin.math.sqrt(velWorld.x * velWorld.x + velWorld.z * velWorld.z)
                 entity.setYRot(
                     Math.toDegrees(kotlin.math.atan2(-velWorld.x, velWorld.z)).toFloat()

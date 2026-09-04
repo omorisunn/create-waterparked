@@ -99,9 +99,7 @@ object PhysicsSlideTrajectoryBuilder {
         startVel: Vec3,
         poseWidth: Double,
         poseHeight: Double,
-        // wall margin from the integration point to the tube wall: half width
-        // for the tuned player point model, the box circumscribed radius for
-        // full-box non-player riders
+        // wall margin: player half width, entity box circumscribed radius
         poseRad: Double = poseWidth / 2.0
     ): SlideTrajectory? {
         val maxSamples = ModConfig.slideMaxTrajectorySamples()

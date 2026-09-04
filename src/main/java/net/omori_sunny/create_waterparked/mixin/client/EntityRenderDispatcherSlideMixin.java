@@ -13,10 +13,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-// render-frame smoothing for non-player slide riders: the dispatcher has
-// already translated the pose stack to the entity's packet position; shift it
-// onto the interpolated trajectory sample and correct the yaw/pitch onto the
-// tangent, so any renderer draws the entity gliding per frame
+// per-frame pose correction onto the interpolated slide trajectory
 @Mixin(EntityRenderDispatcher.class)
 public abstract class EntityRenderDispatcherSlideMixin {
 

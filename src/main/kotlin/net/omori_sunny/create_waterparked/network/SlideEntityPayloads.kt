@@ -10,11 +10,7 @@ import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.client.EntitySlideClientSessions
 import java.util.UUID
 
-// Entity ride playback, dimension-wide: the server keeps physics authority
-// with per-tick setPos, clients smooth the render through their own copy of
-// the trajectory (PoseStack interpolation per render frame).
-
-// Full trajectory, sent once when a non-player entity ride starts.
+// entity ride playback payloads; full trajectory, periodic sync, end
 class SlideEntityTrajectoryPayload(
     val sessionId: Long,
     val entityId: Int,
@@ -56,7 +52,6 @@ class SlideEntityTrajectoryPayload(
     }
 }
 
-// Periodic server time correction for an entity ride.
 class SlideEntitySyncPayload(val sessionId: Long, val elapsedTicks: Int) : CustomPacketPayload {
 
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
@@ -82,7 +77,6 @@ class SlideEntitySyncPayload(val sessionId: Long, val elapsedTicks: Int) : Custo
     }
 }
 
-// Server ends the entity ride; clients clear their playback state.
 class SlideEntityEndPayload(val sessionId: Long) : CustomPacketPayload {
 
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE

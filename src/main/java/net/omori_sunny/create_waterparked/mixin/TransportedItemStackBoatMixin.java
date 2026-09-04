@@ -8,10 +8,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-// belt re-syncs rebuild every TransportedItemStack; the constructor's random
-// angle re-derives the side offset target, which made the boat visibly slide
-// sideways and twitch on every sync. Boats get a deterministic centred state
-// instead - the belt renderer mixin supplies the travel-direction yaw.
+// boats keep a deterministic centred belt state; random angles made them twitch on re-sync
 @Mixin(TransportedItemStack.class)
 public abstract class TransportedItemStackBoatMixin {
 
