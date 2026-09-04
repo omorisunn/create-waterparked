@@ -123,56 +123,71 @@ object ModClientConfig {
         SPEC = BUILDER.build()
     }
 
-    fun showSkeletonWhenTranslucent(): Boolean = SHOW_SKELETON_WHEN_TRANSLUCENT.get()
+    fun showSkeletonWhenTranslucent(): Boolean = SHOW_SKELETON_WHEN_TRANSLUCENT.safeGet()
 
-    fun showSlideExitHint(): Boolean = SHOW_SLIDE_EXIT_HINT.get()
+    fun showSlideExitHint(): Boolean = SHOW_SLIDE_EXIT_HINT.safeGet()
 
-    fun cameraSmoothing(): Float = CAMERA_SMOOTHING.get().toFloat().coerceIn(0f, 0.9f)
+    fun cameraSmoothing(): Float = CAMERA_SMOOTHING.safeGet().toFloat().coerceIn(0f, 0.9f)
 
-    fun waterParticleCount(): Int = WATER_PARTICLE_COUNT.get().coerceIn(8, 256)
+    fun waterParticleCount(): Int = WATER_PARTICLE_COUNT.safeGet().coerceIn(8, 256)
 
-    fun splashDensity(): Double = SPLASH_DENSITY.get().coerceIn(0.25, 8.0)
+    fun splashDensity(): Double = SPLASH_DENSITY.safeGet().coerceIn(0.25, 8.0)
 
-    fun splashMaxRate(): Double = SPLASH_MAX_RATE.get().toDouble().coerceIn(8.0, 120.0)
+    fun splashMaxRate(): Double = SPLASH_MAX_RATE.safeGet().toDouble().coerceIn(8.0, 120.0)
 
-    fun polygonScale(): Float = POLYGON_SCALE.get().toFloat().coerceIn(0.05f, 2.0f)
+    fun polygonScale(): Float = POLYGON_SCALE.safeGet().toFloat().coerceIn(0.05f, 2.0f)
 
-    fun wallThickness(): Float = WALL_THICKNESS.get().toFloat().coerceIn(0.1f, 0.5f)
+    fun wallThickness(): Float = WALL_THICKNESS.safeGet().toFloat().coerceIn(0.1f, 0.5f)
 
-    fun waterFlowScale(): Float = WATER_FLOW_SCALE.get().toFloat().coerceIn(0.1f, 4.0f)
+    fun waterFlowScale(): Float = WATER_FLOW_SCALE.safeGet().toFloat().coerceIn(0.1f, 4.0f)
 
-    fun waterJitterScale(): Float = WATER_JITTER_SCALE.get().toFloat().coerceIn(0f, 1.5f)
+    fun waterJitterScale(): Float = WATER_JITTER_SCALE.safeGet().toFloat().coerceIn(0f, 1.5f)
 
-    fun waterJitterFrequency(): Float = WATER_JITTER_FREQUENCY.get().toFloat().coerceIn(1f, 16f)
+    fun waterJitterFrequency(): Float = WATER_JITTER_FREQUENCY.safeGet().toFloat().coerceIn(1f, 16f)
 
-    fun waterJitterTimeScale(): Float = WATER_JITTER_TIME_SCALE.get().toFloat().coerceIn(0.1f, 16f)
+    fun waterJitterTimeScale(): Float = WATER_JITTER_TIME_SCALE.safeGet().toFloat().coerceIn(0.1f, 16f)
 
-    fun waterEnvelopeVertices(): Int = WATER_ENVELOPE_VERTICES.get().coerceIn(4, 16)
+    fun waterEnvelopeVertices(): Int = WATER_ENVELOPE_VERTICES.safeGet().coerceIn(4, 16)
 
-    fun waterEnvelopeSpacing(): Int = WATER_ENVELOPE_SPACING.get().coerceIn(1, 4)
+    fun waterEnvelopeSpacing(): Int = WATER_ENVELOPE_SPACING.safeGet().coerceIn(1, 4)
 
-    fun waterSimDebug(): Boolean = WATER_SIM_DEBUG.get()
+    fun waterSimDebug(): Boolean = WATER_SIM_DEBUG.safeGet()
 
     fun supportArcLo(): Float {
-        val f = SUPPORT_FRACTION.get().toFloat().coerceIn(0.1f, 0.5f)
+        val f = SUPPORT_FRACTION.safeGet().toFloat().coerceIn(0.1f, 0.5f)
         return 270f - 180f * f / 2f
     }
 
     fun supportArcHi(): Float {
-        val f = SUPPORT_FRACTION.get().toFloat().coerceIn(0.1f, 0.5f)
+        val f = SUPPORT_FRACTION.safeGet().toFloat().coerceIn(0.1f, 0.5f)
         return 270f + 180f * f / 2f
     }
 
-    fun supportThickness(): Float = SUPPORT_THICKNESS.get().toFloat().coerceIn(0.05f, 0.4f)
+    fun supportThickness(): Float = SUPPORT_THICKNESS.safeGet().toFloat().coerceIn(0.05f, 0.4f)
 
-    fun supportBeamSize(): Float = SUPPORT_BEAM_SIZE.get().toFloat().coerceIn(0.2f, 0.8f)
+    fun supportBeamSize(): Float = SUPPORT_BEAM_SIZE.safeGet().toFloat().coerceIn(0.2f, 0.8f)
 
     fun supportBracketThickness(): Float =
-        SUPPORT_BRACKET_THICKNESS.get().toFloat().coerceIn(0.2f, 2.0f)
+        SUPPORT_BRACKET_THICKNESS.safeGet().toFloat().coerceIn(0.2f, 2.0f)
 
-    fun shaderWaterCompat(): Boolean = SHADER_WATER_COMPAT.get()
+    fun shaderWaterCompat(): Boolean = SHADER_WATER_COMPAT.safeGet()
 
-    fun ghostClipMode(): Boolean = GHOST_CLIP_MODE.get().uppercase() != "OUTSET"
+// a never-loaded spec (corrupt or unreadable create_waterparked-client.toml)
+// used to crash the game on the first config read; degrade to defaults instead
+    private var warnedUnloadedSpec = false
+
+    private fun <T> ModConfigSpec.ConfigValue<T>.safeGet(): T {
+        if (SPEC.isLoaded) return get()
+        if (!warnedUnloadedSpec) {
+            warnedUnloadedSpec = true
+            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.warn(
+                "[create_waterparked] client config is not loaded (corrupt or unreadable create_waterparked-client.toml?); using built-in defaults"
+            )
+        }
+        return getDefault()
+    }
+
+    fun ghostClipMode(): Boolean = GHOST_CLIP_MODE.safeGet().uppercase() != "OUTSET"
 
     fun register() {
         ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.CLIENT, SPEC)

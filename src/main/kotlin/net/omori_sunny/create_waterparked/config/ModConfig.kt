@@ -123,51 +123,66 @@ object ModConfig {
         SERVER_SPEC = SERVER_BUILDER.build()
     }
 
-    fun defaultSlideRadius(): Float = clampSlideRadius(DEFAULT_SLIDE_RADIUS.get().toFloat())
+// a never-loaded spec (corrupt or unreadable config file) used to crash with
+// IllegalStateException on the first read; degrade to defaults instead
+    private var warnedUnloadedSpec = false
 
-    fun maxSlideLift(): Float = MAX_SLIDE_LIFT.get().toFloat().coerceIn(0.5f, 16f)
+    private fun <T> ModConfigSpec.ConfigValue<T>.safeGet(spec: ModConfigSpec): T {
+        if (spec.isLoaded) return get()
+        if (!warnedUnloadedSpec) {
+            warnedUnloadedSpec = true
+            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.warn(
+                "[create_waterparked] a config spec is not loaded (corrupt or unreadable create_waterparked config file?); using built-in defaults"
+            )
+        }
+        return getDefault()
+    }
 
-    fun disableSlideCurveAngleLimit(): Boolean = DISABLE_SLIDE_ANGLE_LIMIT.get()
+    fun defaultSlideRadius(): Float = clampSlideRadius(DEFAULT_SLIDE_RADIUS.safeGet(SPEC).toFloat())
+
+    fun maxSlideLift(): Float = MAX_SLIDE_LIFT.safeGet(SPEC).toFloat().coerceIn(0.5f, 16f)
+
+    fun disableSlideCurveAngleLimit(): Boolean = DISABLE_SLIDE_ANGLE_LIMIT.safeGet(SPEC)
 
     fun clampSlideRadius(value: Float): Float {
-        val min = MIN_SLIDE_RADIUS.get().toFloat()
-        val max = MAX_SLIDE_RADIUS.get().toFloat()
+        val min = MIN_SLIDE_RADIUS.safeGet(SPEC).toFloat()
+        val max = MAX_SLIDE_RADIUS.safeGet(SPEC).toFloat()
         return value.coerceIn(minOf(min, max), maxOf(min, max))
     }
 
-    fun slideFriction(): Double = SLIDE_FRICTION.get().coerceIn(0.0, 1.0)
+    fun slideFriction(): Double = SLIDE_FRICTION.safeGet(SPEC).coerceIn(0.0, 1.0)
 
-    fun entranceBoost(): Double = ENTRANCE_BOOST.get().coerceIn(0.0, 5.0)
+    fun entranceBoost(): Double = ENTRANCE_BOOST.safeGet(SPEC).coerceIn(0.0, 5.0)
 
-    fun maxSectors(): Int = MAX_SECTORS.get().coerceIn(2, 128)
+    fun maxSectors(): Int = MAX_SECTORS.safeGet(SPEC).coerceIn(2, 128)
 
-    fun maxGhostBlocksPerCurve(): Int = MAX_GHOST_BLOCKS_PER_CURVE.get().coerceIn(1, 512)
+    fun maxGhostBlocksPerCurve(): Int = MAX_GHOST_BLOCKS_PER_CURVE.safeGet(SPEC).coerceIn(1, 512)
 
-    fun sectorBorderPx(): Int = SECTOR_BORDER_PX.get().coerceIn(0, 16)
+    fun sectorBorderPx(): Int = SECTOR_BORDER_PX.safeGet(SPEC).coerceIn(0, 16)
 
-    fun slideMaxEntrySpeed(): Double = SLIDE_MAX_ENTRY_SPEED.get().coerceIn(1.0, 100.0)
+    fun slideMaxEntrySpeed(): Double = SLIDE_MAX_ENTRY_SPEED.safeGet(SPEC).coerceIn(1.0, 100.0)
 
-    fun slideTrajectorySampleSpacing(): Double = SLIDE_SAMPLE_SPACING.get().coerceIn(0.1, 4.0)
+    fun slideTrajectorySampleSpacing(): Double = SLIDE_SAMPLE_SPACING.safeGet(SPEC).coerceIn(0.1, 4.0)
 
-    fun slideMaxTrajectorySamples(): Int = SLIDE_MAX_TRAJECTORY_SAMPLES.get().coerceIn(64, 32768)
+    fun slideMaxTrajectorySamples(): Int = SLIDE_MAX_TRAJECTORY_SAMPLES.safeGet(SPEC).coerceIn(64, 32768)
 
-    fun slideWaterFriction(): Double = SLIDE_WATER_FRICTION.get().coerceIn(0.0, 1.0)
+    fun slideWaterFriction(): Double = SLIDE_WATER_FRICTION.safeGet(SERVER_SPEC).coerceIn(0.0, 1.0)
 
-    fun waterSimParticleCount(): Int = WATER_SIM_PARTICLES.get().coerceIn(1, 256)
+    fun waterSimParticleCount(): Int = WATER_SIM_PARTICLES.safeGet(SERVER_SPEC).coerceIn(1, 256)
 
-    fun waterSimMaxBlocks(): Double = WATER_SIM_MAX_BLOCKS.get().coerceIn(64.0, 2048.0)
+    fun waterSimMaxBlocks(): Double = WATER_SIM_MAX_BLOCKS.safeGet(SERVER_SPEC).coerceIn(64.0, 2048.0)
 
-    fun waterSimCooldownTicks(): Int = WATER_SIM_COOLDOWN_TICKS.get().coerceIn(20, 600)
+    fun waterSimCooldownTicks(): Int = WATER_SIM_COOLDOWN_TICKS.safeGet(SERVER_SPEC).coerceIn(20, 600)
 
-    fun waterSegmentLength(): Float = WATER_SEGMENT_LENGTH.get().toFloat().coerceIn(0.25f, 4.0f)
+    fun waterSegmentLength(): Float = WATER_SEGMENT_LENGTH.safeGet(SERVER_SPEC).toFloat().coerceIn(0.25f, 4.0f)
 
-    fun waterDrainRateMbPerSecond(): Double = WATER_DRAIN_RATE_MB.get().coerceIn(0.0, 1000.0)
+    fun waterDrainRateMbPerSecond(): Double = WATER_DRAIN_RATE_MB.safeGet(SERVER_SPEC).coerceIn(0.0, 1000.0)
 
-    fun anchorFluidCapacity(): Int = ANCHOR_FLUID_CAPACITY.get().coerceIn(1, 10000)
+    fun anchorFluidCapacity(): Int = ANCHOR_FLUID_CAPACITY.safeGet(SERVER_SPEC).coerceIn(1, 10000)
 
-    fun slideMaxTrajectoryBlocks(): Double = SLIDE_MAX_TRAJECTORY_BLOCKS.get().coerceIn(50.0, 10000.0)
+    fun slideMaxTrajectoryBlocks(): Double = SLIDE_MAX_TRAJECTORY_BLOCKS.safeGet(SERVER_SPEC).coerceIn(50.0, 10000.0)
 
-    fun slideCancelCooldownTicks(): Int = SLIDE_CANCEL_COOLDOWN_TICKS.get().coerceIn(0, 200)
+    fun slideCancelCooldownTicks(): Int = SLIDE_CANCEL_COOLDOWN_TICKS.safeGet(SERVER_SPEC).coerceIn(0, 200)
 
     @Suppress("DEPRECATION")
     fun register() {
