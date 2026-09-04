@@ -126,7 +126,7 @@ dependencies {
     compileOnly files("libs/sodium-renderer-0.8.12.jar")
     compileOnly files("libs/iris-1.8.14-beta.jar")
     compileOnly files("libs/colorwheel-1.2.9.jar")
-    compileOnly files("run/mods/jei-1.21.1-neoforge-19.50.0.414.jar")
+    compileOnly "mezz.jei:jei-1.21.1-neoforge-api:19.50.0.414"
 
     implementation("com.tterrag.registrate:Registrate:${registrate_version}")
 
