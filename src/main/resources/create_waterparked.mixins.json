@@ -20,7 +20,9 @@
     "CoasterPathGraphManagerMixin",
     "CoasterPeerCurveHandleLengthsMixin",
     "CoasterTrackPlacementMixin",
-    "CreativeModeTabWaterparkedLayoutMixin"
+    "CreativeModeTabWaterparkedLayoutMixin",
+    "ItemHelperBoatMixin",
+    "PackageEntityCenterBoatMixin"
   ],
   "client": [
     "client.AbstractContainerScreenAccessor",
@@ -29,6 +31,7 @@
     "client.BezierHandleDragManagerMixin",
     "client.BezierHandleEditModeMixin",
     "client.BezierHandleOverlayMixin",
+    "client.BeltRendererBoatAngleMixin",
     "client.ChainLiftAnchorShaftRendererMixin",
     "client.ClipboardScreenAccessor",
     "client.ClipboardScreenMixin",
@@ -37,6 +40,8 @@
     "client.CoasterTrackPlacementPreviewMixin",
     "client.CreativeModeInventoryScreenWaterparkedBannerMixin",
     "client.CreativeModeInventoryScreenWaterparkedTooltipMixin",
+    "client.DepotBehaviourAccessor",
+    "client.DepotRendererBoatAngleMixin",
     "client.LevelRendererAccessor",
     "client.MinecraftGhostAttackMixin",
     "client.iris.IrisWaterPassMixin",

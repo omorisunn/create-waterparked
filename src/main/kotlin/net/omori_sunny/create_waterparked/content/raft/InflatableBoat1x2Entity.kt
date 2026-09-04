@@ -73,10 +73,38 @@ class InflatableBoat1x2Entity(type: EntityType<out LivingEntity>, level: Level) 
     override fun tick() {
         super.tick()
         if (level().isClientSide) return
+        // package-style: the insertion countdown recovers while not absorbed,
+        // so the belt/depot centring animation replays after each insertion
+        insertionDelay = (insertionDelay + 1).coerceAtMost(30)
         // buoyancy: gently rise until the boat is no longer submerged
         if (isInWater() && getY() < waterLevel()) {
             setDeltaMovement(deltaMovement.x, 0.08, deltaMovement.z)
         }
+    }
+
+    // package-style insertion countdown, see PackageEntity: while an absorbing
+    // belt/depot centres the entity it slides toward the target spot and the
+    // timer ticks down 3 per call; the host absorbs the boat once it hits 0
+    var insertionDelay = 30
+        private set
+
+    fun decreaseInsertionTimer(targetSpot: Vec3?): Boolean {
+        if (targetSpot != null) {
+            setDeltaMovement(deltaMovement.scale(0.75).multiply(1.0, 0.25, 1.0))
+            val pos = position().add(targetSpot.subtract(position()).scale(0.2))
+            setPos(pos.x, pos.y, pos.z)
+            val yawTarget = (yRot.toInt() / 90) * 90
+            yRot = net.minecraft.util.Mth.rotLerp(0.5f, yRot, yawTarget.toFloat())
+        }
+        insertionDelay = (insertionDelay - 3).coerceAtLeast(0)
+        return insertionDelay == 0
+    }
+
+    // the boat as a dyed item stack, shared by pickup / breaking / belt insert
+    fun createItemStack(): ItemStack {
+        val stack = ItemStack(ModItems.INFLATABLE_BOAT_1X2)
+        stack.set(DataComponents.DYED_COLOR, net.minecraft.world.item.component.DyedItemColor(color, true))
+        return stack
     }
 
     // surface height of the water column under the boat
@@ -92,9 +120,18 @@ class InflatableBoat1x2Entity(type: EntityType<out LivingEntity>, level: Level) 
     }
 
     // right-click to sit, boat-style: first passenger takes the front seat (z-),
-    // the second takes the rear seat (z+)
+    // the second takes the rear seat (z+). Sneak + right-click picks the boat
+    // back up as a dyed item, package-style
     override fun interact(player: Player, hand: InteractionHand): InteractionResult {
-        if (player.isSecondaryUseActive) return InteractionResult.PASS
+        if (player.isSecondaryUseActive) {
+            if (level().isClientSide) return InteractionResult.SUCCESS
+            val stack = createItemStack()
+            if (!player.abilities.instabuild && !player.addItem(stack)) {
+                spawnAtLocation(stack, 0.5f)
+            }
+            discard()
+            return InteractionResult.SUCCESS
+        }
         if (level().isClientSide) return InteractionResult.CONSUME
         return if (player.startRiding(this)) InteractionResult.CONSUME else InteractionResult.PASS
     }
@@ -116,17 +153,35 @@ class InflatableBoat1x2Entity(type: EntityType<out LivingEntity>, level: Level) 
 
     override fun canAddPassenger(passenger: Entity): Boolean = passengers.size < 2
 
-    override fun canBeCollidedWith(): Boolean = true
+    // collision locked to the rendered hull centre: the renderer's net offset
+    // is T(0, 0.02, 0), so the hull centre sits 0.11375 above the entity
+    // origin (hull spans y 0.02..0.2075), and the 1x1 box is centred there
+    override fun makeBoundingBox(): AABB {
+        val cy = y + 0.11375
+        return AABB(
+            x - 0.5, cy - 0.09375, z - 0.5,
+            x + 0.5, cy + 0.09375, z + 0.5
+        )
+    }
+
+    // package parity: not solid, so a freshly tossed boat cannot shove the
+    // player; pushing the boat around still works through isPushable
+    override fun canBeCollidedWith(): Boolean = false
 
     override fun isPickable(): Boolean = true
 
-    // left-click breaking drops the dyed item, boat-style
+    // left-click breaking: the dyed boat goes straight into the attacker's
+    // inventory (spills on the ground only when it is full or non-player)
     override fun hurt(damageSource: DamageSource, amount: Float): Boolean {
         if (level().isClientSide || isRemoved) return true
         discard()
-        val stack = ItemStack(ModItems.INFLATABLE_BOAT_1X2)
-        stack.set(DataComponents.DYED_COLOR, net.minecraft.world.item.component.DyedItemColor(color, true))
-        spawnAtLocation(stack, 0.5f)
+        val stack = createItemStack()
+        val attacker = damageSource.entity
+        if (attacker is net.minecraft.server.level.ServerPlayer) {
+            if (!attacker.inventory.add(stack)) spawnAtLocation(stack, 0.5f)
+        } else {
+            spawnAtLocation(stack, 0.5f)
+        }
         return true
     }
 

@@ -61,6 +61,7 @@ object CreateWaterparkedClient {
         MOD_BUS.addListener(::onRegisterRenderers)
         MOD_BUS.addListener(::onRegisterParticleProviders)
         MOD_BUS.addListener(::onItemColors)
+        MOD_BUS.addListener(::onRegisterClientExtensions)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickItem)
@@ -135,6 +136,21 @@ object CreateWaterparkedClient {
                 if (tintIndex == 0) stack.get(net.minecraft.core.component.DataComponents.DYED_COLOR)?.rgb() ?: 0xFFFFFF
                 else -1
             },
+            item
+        )
+    }
+
+    // custom rendered item, Create-package style: SimpleCustomRenderer also
+    // registers the item with Create's CustomRenderedItems so the baked model
+    // gets wrapped with CustomRenderedItemModel and the BEWLR is used
+    private fun onRegisterClientExtensions(event: net.neoforged.neoforge.client.extensions.common.RegisterClientExtensionsEvent) {
+        val item: net.minecraft.world.item.Item =
+            net.omori_sunny.create_waterparked.content.registry.ModItems.INFLATABLE_BOAT_1X2
+        event.registerItem(
+            com.simibubi.create.foundation.item.render.SimpleCustomRenderer.create(
+                item,
+                net.omori_sunny.create_waterparked.client.renderer.InflatableBoatItemRenderer()
+            ),
             item
         )
     }

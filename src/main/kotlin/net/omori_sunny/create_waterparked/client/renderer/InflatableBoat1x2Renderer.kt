@@ -35,14 +35,16 @@ class InflatableBoat1x2Renderer(ctx: EntityRendererProvider.Context) : EntityRen
         val stack = ItemStack(ModItems.INFLATABLE_BOAT_1X2)
         stack.set(DataComponents.DYED_COLOR, DyedItemColor(entity.color, true))
         poseStack.pushPose()
-        // item rendering centers a 16x16x16 model grid with translate(-0.5,-0.5,-0.5).
-        // our model spans x 0..16, y 0..3, z 0..32, so the counter-translate must put
-        // the model center (8, ?, 16) at the entity origin and the hull bottom at y=0:
-        //   x: 8/16 - 0.5 + Tx = 0  -> Tx = 0
-        //   y: 0/16 - 0.5 + Ty = 0  -> Ty = 0.5
-        //   z: 16/16 - 0.5 + Tz = 0 -> Tz = -0.5
+        // since the item uses a custom renderer, the BEWLR path additionally
+        // centres the draw space with translate(0.5,0.5,0.5) before our quads.
+        // our model spans x 0..16, y 0..3, z 0..32 (centre (8, ?, 16)), so the
+        // combined counter-translate must put the model centre at the entity
+        // origin and the hull bottom ~0.02 above y=0:
+        //   x: 8/16 + 0.5 + Tx = 0.5  -> Tx = -0.5
+        //   y:    0 + 0.5 + Ty = 0.52 -> Ty =  0.02
+        //   z: 16/16 + 0.5 + Tz = 0.5 -> Tz = -1.0
         poseStack.mulPose(Axis.YP.rotationDegrees(entity.yRot))
-        poseStack.translate(0.0, 0.52, -0.5)
+        poseStack.translate(-0.5, 0.02, -1.0)
         // NONE applies no display transform: model units are already block units
         Minecraft.getInstance().itemRenderer.renderStatic(
             stack, ItemDisplayContext.NONE, packedLight, OverlayTexture.NO_OVERLAY,
