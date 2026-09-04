@@ -35,9 +35,8 @@ class InflatableBoat1x2Entity(type: EntityType<out LivingEntity>, level: Level) 
         private val COLOR: EntityDataAccessor<Int> =
             SynchedEntityData.defineId(InflatableBoat1x2Entity::class.java, EntityDataSerializers.INT)
 
-        // seats sit on the short x side: 0.5 blocks from the center line,
-        // y is the deck height (2/16 of a block)
-        private const val SEAT_OFFSET_X = 0.5
+        // seats sit on the deck centre line, y is the deck height (2/16 of a
+        // block)
         private const val SEAT_HEIGHT = 2.0 / 16.0 // 0.125
 
         fun createAttributes(): AttributeSupplier.Builder =
@@ -100,12 +99,11 @@ class InflatableBoat1x2Entity(type: EntityType<out LivingEntity>, level: Level) 
         return if (player.startRiding(this)) InteractionResult.CONSUME else InteractionResult.PASS
     }
 
-    // seat positions: boat-style seats spread across the short x side, 0.5 blocks
-    // from the center line. Entity.getPassengerRidingPosition adds these local
-    // offsets to the entity position, so only the local point is overridden here.
+    // seat position: centred on the deck. Entity.getPassengerRidingPosition
+    // adds this local offset to the entity position, so only the local point
+    // is overridden here.
     private fun seatOffset(passenger: Entity): Vec3 {
-        val xOffset = if (passengers.indexOf(passenger) == 0) -SEAT_OFFSET_X else SEAT_OFFSET_X
-        val local = Vec3(xOffset, SEAT_HEIGHT, 0.0)
+        val local = Vec3(0.0, SEAT_HEIGHT, 0.0)
         // rotate the local offset with the boat's yaw, exactly like boat seats
         return local.yRot(-yRot * 0.017453292f)
     }
