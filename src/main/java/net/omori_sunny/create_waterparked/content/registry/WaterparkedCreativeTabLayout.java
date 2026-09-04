@@ -21,7 +21,8 @@ public class WaterparkedCreativeTabLayout {
     public static boolean isWaterparkedItem(ItemStack stack) {
         Item item = stack.getItem();
         return item == ModItems.INSTANCE.getWATERSLIDE_TRACK() ||
-            item == ModItems.INSTANCE.getWATERSLIDE_ANCHOR();
+            item == ModItems.INSTANCE.getWATERSLIDE_ANCHOR() ||
+            item == ModItems.INSTANCE.getINFLATABLE_BOAT_1X2();
     }
 
     // banner row index, the empty row right before the first Waterparked item

@@ -35,5 +35,7 @@
   "item.create_waterparked.waterslide_track.tooltip.behaviour": "copy the slide sector config into the clipboard",
   "item.create_waterparked.waterslide_track.tooltip.condition": "When right-clicked with the clipboard",
   "item.create_waterparked.waterslide_track.tooltip.summary": "Used to _connect_ waterslide anchors",
-  "item.create_waterparked.incomplete_waterslide_track": "Incomplete Water Slide Track"
+  "item.create_waterparked.incomplete_waterslide_track": "Incomplete Water Slide Track",
+  "item.create_waterparked.inflatable_boat_1x2": "Inflatable Boat 1x2",
+  "entity.create_waterparked.inflatable_boat_1x2": "Inflatable Boat 1x2"
 }

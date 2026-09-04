@@ -50,5 +50,7 @@
   "item.create_waterparked.waterslide_track.tooltip.behaviour": "复制滑梯扇区配置到剪贴板中",
   "item.create_waterparked.waterslide_track.tooltip.condition": "当用剪贴板右键时",
   "item.create_waterparked.waterslide_track.tooltip.summary": "用于_连接_水滑梯锚点",
-  "item.create_waterparked.incomplete_waterslide_track": "未完成的水滑梯轨道"
+  "item.create_waterparked.incomplete_waterslide_track": "未完成的水滑梯轨道",
+  "item.create_waterparked.inflatable_boat_1x2": "充气船 1x2",
+  "entity.create_waterparked.inflatable_boat_1x2": "充气船 1x2"
 }

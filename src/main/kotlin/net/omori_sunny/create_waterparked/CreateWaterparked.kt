@@ -13,6 +13,8 @@ import net.omori_sunny.create_waterparked.content.registry.ModItems
 import net.omori_sunny.create_waterparked.content.registry.ModParticles
 import net.omori_sunny.create_waterparked.content.registry.ModSounds
 import net.omori_sunny.create_waterparked.content.registry.CoasterCreativeTabIntegration
+import net.omori_sunny.create_waterparked.content.raft.ModRecipeSerializers
+import net.omori_sunny.create_waterparked.content.raft.InflatableBoat1x2Entity
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorInteraction
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSupportInteraction
@@ -46,10 +48,14 @@ object CreateWaterparked {
         ModBlockEntities.REGISTRY.register(MOD_BUS)
         ModItems.REGISTRY.register(MOD_BUS)
         ModEntityTypes.REGISTRY.register(MOD_BUS)
+        ModRecipeSerializers.REGISTRY.register(MOD_BUS)
         ModDataComponents.REGISTRY.register(MOD_BUS)
         ModSounds.REGISTRY.register(MOD_BUS)
         ModParticles.REGISTRY.register(MOD_BUS)
         MOD_BUS.addListener(CoasterCreativeTabIntegration::onBuildCreativeModeTabContents)
+        MOD_BUS.addListener<net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent> { event ->
+            event.put(ModEntityTypes.INFLATABLE_BOAT_1X2, InflatableBoat1x2Entity.createAttributes().build())
+        }
 
         MOD_BUS.addListener(ModPayloads::register)
         MOD_BUS.addListener(::onCommonSetup)

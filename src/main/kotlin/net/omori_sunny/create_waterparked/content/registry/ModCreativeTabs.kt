@@ -20,6 +20,15 @@ object ModCreativeTabs {
             .displayItems { _, output ->
                 output.accept(ModItems.WATERSLIDE_TRACK)
                 output.accept(ModItems.WATERSLIDE_ANCHOR)
+                // only the default red boat in the creative tab
+                val boat = ItemStack(ModItems.INFLATABLE_BOAT_1X2)
+                boat.set(
+                    net.minecraft.core.component.DataComponents.DYED_COLOR,
+                    net.minecraft.world.item.component.DyedItemColor(
+                        net.minecraft.world.item.DyeColor.RED.textureDiffuseColor, true
+                    )
+                )
+                output.accept(boat)
             }
             .build()
     }

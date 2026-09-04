@@ -60,6 +60,7 @@ object CreateWaterparkedClient {
         MOD_BUS.addListener(::onClientSetup)
         MOD_BUS.addListener(::onRegisterRenderers)
         MOD_BUS.addListener(::onRegisterParticleProviders)
+        MOD_BUS.addListener(::onItemColors)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickItem)
@@ -116,12 +117,26 @@ object CreateWaterparkedClient {
         event.registerBlockEntityRenderer(ModBlockEntities.WATERSLIDE_ANCHOR_BE) { ctx ->
             net.omori_sunny.create_waterparked.client.renderer.WaterslideTubeBlockEntityRenderer(ctx)
         }
+        event.registerEntityRenderer(ModEntityTypes.INFLATABLE_BOAT_1X2) { ctx ->
+            net.omori_sunny.create_waterparked.client.renderer.InflatableBoat1x2Renderer(ctx)
+        }
     }
 
     private fun onRegisterParticleProviders(event: RegisterParticleProvidersEvent) {
         event.registerSpriteSet(ModParticles.WATER_SLIDE_SPLASH) { sprites ->
             WaterslideSplashParticle.Provider(sprites)
         }
+    }
+
+    private fun onItemColors(event: net.neoforged.neoforge.client.event.RegisterColorHandlersEvent.Item) {
+        val item = net.omori_sunny.create_waterparked.content.registry.ModItems.INFLATABLE_BOAT_1X2
+        event.register(
+            { stack, tintIndex ->
+                if (tintIndex == 0) stack.get(net.minecraft.core.component.DataComponents.DYED_COLOR)?.rgb() ?: 0xFFFFFF
+                else -1
+            },
+            item
+        )
     }
 
     private fun onRenderLevelStage(event: RenderLevelStageEvent) {
