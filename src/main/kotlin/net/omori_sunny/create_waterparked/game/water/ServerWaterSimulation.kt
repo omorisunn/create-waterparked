@@ -333,7 +333,10 @@ object ServerWaterSimulation {
         // recalc on mouth pair count change, deferral while a sub level moves.
         // cross-space topology only changes on anchor edit or sub level
         // teleport, so rescan it at most every 20 ticks instead of every tick
-        val crossSig = if (level.gameTime - (lastCrossScanTick[dim] ?: Long.MIN_VALUE) >= 20) {
+        // (null check, not a Long.MIN_VALUE sentinel: gameTime - MIN_VALUE
+        // overflows negative and would permanently disable the scan)
+        val lastCrossScan = lastCrossScanTick[dim]
+        val crossSig = if (lastCrossScan == null || level.gameTime - lastCrossScan >= 20) {
             lastCrossScanTick[dim] = level.gameTime
             crossLinkSignature(level)
         } else {
@@ -364,8 +367,8 @@ object ServerWaterSimulation {
         // edits, other mods). 100 ticks = 5s worst case instead of 1s.
         for (a in accesses) {
             val key = spaceKey(a)
-            val last = lastStableCheckTick[key] ?: Long.MIN_VALUE
-            if (level.gameTime - last < 100) continue
+            val last = lastStableCheckTick[key]
+            if (last != null && level.gameTime - last < 100) continue
             lastStableCheckTick[key] = level.gameTime
             val sig = try {
                 stableStructureSignature(a)

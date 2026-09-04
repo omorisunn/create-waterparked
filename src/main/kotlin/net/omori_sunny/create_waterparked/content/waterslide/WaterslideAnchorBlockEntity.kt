@@ -13,6 +13,7 @@ import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.game.SlideAnchorIndex
+import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import net.omori_sunny.create_waterparked.game.contraption.AnchorPeerCurveDataAccess
 import net.minecraft.core.BlockPos
 import net.minecraft.core.HolderLookup
@@ -184,6 +185,12 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         if (level != null && !level!!.isClientSide) {
             setChanged()
             notifyBlockUpdated()
+            // the water sim only keys on hasWater, so mark dirty on the
+            // empty <-> non-empty flip; partial amount changes need no recalc
+            if (hasWater() != lastMarkedHasWater) {
+                lastMarkedHasWater = hasWater()
+                waterStructureChanged()
+            }
         }
     }
 
@@ -310,12 +317,13 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
     }
 
     // any structural edit that changes the water field (radius, curves,
-    // watering, water switch, sector config) marks the space dirty so the
-    // water sim recalcs on the next tick instead of the slow fallback scan
+    // watering, water switch, sector config) marks the owning space dirty so
+    // the water sim recalcs on the next tick instead of the slow fallback scan
     private fun waterStructureChanged() {
         val lvl = level
         if (lvl != null && !lvl.isClientSide) {
-            net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation.markDirty(lvl)
+            net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation
+                .markSpaceDirty(lvl, SlideSpace.ofLevelAndSub(lvl, blockPos))
         }
     }
 
@@ -376,6 +384,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         if (tag.contains("WaterTank", 10)) {
             waterTank.readFromNBT(registries, tag.getCompound("WaterTank"))
         }
+        lastMarkedHasWater = hasWater()
 // refresh visuals after curve data arrives
         if (level?.isClientSide == true) {
             // support visibility is NOT part of the tube visual data signature,
@@ -408,9 +417,12 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
     }
 
     // last NBT curve-topology snapshot on the server, avoids re-dirtying on
-    // every regular block sync; transient across reloads (recovers via the
+    // every regular block syncing; transient across reloads (recovers via the
     // slow fallback rescan anyway)
     private var lastPeerTopoSig: String? = null
+
+    // hasWater state already reported to the water sim via waterStructureChanged
+    private var lastMarkedHasWater: Boolean = false
 
     // public entry for contraption space reconstruction from captured NBT
     fun readCaptured(tag: CompoundTag, registries: HolderLookup.Provider?) {
