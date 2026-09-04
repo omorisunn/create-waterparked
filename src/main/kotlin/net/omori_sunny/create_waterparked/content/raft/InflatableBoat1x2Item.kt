@@ -32,7 +32,9 @@ class InflatableBoat1x2Item(properties: Properties) : Item(properties) {
         if (location !is ItemEntity) return null
         val boat = InflatableBoat1x2Entity(ModEntityTypes.INFLATABLE_BOAT_1X2, world)
         boat.setPos(location.x, location.y, location.z)
+        // inherit the full belt-direction orientation (yaw + pitch)
         boat.yRot = location.yRot
+        boat.xRot = location.xRot
         // packages keep their toss momentum scaled up, same here
         boat.deltaMovement = location.deltaMovement.scale(1.5)
         boat.color = itemstack.get(DataComponents.DYED_COLOR)?.rgb() ?: 0xFFFFFF

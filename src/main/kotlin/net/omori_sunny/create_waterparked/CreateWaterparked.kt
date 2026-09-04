@@ -114,4 +114,23 @@ object CreateWaterparked {
             WaterslideTubeVisual.refreshAll()
         }
     }
+
+    @SubscribeEvent
+    fun onConfigLoaded(event: ModConfigEvent.Loading) {
+        if (event.config.spec !== ModConfig.SERVER_SPEC) return
+        val dedicated = net.neoforged.fml.loading.FMLEnvironment.dist ==
+            net.neoforged.api.distmarker.Dist.DEDICATED_SERVER
+        if (!ModConfig.subLevelSlideRiding()) {
+            if (dedicated) {
+                LOGGER.info(
+                    "[Waterparked] Sub-level slide riding is DISABLED: dedicated servers default to off for performance. " +
+                        "Set slide.subLevelSlideRiding = true in create_waterparked-server.toml to enable it."
+                )
+            } else {
+                LOGGER.info("[Waterparked] Sub-level slide riding is disabled via config.")
+            }
+        } else {
+            LOGGER.info("[Waterparked] Sub-level slide riding is enabled.")
+        }
+    }
 }

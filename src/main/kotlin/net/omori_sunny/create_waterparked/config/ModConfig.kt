@@ -36,6 +36,7 @@ object ModConfig {
     lateinit var ANCHOR_FLUID_CAPACITY: ModConfigSpec.IntValue
     lateinit var SLIDE_MAX_TRAJECTORY_BLOCKS: ModConfigSpec.DoubleValue
     lateinit var SLIDE_CANCEL_COOLDOWN_TICKS: ModConfigSpec.IntValue
+    lateinit var SUB_LEVEL_SLIDE: ModConfigSpec.BooleanValue
 
     lateinit var SERVER_SPEC: ModConfigSpec
 
@@ -118,6 +119,16 @@ object ModConfig {
         SLIDE_CANCEL_COOLDOWN_TICKS = SERVER_BUILDER
             .comment("Cooldown in ticks before a player can start a new slide after cancelling with Shift.")
             .defineInRange("slideCancelCooldownTicks", 20, 0, 200)
+        // whole sub-levels riding slides: heavy feature, on for singleplayer by
+        // default, off for dedicated servers unless explicitly enabled
+        SUB_LEVEL_SLIDE = SERVER_BUILDER
+            .comment(
+                "Whole Sable sub-levels can ride water slides. Enabled by default on integrated (singleplayer/LAN) servers, disabled by default on dedicated servers for performance - set to true in create_waterparked-server.toml to enable."
+            )
+            .define(
+                "subLevelSlideRiding",
+                net.neoforged.fml.loading.FMLEnvironment.dist != net.neoforged.api.distmarker.Dist.DEDICATED_SERVER
+            )
         SERVER_BUILDER.pop()
 
         SERVER_SPEC = SERVER_BUILDER.build()
@@ -183,6 +194,8 @@ object ModConfig {
     fun slideMaxTrajectoryBlocks(): Double = SLIDE_MAX_TRAJECTORY_BLOCKS.safeGet(SERVER_SPEC).coerceIn(50.0, 10000.0)
 
     fun slideCancelCooldownTicks(): Int = SLIDE_CANCEL_COOLDOWN_TICKS.safeGet(SERVER_SPEC).coerceIn(0, 200)
+
+    fun subLevelSlideRiding(): Boolean = SUB_LEVEL_SLIDE.safeGet(SERVER_SPEC)
 
     @Suppress("DEPRECATION")
     fun register() {

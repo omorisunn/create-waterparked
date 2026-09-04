@@ -98,7 +98,11 @@ object PhysicsSlideTrajectoryBuilder {
         startPos: Vec3,
         startVel: Vec3,
         poseWidth: Double,
-        poseHeight: Double
+        poseHeight: Double,
+        // wall margin from the integration point to the tube wall: half width
+        // for the tuned player point model, the box circumscribed radius for
+        // full-box non-player riders
+        poseRad: Double = poseWidth / 2.0
     ): SlideTrajectory? {
         val maxSamples = ModConfig.slideMaxTrajectorySamples()
         val maxLength = ModConfig.slideMaxTrajectoryBlocks()
@@ -127,7 +131,7 @@ object PhysicsSlideTrajectoryBuilder {
             val head = p.add(h.up.scale(poseHeight))
             val headRadial = head.subtract(h.center)
             val headDist = headRadial.length()
-            val headLimit = max(MIN_WALL_DIST, inner - poseWidth / 2.0 - 0.02)
+            val headLimit = max(MIN_WALL_DIST, inner - poseRad - 0.02)
             if (headDist > headLimit) {
                 return p.subtract(headRadial.normalize().scale(headDist - headLimit))
             }
@@ -158,7 +162,7 @@ object PhysicsSlideTrajectoryBuilder {
                 val radial = newPos.subtract(hit.center)
                 val axisDist = radial.length()
                 val inner = max(0.1, hit.radius - SLIDE_WALL_THICKNESS)
-                val wallDist = max(MIN_WALL_DIST, inner - poseWidth / 2.0)
+                val wallDist = max(MIN_WALL_DIST, inner - poseRad)
 
                 if (axisDist > wallDist) {
                     val angle = angleDeg(radial, hit.lateral, hit.up)

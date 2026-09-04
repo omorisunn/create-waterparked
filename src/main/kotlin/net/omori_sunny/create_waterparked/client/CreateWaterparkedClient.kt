@@ -208,6 +208,7 @@ object CreateWaterparkedClient {
             WaterslideGhostRenderer.clear()
             SlideSableOrientation.clearAll()
             SlideClientSession.resetActive()
+            EntitySlideClientSessions.clear()
             WaterFlowSimulation.clear()
             WaterSlideSoundManager.stopAll()
         }

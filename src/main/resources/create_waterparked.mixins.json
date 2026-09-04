@@ -22,7 +22,9 @@
     "CoasterTrackPlacementMixin",
     "CreativeModeTabWaterparkedLayoutMixin",
     "ItemHelperBoatMixin",
-    "PackageEntityCenterBoatMixin"
+    "PackageEntityCenterBoatMixin",
+    "SubLevelBoundsAccessor",
+    "TransportedItemStackBoatMixin"
   ],
   "client": [
     "client.AbstractContainerScreenAccessor",
@@ -42,6 +44,7 @@
     "client.CreativeModeInventoryScreenWaterparkedTooltipMixin",
     "client.DepotBehaviourAccessor",
     "client.DepotRendererBoatAngleMixin",
+    "client.EntityRenderDispatcherSlideMixin",
     "client.LevelRendererAccessor",
     "client.MinecraftGhostAttackMixin",
     "client.iris.IrisWaterPassMixin",
