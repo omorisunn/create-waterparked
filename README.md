@@ -3,7 +3,10 @@
 
 # Create Waterparked
 Build real Waterparks with fully customizable slides!
-
+<br><br>
+![](https://img.shields.io/discord/1536760718685110332?logo=Discord&labelColor=5865F2&color=2C2C2C...)
+![](https://img.shields.io/modrinth/dt/create-waterparked?logo=modrinth&labelColor=5CA424...)
+![](https://img.shields.io/curseforge/dt/1648876?logo=curseforge&labelColor=F16436...)
 </div>
 
 
