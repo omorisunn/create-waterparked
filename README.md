@@ -9,17 +9,6 @@ Build real Waterparks with fully customizable slides!
 ![](https://img.shields.io/curseforge/dt/1648876?logo=curseforge&labelColor=F16436...)
 </div>
 
-
-## Features
-
-*   Customizable Slide Tracks with physics (works with sub-levels and contraptions)
-
-## Planning Features
-
-*   Waterpark style items & blocks
-*   More unique types of slides
-*   Slides for delivery
-
 ## Build
 ##### By GitHub Actions
 1. Fork this repository.
