@@ -12,6 +12,7 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslideEditorRenderTy
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSectorEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSupportEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslideGhostPlacement
+import net.omori_sunny.create_waterparked.client.editor.WaterslideRivetEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPreview
 import net.omori_sunny.create_waterparked.client.editor.WaterslideClipboardPaste
 import net.omori_sunny.create_waterparked.client.editor.SlideClipboardCopy
@@ -65,6 +66,8 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickItem)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideRivetEdit::onUseItemKey)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideRivetEdit::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onLeftClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onAttackKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSupportEdit::onRightClickBlock)

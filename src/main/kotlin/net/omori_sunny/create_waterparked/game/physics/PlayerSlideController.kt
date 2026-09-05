@@ -171,6 +171,7 @@ object PlayerSlideController {
             ServerWaterSimulation.tickAll(level)
             BeltSlideFeeder.tick(level)
             SubLevelSlideController.tick(level)
+            net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetSpawner.serverTick(level)
             // track contraption poses so fresh accessors report correct velocity
             ContraptionSlideSpaces.updatePrev(level)
             for (session in sessions.values.toList()) {
@@ -1149,6 +1150,8 @@ object PlayerSlideController {
         val localPos: Vec3,
         @JvmField val worldPos: Vec3,
         @JvmField val worldTangent: Vec3,
+        // tube radius at this mouth end, for the entry-disc capture test
+        @JvmField val radius: Float,
         // curve the mouth belongs to, for direct trajectory building
         val curve: com.simibubi.create.content.trains.track.BezierConnection,
         val towardSecond: Boolean
@@ -1172,11 +1175,9 @@ object PlayerSlideController {
                     if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
                     val a = bc.bePositions.getFirst()
                     val b = bc.bePositions.getSecond()
-                    val cf = curveFrames(
-                        access, bc,
-                        SlideCurveGeometry.radiusAt(access, a),
-                        SlideCurveGeometry.radiusAt(access, b)
-                    ) ?: continue
+                    val r0 = SlideCurveGeometry.radiusAt(access, a)
+                    val r1 = SlideCurveGeometry.radiusAt(access, b)
+                    val cf = curveFrames(access, bc, r0, r1) ?: continue
                     if (cf.frames.size < 2) continue
                     val first = cf.frames.first()
                     val last = cf.frames.last()
@@ -1185,18 +1186,57 @@ object PlayerSlideController {
                         access, first.center,
                         access.toWorld(first.center),
                         access.toWorldNormal(first.tangent).normalize(),
-                        bc, true
+                        r0, bc, true
                     )
                     out += SlideMouth(
                         access, last.center,
                         access.toWorld(last.center),
                         access.toWorldNormal(last.tangent.scale(-1.0)).normalize(),
-                        bc, false
+                        r1, bc, false
                     )
                 }
             }
         }
         return out
+    }
+
+    // true when a world position sits on a waterslide tube inner wall
+    // (exempts player-placed rivet blocks from hostless-rivet cleanup)
+    @JvmStatic
+    fun isRivetOnSlideWall(level: ServerLevel, pos: BlockPos): Boolean {
+        val point = Vec3.atCenterOf(pos)
+        val spaces = ArrayList<SlideSpaceAccess>()
+        spaces += MainSlideSpaceAccess(level)
+        SubLevelContainer.getContainer(level)?.allSubLevels?.forEach { raw ->
+            val sub = raw as? ServerSubLevel ?: return@forEach
+            spaces += SubSlideSpaceAccess(level, sub)
+        }
+        for (access in spaces) {
+            for (anchorPos in ContraptionSlideSpaces.anchorPositions(access)) {
+                val be = access.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity ?: continue
+                for (raw in be.anchorPeerCurvesView.values) {
+                    val bc = if (raw.isPrimary) raw else raw.secondary()
+                    if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
+                    val a = bc.bePositions.getFirst()
+                    val b = bc.bePositions.getSecond()
+                    val r0 = SlideCurveGeometry.radiusAt(access, a)
+                    val r1 = SlideCurveGeometry.radiusAt(access, b)
+                    val frames = SlideCurveGeometry.sampleFrames(access, bc, r0, r1, 0.5, false)
+                    for (i in 0 until frames.size - 1) {
+                        val fa = frames[i]
+                        val fb = frames[i + 1]
+                        val ab = fb.center.subtract(fa.center)
+                        val lenSq = ab.lengthSqr()
+                        if (lenSq < 1.0E-9) continue
+                        val t = ((point.subtract(fa.center)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
+                        val closest = fa.center.add(ab.scale(t))
+                        val radius = Mth.lerp(t.toDouble(), fa.radius.toDouble(), fb.radius.toDouble())
+                        if (point.distanceTo(closest) <= radius + 0.4) return true
+                    }
+                }
+            }
+        }
+        return false
     }
 
     private fun applyRotation(entity: Entity, tangent: Vec3) {

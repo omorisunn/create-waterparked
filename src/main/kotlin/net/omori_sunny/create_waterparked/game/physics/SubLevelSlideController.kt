@@ -87,18 +87,35 @@ object SubLevelSlideController {
         for (raw in container.allSubLevels) {
             val sub = raw as? ServerSubLevel ?: continue
             if (levelSessions.containsKey(sub.uniqueId)) continue
+            if (isRivetSub(sub)) continue
             val box = worldBoxOf(sub)
             val center = box.center
             val vel = Vec3(
                 sub.latestLinearVelocity.x(), sub.latestLinearVelocity.y(), sub.latestLinearVelocity.z()
             )
             var best: PlayerSlideController.SlideMouth? = null
-            var bestD = ENTRY_RANGE_SQ
+            var bestD = Double.MAX_VALUE
             for (mouth in mouths) {
                 // never capture through a mouth of its own slide
                 val mouthSub = (mouth.access as? SubSlideSpaceAccess)?.sub
                 if (mouthSub?.uniqueId == sub.uniqueId) continue
-                // any structure reaching the mouth enters; gravity + entry boost start it
+                // capture only structures crossing INTO the tube opening:
+                // structures resting on the outer wall (e.g. blocks built on
+                // rivets) must stay put
+                val px = mouth.worldPos.x.coerceIn(box.minX, box.maxX)
+                val py = mouth.worldPos.y.coerceIn(box.minY, box.maxY)
+                val pz = mouth.worldPos.z.coerceIn(box.minZ, box.maxZ)
+                val dx = px - mouth.worldPos.x
+                val dy = py - mouth.worldPos.y
+                val dz = pz - mouth.worldPos.z
+                val insideBox = dx * dx + dy * dy + dz * dz < 1.0E-8
+                val along = dx * mouth.worldTangent.x + dy * mouth.worldTangent.y + dz * mouth.worldTangent.z
+                val rx = dx - along * mouth.worldTangent.x
+                val ry = dy - along * mouth.worldTangent.y
+                val rz = dz - along * mouth.worldTangent.z
+                val radialSq = rx * rx + ry * ry + rz * rz
+                val rr = mouth.radius.toDouble()
+                if (!insideBox && !(along > 0.1 && radialSq < rr * rr)) continue
                 val d = box.distanceToSqr(mouth.worldPos)
                 if (d >= bestD) continue
                 best = mouth
@@ -109,6 +126,13 @@ object SubLevelSlideController {
         }
     }
 
+    // rivet sub-levels are wall decorations; the slide NEVER rides them -
+    // blocked by the spawner's UUID registry (placement-time entry plus the
+    // ZERO-cell scan in its serverTick repopulates it after reloads)
+    private fun isRivetSub(sub: ServerSubLevel): Boolean =
+        net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetSpawner
+            .rivetSubIds.contains(sub.uniqueId)
+
     private fun tryStart(
         level: ServerLevel,
         levelSessions: HashMap<UUID, SubSession>,
@@ -117,6 +141,7 @@ object SubLevelSlideController {
         centerWorld: Vec3,
         velWorld: Vec3
     ) {
+        if (isRivetSub(sub)) return
         val access = mouth.access
         val startLocal = access.worldToLocal(centerWorld)
         val startVel = access.worldNormalToLocal(velWorld)
