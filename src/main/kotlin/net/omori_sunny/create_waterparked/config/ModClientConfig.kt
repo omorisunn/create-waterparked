@@ -12,7 +12,6 @@ object ModClientConfig {
     lateinit var CAMERA_SMOOTHING: ModConfigSpec.DoubleValue
     lateinit var SHOW_SKELETON_WHEN_TRANSLUCENT: ModConfigSpec.BooleanValue
     lateinit var POLYGON_SCALE: ModConfigSpec.DoubleValue
-    lateinit var WALL_THICKNESS: ModConfigSpec.DoubleValue
     lateinit var WATER_FLOW_SCALE: ModConfigSpec.DoubleValue
     lateinit var WATER_ENVELOPE_VERTICES: ModConfigSpec.IntValue
     lateinit var WATER_ENVELOPE_SPACING: ModConfigSpec.IntValue
@@ -49,9 +48,6 @@ object ModClientConfig {
         POLYGON_SCALE = BUILDER
             .comment("Mesh polygon density scale. Lower = fewer faces.")
             .defineInRange("polygonScale", 0.5, 0.05, 2.0)
-        WALL_THICKNESS = BUILDER
-            .comment("Pipe wall thickness in blocks. Thickens outward; inner radius stays fixed.")
-            .defineInRange("wallThickness", 0.5, 0.1, 0.5)
         WATER_FLOW_SCALE = BUILDER
             .comment("Water flow scroll speed scale. Higher = faster.")
             .defineInRange("waterFlowScale", 1.0, 0.1, 4.0)
@@ -136,8 +132,6 @@ object ModClientConfig {
     fun splashMaxRate(): Double = SPLASH_MAX_RATE.safeGet().toDouble().coerceIn(8.0, 120.0)
 
     fun polygonScale(): Float = POLYGON_SCALE.safeGet().toFloat().coerceIn(0.05f, 2.0f)
-
-    fun wallThickness(): Float = WALL_THICKNESS.safeGet().toFloat().coerceIn(0.1f, 0.5f)
 
     fun waterFlowScale(): Float = WATER_FLOW_SCALE.safeGet().toFloat().coerceIn(0.1f, 4.0f)
 

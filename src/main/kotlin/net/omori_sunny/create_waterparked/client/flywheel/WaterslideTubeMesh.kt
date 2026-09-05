@@ -485,11 +485,11 @@ object WaterslideTubeMesh {
                 (inTile.coerceIn(border, texW - border)) / texW
             // cap radial three zone fold, walls use the plain body window fold
             val vFrac = if (translucent && capV) {
-                val vPx = v * (ModClientConfig.wallThickness() * 16f)
+                val vPx = v * (net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() * 16f)
                 when {
                     vPx < border -> max(vPx, 0.05f) / texH
-                    vPx > ModClientConfig.wallThickness() * 16f - border ->
-                        min(texH - border + (vPx - (ModClientConfig.wallThickness() * 16f - border)), texH - 0.05f) / texH
+                    vPx > net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() * 16f - border ->
+                        min(texH - border + (vPx - (net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() * 16f - border)), texH - 0.05f) / texH
                     else -> (border + (vPx % centerH)) / texH
                 }
             } else ((border + (v * 0.5f * texH % centerH)) % texH) / texH
@@ -1012,7 +1012,7 @@ object WaterslideTubeMesh {
                 .append('|').append(ModClientConfig.supportArcLo())
                 .append('|').append(ModClientConfig.supportArcHi())
                 .append('|').append(material)
-                .append('|').append(ModClientConfig.wallThickness())
+                .append('|').append(net.omori_sunny.create_waterparked.config.ModConfig.wallThickness())
                 .append('|').append(tStart).append('|').append(tEnd)
                 .append('|').append(frame.prevSpine).append('|').append(frame.currSpine)
                 .append('|').append(frame.prevTangent).append('|').append(frame.currTangent)
@@ -1105,7 +1105,7 @@ object WaterslideTubeMesh {
         // radius) plus a small epsilon — otherwise with the default 0.5 wall the
         // whole shell is buried inside the pipe, and at 0.1 it is exactly coplanar
         // with the wall and z-fights/flickers
-        val wallOuter = ModClientConfig.wallThickness() - BASE_WALL
+        val wallOuter = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - BASE_WALL
         // inner shell hugs the tube's OUTER wall exactly (radius = tube radius);
         // the outer shell adds the configured thickness so the bracket reads as
         // a solid saddle clamped around the tube instead of floating away from it

@@ -745,7 +745,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             reverse: Boolean
         ) {
             val inner = (radius - WALL_THICKNESS).coerceAtLeast(0.001f)
-            val outer = radius + (ModClientConfig.wallThickness() - WALL_THICKNESS)
+            val outer = radius + (net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - WALL_THICKNESS)
             val pose = poseStack.last()
             val width = placed.sectorWidthDegrees()
             if (width <= 0.001f) return
@@ -833,7 +833,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             val texW = sprite.contents().width()
             val texH = sprite.contents().height()
             val border = ModConfig.sectorBorderPx().toFloat()
-            val wallExtra = ModClientConfig.wallThickness() - WALL_THICKNESS
+            val wallExtra = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - WALL_THICKNESS
             val avgRadius = (rad0 + rad1) / 2f + wallExtra
             val arcLength = placed.sectorWidthRadians() * avgRadius
             // per corner arc px, tapers never stretch the outer surface
@@ -1159,13 +1159,13 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
             val texW = sprite.contents().width()
             val texH = sprite.contents().height()
             val border = ModConfig.sectorBorderPx().toFloat()
-            val sideTargetW = ModClientConfig.wallThickness() * PIXELS_PER_BLOCK
+            val sideTargetW = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() * PIXELS_PER_BLOCK
             val sideTargetH = WaterslideTubeMesh.bezierArcLength(center0, center1, tan0, tan1) * PIXELS_PER_BLOCK
             fun sideUv(u: Float, v: Float): Pair<Float, Float> =
                 nineSliceUv(u, v, sideTargetW, sideTargetH, texW, texH, border)
             val inner0 = rad0 - WALL_THICKNESS
             val inner1 = rad1 - WALL_THICKNESS
-            val wallExtra = ModClientConfig.wallThickness() - WALL_THICKNESS
+            val wallExtra = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - WALL_THICKNESS
             val o0 = tubePoint(center0, lat0, up0, rad0 + wallExtra, angleDeg)
             val i0 = tubePoint(center0, lat0, up0, inner0, angleDeg)
             val o1 = tubePoint(center1, lat1, up1, rad1 + wallExtra, angleDeg)
@@ -1430,7 +1430,7 @@ class WaterslideCurveRenderer(context: BlockEntityRendererProvider.Context) :
                 }
                 prevLat = lat
                 // outer wall surface plus a hairline pad against z fighting
-                val outer = Mth.lerp(t, r0, r1) + ModClientConfig.wallThickness() - 0.1f + 0.05f
+                val outer = Mth.lerp(t, r0, r1) + net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - 0.1f + 0.05f
                 out += OutlineSample(center, lat, up, outer)
             }
 

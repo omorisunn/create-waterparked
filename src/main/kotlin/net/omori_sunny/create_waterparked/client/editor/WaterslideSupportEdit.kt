@@ -92,6 +92,10 @@ object WaterslideSupportEdit {
     }
 
     // use-key path: the most reliable hook for the support click - the input
+    fun isWallRivetCombo(player: net.minecraft.world.entity.player.Player): Boolean =
+        player.mainHandItem.`is`(com.simibubi.create.AllItems.WRENCH.get()) &&
+            player.offhandItem.item is BlockItem
+
     // stage runs BEFORE every interaction event, so the vanilla wrench use and
     // the coaster's click handling never see a click aimed at support geometry
     // (independent of event priority/order; mirrors WaterslideSectorEdit).
@@ -111,6 +115,14 @@ object WaterslideSupportEdit {
             diagnoseUnresolvedBe(pick)
             event.setCanceled(true)
             event.setSwingHand(false)
+            return
+        }
+        // offhand BLOCK item while holding the wrench = wall rivet placement
+        // (WaterslideRivetEdit owns the click): the support editor must not
+        // consume the offhand block as fill material here
+        if (isWallRivetCombo(player)) {
+            event.setCanceled(true)
+            event.setSwingHand(true)
             return
         }
         val usedHand = if (mainOk) InteractionHand.MAIN_HAND else InteractionHand.OFF_HAND

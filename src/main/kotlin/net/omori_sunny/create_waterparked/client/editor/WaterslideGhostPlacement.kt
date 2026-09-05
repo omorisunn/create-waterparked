@@ -19,6 +19,7 @@ import net.minecraft.util.Mth
 import net.minecraft.world.InteractionHand
 import net.minecraft.world.InteractionResult
 import net.minecraft.world.item.BlockItem
+import net.minecraft.world.item.ItemStack
 import net.minecraft.world.level.Level
 import net.minecraft.world.level.block.state.BlockState
 import net.minecraft.world.phys.AABB
@@ -66,23 +67,30 @@ object WaterslideGhostPlacement {
     private var minedRecentlyAt = 0L
     private var minedRecentlyCell: BlockPos? = null
 
+    // ghost placement requires: main hand WRENCH + offhand BLOCK item; a lone
+    // wrench in the main hand keeps its edit interactions (offhand empty)
+    private fun ghostPlacementStack(player: net.minecraft.world.entity.player.Player): ItemStack? {
+        if (!player.mainHandItem.`is`(com.simibubi.create.AllItems.WRENCH.get())) return null
+        val off = player.offhandItem
+        if (off.item !is BlockItem) return null
+        return off
+    }
+
     @JvmStatic
     fun onUseItemKey(event: InputEvent.InteractionKeyMappingTriggered) {
         if (!event.isUseItem) return
         val mc = Minecraft.getInstance()
         val player = mc.player ?: return
         if (player.isShiftKeyDown) return
-        val stack = player.mainHandItem
-        if (stack.item is com.simibubi.create.content.equipment.clipboard.ClipboardBlockItem) return
         if (WaterslideClipboardPaste.isActive()) return
-        if (stack.item is net.minecraft.world.item.AxeItem) {
+        if (player.mainHandItem.item is net.minecraft.world.item.AxeItem) {
             val pick = minePickAtCursor(mc) ?: return
             event.setCanceled(true)
             event.setSwingHand(true)
             beginMine(mc, pick)
             return
         }
-        if (stack.item !is BlockItem) return
+        val stack = ghostPlacementStack(player) ?: return
         val pick = pickAtCursor(mc) ?: return
         event.setCanceled(true)
         event.setSwingHand(true)
@@ -93,10 +101,8 @@ object WaterslideGhostPlacement {
     fun onRightClickBlock(event: PlayerInteractEvent.RightClickBlock) {
         if (!event.level.isClientSide) return
         val player = event.entity ?: return
-        val stack = player.mainHandItem
-        if (stack.item is com.simibubi.create.content.equipment.clipboard.ClipboardBlockItem) return
         if (WaterslideClipboardPaste.isActive()) return
-        if (stack.item is net.minecraft.world.item.AxeItem) {
+        if (player.mainHandItem.item is net.minecraft.world.item.AxeItem) {
             if (player.isShiftKeyDown) return
             val mc = Minecraft.getInstance()
             val pick = minePickAtCursor(mc) ?: return
@@ -105,7 +111,7 @@ object WaterslideGhostPlacement {
             beginMine(mc, pick)
             return
         }
-        if (stack.item !is BlockItem) return
+        val stack = ghostPlacementStack(player) ?: return
         if (player.isShiftKeyDown) return
         val mc = Minecraft.getInstance()
         val pick = pickAtCursor(mc) ?: return
@@ -119,10 +125,8 @@ object WaterslideGhostPlacement {
         if (!event.level.isClientSide) return
         val player = event.entity ?: return
         val mc = Minecraft.getInstance()
-        val stack = player.mainHandItem
-        if (stack.item is com.simibubi.create.content.equipment.clipboard.ClipboardBlockItem) return
         if (WaterslideClipboardPaste.isActive()) return
-        if (stack.item is net.minecraft.world.item.AxeItem) {
+        if (player.mainHandItem.item is net.minecraft.world.item.AxeItem) {
             if (player.isShiftKeyDown) return
             val pick = minePickAtCursor(mc) ?: return
             event.isCanceled = true
@@ -130,7 +134,7 @@ object WaterslideGhostPlacement {
             beginMine(mc, pick)
             return
         }
-        if (stack.item !is BlockItem) return
+        val stack = ghostPlacementStack(player) ?: return
         if (player.isShiftKeyDown) return
         val pick = pickAtCursor(mc) ?: return
         event.isCanceled = true
@@ -184,11 +188,10 @@ object WaterslideGhostPlacement {
     private var destroyHover: GhostPick? = null
 
     private fun updateHover(mc: Minecraft, level: Level, player: net.minecraft.world.entity.player.Player) {
-        val stack = player.mainHandItem
-        val blockItem = stack.item as? BlockItem
-        val usable = blockItem != null && !player.isShiftKeyDown
+        // placement outline matches the placement gate: wrench + offhand block
+        val usable = ghostPlacementStack(player) != null && !player.isShiftKeyDown
         val pick = if (usable) pickAtCursor(mc) else null
-        val destroyPick = if (stack.item is net.minecraft.world.item.AxeItem && !player.isShiftKeyDown &&
+        val destroyPick = if (player.mainHandItem.item is net.minecraft.world.item.AxeItem && !player.isShiftKeyDown &&
             !WaterslideClipboardPaste.isActive()
         )
             minePickAtCursor(mc)
@@ -227,7 +230,7 @@ object WaterslideGhostPlacement {
 
     fun pickAtCursor(mc: Minecraft): GhostPick? {
         val player = mc.player ?: return null
-        if (player.mainHandItem.item !is BlockItem) return null
+        if (ghostPlacementStack(player) == null) return null
         if (player.isShiftKeyDown) return null
         if (player.mainHandItem.item is com.simibubi.create.content.equipment.clipboard.ClipboardBlockItem) return null
         if (WaterslideClipboardPaste.isActive()) return null
@@ -326,7 +329,7 @@ object WaterslideGhostPlacement {
         val center = curve.getPosition(entry.t.toDouble())
         val tangent = dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames.unitTangentAt(curve, entry.t)
         val (lat, up) = net.omori_sunny.create_waterparked.game.SlideCurveGeometry.stableFrame(tangent)
-        val outer = radius + (ModClientConfig.wallThickness() - 0.1f)
+        val outer = radius + (net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - 0.1f)
         val rad = Math.toRadians(entry.angle.toDouble())
         val dir = lat.scale(Math.cos(rad)).add(up.scale(Math.sin(rad)))
         val seat = center.add(dir.scale((outer - 0.5).toDouble()))

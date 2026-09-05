@@ -330,7 +330,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             bestBox = if (current == null) expanded else current.minmax(expanded)
         }
 
-        val wallThickness = ModClientConfig.wallThickness()
+        val wallThickness = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness()
         val wallOuter = wallThickness - WaterslideTubeMesh.BASE_WALL
         val supportThickness = ModClientConfig.supportThickness()
 
@@ -585,7 +585,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val sb = StringBuilder()
         sb.append(WaterFlowSimulation.version()).append('|')
             .append(ModClientConfig.polygonScale()).append('|')
-            .append(ModClientConfig.wallThickness()).append('|')
+            .append(net.omori_sunny.create_waterparked.config.ModConfig.wallThickness()).append('|')
             .append(be.radius).append('|')
             // support state: the BER emits beam/bracket from these - a change
             // (wrench fill/clear/cycle, axe delete, storyboard dump beat) MUST
@@ -1104,7 +1104,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val crossN = WaterslideTubeMesh.crossSections()
         val degStep = 360f / crossN
         val gridAnchor = 90f
-        val wallThickness = ModClientConfig.wallThickness()
+        val wallThickness = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness()
         val radius = c.meshRadius
         val totalArc = c.wallPrefixArcs[frames.size]
         val ghost = isEditing(level, be)
@@ -1369,7 +1369,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val crossN = WaterslideTubeMesh.crossSections()
         val degStep = 360f / crossN
         val gridAnchor = 90f
-        val wallThickness = ModClientConfig.wallThickness()
+        val wallThickness = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness()
         val placed = WaterslideSectorLayout.place(config)
         val capNormal = if (start) tangent.scale(-1.0) else tangent
         for (p in placed) {
@@ -1631,7 +1631,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val segments = water.segments
         if (segments.isEmpty()) return
         val scale = ModClientConfig.waterFlowScale()
-        val wallThickness = ModClientConfig.wallThickness()
+        val wallThickness = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness()
         val tint = waterTint()
         for (i in segments.indices) {
             val seg = segments[i]
@@ -1925,7 +1925,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val nA = ring.size / 2
         val tiles = (2f * Math.PI.toFloat() * outletRadius * (330f - 210f) / 360f).coerceAtLeast(0.5f)
         val tint = waterTint()
-        val wallThickness = ModClientConfig.wallThickness()
+        val wallThickness = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness()
         val base = Vec3.atLowerCornerOf(be.blockPos)
         val n = segs.size
         val fadeStart = max(0, n - n / 3)
@@ -2005,7 +2005,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val c2 = frame.currSpine.subtract(frame.currTangent.scale(handle.toDouble()))
         val c3 = frame.currSpine
         val supportThickness = ModClientConfig.supportThickness()
-        val wallOuter = ModClientConfig.wallThickness() - WaterslideTubeMesh.BASE_WALL
+        val wallOuter = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - WaterslideTubeMesh.BASE_WALL
         val rBase0 = frame.prevRadius
         val rBase1 = frame.currRadius
         val lat0 = frame.prevLateral
@@ -2258,7 +2258,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val tan = if (atFirst) f.prevTangent else f.currTangent
         val lat = if (atFirst) f.prevLateral else f.currLateral
         val faceUp = tan.cross(lat).normalize()
-        val wallOuter = ModClientConfig.wallThickness() - WaterslideTubeMesh.BASE_WALL
+        val wallOuter = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - WaterslideTubeMesh.BASE_WALL
         val rOut = max(0.1f, if (atFirst) f.prevRadius else f.currRadius) +
             wallOuter + ModClientConfig.supportThickness() + WaterslideTubeMesh.SUPPORT_HUG_EPSILON
         val bottomLocal = spine.subtract(faceUp.scale(rOut.toDouble()))

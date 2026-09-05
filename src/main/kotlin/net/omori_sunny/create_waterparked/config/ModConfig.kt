@@ -37,6 +37,7 @@ object ModConfig {
     lateinit var SLIDE_MAX_TRAJECTORY_BLOCKS: ModConfigSpec.DoubleValue
     lateinit var SLIDE_CANCEL_COOLDOWN_TICKS: ModConfigSpec.IntValue
     lateinit var SUB_LEVEL_SLIDE: ModConfigSpec.BooleanValue
+    lateinit var WALL_THICKNESS: ModConfigSpec.DoubleValue
 
     lateinit var SERVER_SPEC: ModConfigSpec
 
@@ -110,6 +111,9 @@ object ModConfig {
         ANCHOR_FLUID_CAPACITY = SERVER_BUILDER
             .comment("Water capacity of a slide anchor, in millibuckets.")
             .defineInRange("anchorFluidCapacity", 1000, 1, 10000)
+        WALL_THICKNESS = SERVER_BUILDER
+            .comment("Pipe wall thickness in blocks. Server authoritative, synced to clients.")
+            .defineInRange("wallThickness", 0.5, 0.1, 0.5)
         SERVER_BUILDER.pop()
 
         SERVER_BUILDER.push("slide")
@@ -168,6 +172,7 @@ object ModConfig {
 
     fun maxGhostBlocksPerCurve(): Int = MAX_GHOST_BLOCKS_PER_CURVE.safeGet(SPEC).coerceIn(1, 512)
 
+
     fun sectorBorderPx(): Int = SECTOR_BORDER_PX.safeGet(SPEC).coerceIn(0, 16)
 
     fun slideMaxEntrySpeed(): Double = SLIDE_MAX_ENTRY_SPEED.safeGet(SPEC).coerceIn(1.0, 100.0)
@@ -195,6 +200,8 @@ object ModConfig {
     fun slideCancelCooldownTicks(): Int = SLIDE_CANCEL_COOLDOWN_TICKS.safeGet(SERVER_SPEC).coerceIn(0, 200)
 
     fun subLevelSlideRiding(): Boolean = SUB_LEVEL_SLIDE.safeGet(SERVER_SPEC)
+
+    fun wallThickness(): Float = WALL_THICKNESS.safeGet(SERVER_SPEC).toFloat().coerceIn(0.1f, 0.5f)
 
     @Suppress("DEPRECATION")
     fun register() {

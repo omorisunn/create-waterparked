@@ -386,7 +386,7 @@ object WaterslideSectorEdit {
                         primary, t, WaterslideSectorLayout.normalize(degrees.toFloat()),
                         surfacePlot = tubeSurfacePoint(
                             primary, level, t,
-                            Mth.lerp(t, r0, r1) + (ModClientConfig.wallThickness() - 0.1f),
+                            Mth.lerp(t, r0, r1) + (net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - 0.1f),
                             lateral, up,
                             WaterslideSectorLayout.normalize(degrees.toFloat())
                         ),

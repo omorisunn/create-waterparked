@@ -129,7 +129,7 @@ object WaterslideDyeOutline {
         val start = Math.toRadians(hit.startAngleDegrees.toDouble())
         val end = Math.toRadians(hit.endAngleDegrees.toDouble())
         // outline hugs the real outer wall surface: radius + (wallThickness - 0.1)
-        val outer = ModClientConfig.wallThickness() - 0.1f
+        val outer = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - 0.1f
 
 // longitudinal edges
         for (angle in doubleArrayOf(start, end)) {

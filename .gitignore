@@ -48,3 +48,13 @@ docs/
 # AgentTeams runtime state
 /.agent-teams/
 /.dsh-backup-src-uncommitted/
+
+# Eclipse workspace metadata
+.eclipse/
+
+# AI / scan tooling local state
+.zcode/
+.mimosa/
+
+# Local dedicated server run directory
+run-server/
