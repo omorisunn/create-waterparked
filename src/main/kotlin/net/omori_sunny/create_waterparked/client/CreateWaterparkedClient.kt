@@ -63,10 +63,12 @@ object CreateWaterparkedClient {
         MOD_BUS.addListener(::onRegisterParticleProviders)
         MOD_BUS.addListener(::onItemColors)
         MOD_BUS.addListener(::onRegisterClientExtensions)
-        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onUseItemKey)
+        // receiveCanceled: another mod's HIGHEST listener cancels use-item
+        // events before our default-registered handlers ever see them
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, true, WaterslideGhostPlacement::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickItem)
-        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideRivetEdit::onUseItemKey)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, true, WaterslideRivetEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideRivetEdit::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onLeftClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onAttackKey)

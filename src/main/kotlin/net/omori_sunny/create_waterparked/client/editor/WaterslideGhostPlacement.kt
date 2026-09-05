@@ -69,7 +69,7 @@ object WaterslideGhostPlacement {
 
     // ghost placement requires: main hand WRENCH + offhand BLOCK item; a lone
     // wrench in the main hand keeps its edit interactions (offhand empty)
-    private fun ghostPlacementStack(player: net.minecraft.world.entity.player.Player): ItemStack? {
+    fun ghostPlacementStack(player: net.minecraft.world.entity.player.Player): ItemStack? {
         if (!player.mainHandItem.`is`(com.simibubi.create.AllItems.WRENCH.get())) return null
         val off = player.offhandItem
         if (off.item !is BlockItem) return null
@@ -82,6 +82,7 @@ object WaterslideGhostPlacement {
         val mc = Minecraft.getInstance()
         val player = mc.player ?: return
         if (player.isShiftKeyDown) return
+        if (WaterslideClipboardPaste.isActive()) return
         if (WaterslideClipboardPaste.isActive()) return
         if (player.mainHandItem.item is net.minecraft.world.item.AxeItem) {
             val pick = minePickAtCursor(mc) ?: return
@@ -236,7 +237,10 @@ object WaterslideGhostPlacement {
         if (WaterslideClipboardPaste.isActive()) return null
         val pick = wallPickAtCursor(mc) ?: return null
         if (WaterslideSectorEdit.isPendingSectorEdit()) return null
-        if (WaterslideSupportEdit.hoveredPick() != null) return null
+        // no support-hover suppression: this pick only runs under the
+        // wrench+offhand-block combo, and the support editor already yields
+        // that combo - the old suppression here is what swallowed the click
+        // whenever the wall hovered over support geometry
         val placed = WaterslideSectorLayout.place(pick.be.sectorConfigFor(pick.peer))
         val sector = WaterslideSectorLayout.sectorAt(placed, pick.angle) ?: return null
         if (sector.sector.material != SectorMaterial.BLOCK && sector.sector.material != SectorMaterial.OPEN) return null

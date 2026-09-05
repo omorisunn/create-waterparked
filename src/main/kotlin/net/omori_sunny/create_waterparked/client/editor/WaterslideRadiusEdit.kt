@@ -132,6 +132,11 @@ object WaterslideRadiusEdit {
                 WaterslideEditSounds.playCommitSuccess()
             }
         } else if (useDown) {
+            // ghost placement (wrench main + offhand block) owns the click near
+            // the wall: the control-point drag yields so both can coexist
+            if (player.mainHandItem.`is`(com.simibubi.create.AllItems.WRENCH.get()) &&
+                player.offhandItem.item is net.minecraft.world.item.BlockItem
+            ) return
             val tip = handleTipWorld(level, ctx.globalPos, be.radius)
             // only the control point starts a radius drag, the ring stays visual
             val hovering = raySphere(eye, view.normalize(), tip, PICK_RADIUS)

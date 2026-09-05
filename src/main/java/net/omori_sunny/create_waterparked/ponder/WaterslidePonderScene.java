@@ -142,7 +142,13 @@ public class WaterslidePonderScene {
         WaterslideAnchorBlockEntity leftBe4 =
             scene.getScene().getWorld().getBlockEntity(anchorLeft) instanceof WaterslideAnchorBlockEntity be4 ? be4 : null;
         if (leftBe4 != null) {
-            net.omori_sunny.create_waterparked.ponder.PonderSlideHelper.waterFlowShow(leftBe4, 0.5f);
+            // must run at the storyboard beat: a direct call here fires once at
+            // build time, so scene replays would play without water
+            scene.addInstruction(sc -> {
+                if (sc.getWorld().getBlockEntity(anchorLeft) instanceof WaterslideAnchorBlockEntity live) {
+                    net.omori_sunny.create_waterparked.ponder.PonderSlideHelper.waterFlowShow(live, 0.5f);
+                }
+            });
         }
         scene.overlay()
             .showText(80)
@@ -260,7 +266,11 @@ public class WaterslidePonderScene {
             ));
         }
         if (leftBe1 != null) {
-            net.omori_sunny.create_waterparked.ponder.PonderSlideHelper.waterFlowHide(leftBe1);
+            scene.addInstruction(sc -> {
+                if (sc.getWorld().getBlockEntity(anchorLeft) instanceof WaterslideAnchorBlockEntity live) {
+                    net.omori_sunny.create_waterparked.ponder.PonderSlideHelper.waterFlowHide(live);
+                }
+            });
         }
         scene.idle(40);
 

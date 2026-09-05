@@ -2,6 +2,7 @@ package net.omori_sunny.create_waterparked.mixin.client;
 // Mixin: wrench curve-editor gate for waterslide anchors.
 
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode;
+import net.omori_sunny.create_waterparked.client.editor.WaterslideGhostPlacement;
 import net.omori_sunny.create_waterparked.client.editor.WaterslideSupportEdit;
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual;
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity;
@@ -27,6 +28,13 @@ public abstract class BezierHandleEditModeMixin {
     @Accessor("activeAnchor")
     public static void setRawActiveAnchor(BlockPos pos) {
         throw new AssertionError("mixin");
+    }
+
+    // wrench + offhand block = ghost wall placement combo; per the interaction
+    // rules the wrench editor only runs with an EMPTY offhand
+    private static boolean waterslide$ghostComboOwnsClick(Player player) {
+        return player != null && WaterslideGhostPlacement.INSTANCE
+            .ghostPlacementStack(player) != null;
     }
 
     private static boolean waterslide$supportOwnsClick(Player player, BlockPos anchorPos) {
@@ -62,7 +70,7 @@ public abstract class BezierHandleEditModeMixin {
         CallbackInfo ci
     ) {
         if (!(level.getBlockEntity(anchorPos) instanceof WaterslideAnchorBlockEntity)) return;
-        if (waterslide$supportOwnsClick(player, anchorPos)) {
+        if (waterslide$ghostComboOwnsClick(player) || waterslide$supportOwnsClick(player, anchorPos)) {
             ci.cancel();
         }
     }
@@ -80,7 +88,7 @@ public abstract class BezierHandleEditModeMixin {
         CallbackInfoReturnable<Boolean> cir
     ) {
         if (!(level.getBlockEntity(anchorPos) instanceof WaterslideAnchorBlockEntity)) return;
-        if (waterslide$supportOwnsClick(player, anchorPos)) {
+        if (waterslide$ghostComboOwnsClick(player) || waterslide$supportOwnsClick(player, anchorPos)) {
             cir.setReturnValue(false);
         }
     }
