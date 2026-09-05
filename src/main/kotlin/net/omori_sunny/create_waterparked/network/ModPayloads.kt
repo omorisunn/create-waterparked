@@ -38,6 +38,7 @@ object ModPayloads {
         registrar.server(WaterslideSlidePasteStatePayload.TYPE, WaterslideSlidePasteStatePayload.STREAM_CODEC, WaterslideSlidePasteStatePayload::handleOnServer)
         registrar.server(WaterslideRivetPayload.TYPE, WaterslideRivetPayload.STREAM_CODEC, WaterslideRivetPayload::handleOnServer)
         registrar.client(WaterslideDebugTrajectoryPayload.TYPE, WaterslideDebugTrajectoryPayload.STREAM_CODEC, WaterslideDebugTrajectoryPayload::handleOnClient)
+        registrar.client(BoatSyncPayload.TYPE, BoatSyncPayload.STREAM_CODEC, BoatSyncPayload::handleOnClient)
     }
 
     private fun <P : CustomPacketPayload> PayloadRegistrar.server(

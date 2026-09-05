@@ -39,6 +39,9 @@ class InflatableBoat1x2Entity(type: EntityType<out LivingEntity>, level: Level) 
         // block)
         private const val SEAT_HEIGHT = 2.0 / 16.0 // 0.125
 
+        // bb centre above the entity origin, matching the rendered hull centre
+        const val CENTRE_OFFSET_Y = 0.11375
+
         fun createAttributes(): AttributeSupplier.Builder =
             Mob.createMobAttributes()
                 .add(Attributes.MOVEMENT_SPEED, 0.0)
@@ -80,6 +83,57 @@ class InflatableBoat1x2Entity(type: EntityType<out LivingEntity>, level: Level) 
         if (isInWater() && getY() < waterLevel()) {
             setDeltaMovement(deltaMovement.x, 0.08, deltaMovement.z)
         }
+        // face the travel direction: belts steer directly (with one block of
+        // lookahead, so the hull pre-rotates into a corner at the belt tail,
+        // turning the short way around), everything else follows the actual
+        // horizontal movement; a slide session owns the pose while active
+        if (getPose() != Pose.SITTING) {
+            travelYawTarget()?.let { target ->
+                yRot = net.minecraft.util.Mth.rotLerp(0.3f, yRot, target)
+            }
+        }
+        lastTickX = x
+        lastTickZ = z
+        // ridden boats broadcast their pose every tick: the vanilla tracker
+        // applies updates through a 3-tick lerp, which riders feel as stutter
+        if (passengers.any { it is net.minecraft.world.entity.player.Player }) {
+            net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingEntity(
+                this,
+                net.omori_sunny.create_waterparked.network.BoatSyncPayload(
+                    id, x, y, z, yRot, xRot
+                )
+            )
+        }
+    }
+
+    private var lastTickX = 0.0
+    private var lastTickZ = 0.0
+
+    // yaw the hull should steer towards, null to keep the current heading
+    private fun travelYawTarget(): Float? {
+        val belt = com.simibubi.create.content.kinetics.belt.BeltHelper
+            .getSegmentBE(level(), blockPosition())
+        if (belt != null) {
+            val facing = belt.movementFacing
+            if (facing.axis.isHorizontal) {
+                // belt tail lookahead: a perpendicular belt one block ahead in
+                // the travel direction wins, so corners pre-rotate cleanly
+                val next = level().getBlockEntity(blockPosition().relative(facing))
+                    as? com.simibubi.create.content.kinetics.belt.BeltBlockEntity
+                val steer = if (next != null && next.movementFacing.axis != facing.axis)
+                    next.movementFacing
+                else facing
+                return Math.toDegrees(
+                    kotlin.math.atan2(-steer.stepX.toDouble(), steer.stepZ.toDouble())
+                ).toFloat()
+            }
+        }
+        val dx = x - lastTickX
+        val dz = z - lastTickZ
+        if (dx * dx + dz * dz > 1.0E-7) {
+            return Math.toDegrees(kotlin.math.atan2(-dx, dz)).toFloat()
+        }
+        return null
     }
 
     // package-style insertion countdown, see PackageEntity: while an absorbing
@@ -157,12 +211,16 @@ class InflatableBoat1x2Entity(type: EntityType<out LivingEntity>, level: Level) 
     // is T(0, 0.02, 0), so the hull centre sits 0.11375 above the entity
     // origin (hull spans y 0.02..0.2075), and the 1x1 box is centred there
     override fun makeBoundingBox(): AABB {
-        val cy = y + 0.11375
+        val cy = y + CENTRE_OFFSET_Y
         return AABB(
             x - 0.5, cy - 0.09375, z - 0.5,
             x + 0.5, cy + 0.09375, z + 0.5
         )
     }
+
+    // slide sessions anchor the trajectory at the box centre; the generic
+    // bbHeight/2 guess is wrong for the boat because the box is hull-centred
+    fun slideCentreOffsetY(): Double = CENTRE_OFFSET_Y
 
     // package parity: not solid, so a freshly tossed boat cannot shove the
     // player; pushing the boat around still works through isPushable
