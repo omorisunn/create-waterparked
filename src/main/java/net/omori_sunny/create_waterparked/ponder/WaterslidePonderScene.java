@@ -417,6 +417,123 @@ public class WaterslidePonderScene {
         scene.idle(60);
     }
 
+    // ------------------------------------------------------------------
+    // ponder.md scene: slide_ponder_2 (ghost blocks, shares slide_ponder_1 NBT)
+    // ------------------------------------------------------------------
+
+    public static void ghostBlocks(SceneBuilder builder, SceneBuildingUtil util) {
+        CreateSceneBuilder scene = new CreateSceneBuilder(builder);
+        scene.title(WaterslidePonderScenes.GHOST_SCENE_ID, "Ghost Blocks");
+        scene.configureBasePlate(0, 0, 15);
+        scene.scaleSceneView(0.7f);
+        scene.setSceneOffsetY(-1.0f);
+        // same end-on camera as the sector scene so the wall seat reads clearly
+        scene.rotateCameraY(90f);
+        scene.showBasePlate();
+        scene.idle(10);
+
+        BlockPos[] anchors = WaterslidePonderRestore.schemaAnchors(scene.getScene().getWorld());
+        BlockPos anchorLeft = anchors.length >= 1 ? anchors[0] : ANCHOR_LEFT;
+        BlockPos anchorRight = anchors.length >= 2 ? anchors[1] : ANCHOR_RIGHT;
+        int anchorY = Math.min(anchorLeft.getY(), anchorRight.getY());
+
+        // the tube stays visible from the start: ghost blocks sit on an
+        // already-built slide
+        ElementLink<WorldSectionElement> anchorLayer = scene.world()
+            .showIndependentSection(
+                util.select().fromTo(
+                    anchorLeft.getX(), anchorY, anchorLeft.getZ(),
+                    anchorRight.getX(), anchorY, anchorRight.getZ()
+                ),
+                Direction.DOWN
+            );
+        WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, anchorY, anchorY, anchorLeft, anchorRight);
+        scene.idle(30);
+
+        Vec3 midTop = util.vector().topOf(
+            (anchorLeft.getX() + anchorRight.getX()) / 2, anchorY,
+            (anchorLeft.getZ() + anchorRight.getZ()) / 2
+        );
+        Vec3 leftTop = util.vector().topOf(anchorLeft);
+        ItemStack wrench = AllItems.WRENCH.asStack();
+        ItemStack planks = new ItemStack(Items.OAK_PLANKS);
+        ItemStack axe = new ItemStack(Items.IRON_AXE);
+
+        // [3] wrench + offhand block combo hint, then place the first ghost
+        scene.overlay()
+            .showText(90)
+            .independent(20)
+            .text("Hold a wrench in your main hand and a block in your offhand......")
+            .placeNearTarget()
+            .pointAt(leftTop);
+        scene.idle(30);
+        scene.overlay().showControls(midTop, Pointing.DOWN, 70).withItem(wrench);
+        scene.idle(30);
+        addGhost(scene, anchorLeft, anchorRight, planks, 0.35f, 45f);
+        scene.overlay()
+            .showText(80)
+            .attachKeyFrame()
+            .text("A ghost block is placed, hugging the outside of the tube wall.")
+            .placeNearTarget()
+            .pointAt(midTop);
+        scene.idle(80);
+
+        // [4] a second ghost further along the curve
+        addGhost(scene, anchorLeft, anchorRight, planks, 0.65f, 45f);
+        scene.overlay()
+            .showText(80)
+            .text("Ghost blocks follow the curve of the slide.")
+            .placeNearTarget()
+            .pointAt(midTop);
+        scene.idle(80);
+
+        // [5] axe hint, then clear the ghosts
+        scene.overlay()
+            .showText(90)
+            .independent(20)
+            .text("Right-clicking with an axe removes ghost blocks......")
+            .placeNearTarget()
+            .pointAt(leftTop);
+        scene.idle(30);
+        scene.overlay().showControls(midTop, Pointing.DOWN, 60).withItem(axe);
+        scene.idle(30);
+        clearGhosts(scene, anchorLeft, anchorRight);
+        scene.idle(40);
+
+        scene.world().hideIndependentSection(anchorLayer, Direction.UP);
+        scene.idle(60);
+    }
+
+    // ghost blocks are mirrored on both endpoint BEs, like the sector configs
+    private static void addGhost(
+        CreateSceneBuilder scene,
+        BlockPos left,
+        BlockPos right,
+        ItemStack stack,
+        float t,
+        float angle
+    ) {
+        scene.world().modifyBlockEntity(left, WaterslideAnchorBlockEntity.class, be -> {
+            if (be == null) return;
+            PonderSlideHelper.createGhost(be, right, stack, t, angle);
+        });
+        scene.world().modifyBlockEntity(right, WaterslideAnchorBlockEntity.class, be -> {
+            if (be == null) return;
+            PonderSlideHelper.createGhost(be, left, stack, t, angle);
+        });
+    }
+
+    private static void clearGhosts(CreateSceneBuilder scene, BlockPos left, BlockPos right) {
+        scene.world().modifyBlockEntity(left, WaterslideAnchorBlockEntity.class, be -> {
+            if (be == null) return;
+            PonderSlideHelper.clearGhosts(be, right);
+        });
+        scene.world().modifyBlockEntity(right, WaterslideAnchorBlockEntity.class, be -> {
+            if (be == null) return;
+            PonderSlideHelper.clearGhosts(be, left);
+        });
+    }
+
     // both anchors must receive the same sector so the tube looks right on both
     // ends: each BE stores the config of the curve towards its peer
     private static void addSector(
