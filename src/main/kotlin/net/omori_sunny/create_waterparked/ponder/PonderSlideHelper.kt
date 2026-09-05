@@ -141,6 +141,63 @@ object PonderSlideHelper {
         be.setSectorConfig(peer, config)
     }
 
+    // ------------------------------------------------------------------
+    // 3b. Ghost blocks (Ponder adaptation: mirror addGhostBlock per anchor BE)
+    // ------------------------------------------------------------------
+
+    /** seat a ghost block on the tube wall at curve parameter t, wall angle */
+    @JvmStatic
+    fun createGhost(
+        be: WaterslideAnchorBlockEntity,
+        peer: BlockPos,
+        stack: ItemStack,
+        t: Float,
+        angle: Float
+    ) {
+        val raw = be.anchorPeerCurvesView[peer] ?: return
+        val bc = if (raw.isPrimary) raw else raw.secondary() ?: return
+        val entry = ghostEntryFor(be, bc, peer, stack, t, angle) ?: return
+        be.addGhostBlock(peer, entry)
+    }
+
+    @JvmStatic
+    fun removeGhostCell(be: WaterslideAnchorBlockEntity, peer: BlockPos, cell: BlockPos) {
+        be.removeGhostBlock(peer, cell)
+    }
+
+    @JvmStatic
+    fun clearGhosts(be: WaterslideAnchorBlockEntity, peer: BlockPos) {
+        be.removeGhostBlocksForPeer(peer)
+    }
+
+    // same seat math as the client placement: surface point on the outer wall
+    // minus half a block along the radial direction
+    private fun ghostEntryFor(
+        be: WaterslideAnchorBlockEntity,
+        bc: BezierConnection,
+        peer: BlockPos,
+        stack: ItemStack,
+        t: Float,
+        angle: Float
+    ): net.omori_sunny.create_waterparked.content.waterslide.GhostBlockEntry? {
+        val level = be.level ?: return null
+        val tangent = dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
+            .unitTangentAt(bc, t).normalize()
+        val (lateral, up) = net.omori_sunny.create_waterparked.game.SlideCurveGeometry.stableFrame(tangent)
+        if (lateral.lengthSqr() < 1.0E-12 || up.lengthSqr() < 1.0E-12) return null
+        val rad = Math.toRadians(angle.toDouble())
+        val dir = lateral.scale(kotlin.math.cos(rad)).add(up.scale(kotlin.math.sin(rad)))
+        val r0 = net.omori_sunny.create_waterparked.game.SlideCurveGeometry.radiusAt(level, bc.bePositions.getFirst())
+        val r1 = net.omori_sunny.create_waterparked.game.SlideCurveGeometry.radiusAt(level, bc.bePositions.getSecond())
+        val outer = net.minecraft.util.Mth.lerp(t, r0, r1) +
+            (net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - 0.1f)
+        val seated = bc.getPosition(t.toDouble()).add(dir.scale((outer - 0.5f).toDouble()))
+        val cell = BlockPos.containing(seated).immutable()
+        return net.omori_sunny.create_waterparked.content.waterslide.GhostBlockEntry.of(
+            be.nextGhostId(peer), cell, stack, t, angle
+        )
+    }
+
     @JvmStatic
     fun deleteSector(be: WaterslideAnchorBlockEntity, peer: BlockPos, sectorId: Int) {
         val config = be.sectorConfigFor(peer).copyOf()

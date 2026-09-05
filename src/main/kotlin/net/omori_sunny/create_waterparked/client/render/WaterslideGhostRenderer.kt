@@ -111,6 +111,10 @@ object WaterslideGhostRenderer {
 
     private val caches = HashMap<String, GhostCache>()
 
+    // ghosts drawn from the block-entity renderer path (Ponder scenes); kept
+    // apart so the level-render retainAll never evicts them
+    private val ponderCaches = HashMap<String, GhostCache>()
+
     private class BlockQuadCollector : VertexConsumer {
         private class V {
             var x = 0f; var y = 0f; var z = 0f
@@ -237,6 +241,38 @@ object WaterslideGhostRenderer {
         renderCrackOverlay(mc, poseStack, bufferSource, camera)
     }
 
+    // Ponder path: draw this anchor's ghosts inside the block-entity renderer
+    // pose (already translated to the BE position). The real world keeps using
+    // the RenderLevelStageEvent path - when the BE lives in the client's main
+    // level we stay out of the way to avoid double drawing.
+    @JvmStatic
+    fun renderForBlockEntity(
+        be: WaterslideAnchorBlockEntity,
+        poseStack: PoseStack,
+        bufferSource: MultiBufferSource
+    ) {
+        val mc = Minecraft.getInstance()
+        val level = be.level ?: return
+        if (level === mc.level) return
+        val origin = Vec3.atLowerCornerOf(be.blockPos)
+        val seenEdges = HashSet<Pair<Long, Long>>()
+        val seenKeys = HashSet<String>()
+        for ((peer, raw) in be.anchorPeerCurvesView) {
+            val bc = if (raw.isPrimary) raw else raw.secondary() ?: continue
+            if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
+            val a = bc.bePositions.getFirst()
+            val b = bc.bePositions.getSecond()
+            val edge = if (a.asLong() <= b.asLong()) a.asLong() to b.asLong() else b.asLong() to a.asLong()
+            if (!seenEdges.add(edge)) continue
+            for (entry in be.ghostBlocksForPeer(peer)) {
+                val key = cacheKey(be, peer, entry)
+                seenKeys += key
+                renderGhost(mc, level, be, bc, peer, entry, poseStack, bufferSource, origin, key, ponderCaches, false)
+            }
+        }
+        ponderCaches.keys.retainAll(seenKeys)
+    }
+
     @JvmStatic
     fun endBatches(bufferSource: MultiBufferSource) {
         if (bufferSource is MultiBufferSource.BufferSource) {
@@ -249,6 +285,7 @@ object WaterslideGhostRenderer {
     @JvmStatic
     fun clear() {
         caches.clear()
+        ponderCaches.clear()
     }
 
     private fun deriveSurfaceCell(
@@ -316,7 +353,9 @@ object WaterslideGhostRenderer {
         poseStack: PoseStack,
         bufferSource: MultiBufferSource,
         camera: Vec3,
-        key: String
+        key: String,
+        cacheStore: MutableMap<String, GhostCache> = caches,
+        cullByDistance: Boolean = true
     ) {
         val anchor = bc.bePositions.getFirst()
         val ctxResolved = SableClientEdit.resolve(level, anchor) ?: return
@@ -325,7 +364,7 @@ object WaterslideGhostRenderer {
             ?: return
         val worldLower = derived
         val worldCell = BlockPos.containing(worldLower)
-        if (Vec3.atCenterOf(worldCell).distanceToSqr(camera) > MAX_DRAW_DISTANCE_SQ) return
+        if (cullByDistance && Vec3.atCenterOf(worldCell).distanceToSqr(camera) > MAX_DRAW_DISTANCE_SQ) return
 
         val state = entry.state
         val model = mc.blockRenderer.getBlockModel(state)
@@ -333,7 +372,7 @@ object WaterslideGhostRenderer {
         val baseBucket = renderTypes.map { bucketOf(it) }.firstOrNull { it >= 0 } ?: return
 
         val sig = signature(level, be, bc, peer, entry)
-        val cache = caches.getOrPut(key) { GhostCache("", worldCell) }
+        val cache = cacheStore.getOrPut(key) { GhostCache("", worldCell) }
         if (cache.signature != sig) {
             cache.signature = sig
             cache.worldCell = worldCell

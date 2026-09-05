@@ -142,6 +142,18 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
     ) {
         val level = be.level
         net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer.registerClientAnchor(be)
+        // ghosts ride the BER pass for non-main levels (Ponder); the real
+        // world draws them from the RenderLevelStageEvent instead
+        if (level != null && level !== net.minecraft.client.Minecraft.getInstance().level) {
+            try {
+                net.omori_sunny.create_waterparked.client.render.WaterslideGhostRenderer
+                    .renderForBlockEntity(be, poseStack, buffers)
+            } catch (t: Throwable) {
+                net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.error(
+                    "[WaterslideBER] ghost render failed at {}", be.blockPos, t
+                )
+            }
+        }
         // fallback gate, only draw when visualization is unavailable
         if (level == null || VisualizationManager.supportsVisualization(level)) return
         try {

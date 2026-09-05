@@ -206,6 +206,7 @@ public class WaterslidePonderRestore {
         offsetPeerLongs(tag, "AnchorPeerCurveTints", dy);
         offsetPeerLongs(tag, "SectorConfigs", dy);
         offsetPeerLongs(tag, "WateredCurves", dy);
+        offsetPeerLongs(tag, "GhostBlocks", dy);
         return tag;
     }
 
