@@ -78,7 +78,7 @@ object PlayerSlideController {
         var startTick: Long,
         // rider box geometry: non-player sessions integrate the box CENTRE and
         // clamp with the circumscribed radius; players keep the tuned point model
-        val poseHeight: Double,
+        val centreOffset: Double,
         val boxRad: Double?
     ) {
         var elapsed = 0.0
@@ -286,6 +286,8 @@ object PlayerSlideController {
         if (isWearingCopperDivingBoots(entity)) return
         val player = entity as? ServerPlayer
         if (player != null && player.isShiftKeyDown) return
+        // passengers are carried by their vehicle's own slide session
+        if (entity.isPassenger) return
         val cd = entryCooldown[entity.uuid]
         if (cd != null) {
             if (level.gameTime < cd) return
@@ -327,7 +329,7 @@ object PlayerSlideController {
         val boxRad = if (player == null)
             kotlin.math.sqrt(dims.width * dims.width + dims.height * dims.height) / 2.0
         else null
-        val anchorOffset = if (player == null) Vec3(0.0, dims.height / 2.0, 0.0) else Vec3.ZERO
+        val anchorOffset = if (player == null) Vec3(0.0, centreOffsetY(entity), 0.0) else Vec3.ZERO
         // include inherited velocity so the player keeps the structure motion
         val inherited = (entity as? LivingEntityMovementExtension)?.`sable$getInheritedVelocity`()
         val playerVelPerTick = if (inherited == null) entity.deltaMovement
@@ -401,7 +403,7 @@ object PlayerSlideController {
         val session = Session(
             nextSessionId++, entity, player, trajectory,
             subLevel?.uniqueId, contraptionEntity, swimming, sit, level.gameTime,
-            dims.height.toDouble(), boxRad
+            centreOffsetY(entity), boxRad
         )
         CreateWaterparked.LOGGER.info(
             "Slide start {} entity {} dir {} pos {} vel {} samples={} last={} reason={}",
@@ -696,7 +698,7 @@ object PlayerSlideController {
         val worldPos = toWorldPos(level, session, at.sample.position)
         // players keep the 0.7 seat, entities anchor the box centre
         val sitPos = if (sit != null) worldPos.subtract(0.0, SIT_HEIGHT, 0.0)
-        else worldPos.subtract(0.0, session.poseHeight / 2.0, 0.0)
+        else worldPos.subtract(0.0, session.centreOffset, 0.0)
         val worldTan = toWorldNormal(level, session, at.sample.tangent)
         val worldVel = toWorldVel(level, session, at.sample.position, at.sample.tangent.scale(at.sample.speed))
 
@@ -737,7 +739,7 @@ object PlayerSlideController {
         val first = session.trajectory.samples.first()
         val newWorld = toWorldPos(level, session, first.position)
         val newSitPos = if (sit != null) newWorld.subtract(0.0, SIT_HEIGHT, 0.0)
-        else newWorld.subtract(0.0, session.poseHeight / 2.0, 0.0)
+        else newWorld.subtract(0.0, session.centreOffset, 0.0)
         val newWorldVel = toWorldVel(level, session, first.position, first.tangent.scale(first.speed))
         bindToSpace(entity, sit, session.subLevel(level), first.position)
         entity.setPos(newSitPos)
@@ -839,7 +841,7 @@ object PlayerSlideController {
 
         cleanupSit(session, entity)
         // entity samples are box centres, drop to the feet
-        val landPos = if (player == null) worldPos.subtract(0.0, session.poseHeight / 2.0, 0.0)
+        val landPos = if (player == null) worldPos.subtract(0.0, session.centreOffset, 0.0)
         else worldPos
         entity.setPos(landPos)
         entity.setDeltaMovement(worldVel)
@@ -1134,6 +1136,13 @@ object PlayerSlideController {
     private fun entityDimensions(entity: Entity): EntityDimensions =
         if (entity is LivingEntity) entity.getDimensions(entity.getPose())
         else entity.getDimensions(Pose.STANDING)
+
+    // trajectory anchor of an entity session: the box centre above the origin;
+    // the boat hull centres above the vanilla bbHeight/2 guess
+    private fun centreOffsetY(entity: Entity): Double =
+        (entity as? net.omori_sunny.create_waterparked.content.raft.InflatableBoat1x2Entity)
+            ?.slideCentreOffsetY()
+            ?: entityDimensions(entity).height / 2.0
 
     private fun toLocalPos(sub: ServerSubLevel, world: Vec3): Vec3 {
         val out = sub.logicalPose().transformPositionInverse(JOMLConversion.toJOML(world), Vector3d())
