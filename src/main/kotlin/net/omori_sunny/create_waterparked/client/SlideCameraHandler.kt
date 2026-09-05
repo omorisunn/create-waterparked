@@ -12,6 +12,12 @@ object SlideCameraHandler {
 
     @JvmStatic
     fun onComputeCameraAngles(event: ViewportEvent.ComputeCameraAngles) {
+        // riding a sliding boat: keep the free look, but roll with the hull
+        val boatRoll = BoatRideClient.cameraRoll()
+        if (boatRoll != null) {
+            event.roll = -boatRoll
+            return
+        }
         val state = SlideClientSession.cameraState(event.partialTick.toFloat()) ?: return
         val camera = event.camera
         val delta = state.pos.subtract(camera.position)

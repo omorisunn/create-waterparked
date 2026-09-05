@@ -117,11 +117,12 @@ object EntitySlideClientSessions {
         val at = active.trajectory.sampleAt(clamped)
         return Pose(
             toWorldPos(level, active, at.sample.position),
-            toWorldNormal(level, active, at.sample.tangent).normalize()
+            toWorldNormal(level, active, at.sample.tangent).normalize(),
+            toWorldNormal(level, active, at.sample.up).normalize()
         )
     }
 
-    data class Pose(val position: Vec3, val tangent: Vec3)
+    data class Pose(val position: Vec3, val tangent: Vec3, val up: Vec3 = Vec3(0.0, 1.0, 0.0))
 
     private fun plotOffset(level: Level?, subLevelId: UUID?): Vec3? {
         if (level == null || subLevelId == null) return null
@@ -171,7 +172,10 @@ object EntitySlideClientSessions {
     }
 
     // sample positions are entity box centres; the render anchor needs the feet
-    fun feetOffsetY(entity: Entity): Double = entity.bbHeight / 2.0
+    fun feetOffsetY(entity: Entity): Double =
+        (entity as? net.omori_sunny.create_waterparked.content.raft.InflatableBoat1x2Entity)
+            ?.slideCentreOffsetY()
+            ?: entity.bbHeight / 2.0
 
     fun yawOf(tangent: Vec3): Float =
         Math.toDegrees(kotlin.math.atan2(-tangent.x, tangent.z)).toFloat()
@@ -180,4 +184,17 @@ object EntitySlideClientSessions {
         Math.toDegrees(
             kotlin.math.atan2(-tangent.y, kotlin.math.sqrt(tangent.x * tangent.x + tangent.z * tangent.z))
         ).toFloat()
+
+    // bank angle of the tube frame around the travel direction, degrees;
+    // positive when the sample's up leans toward the tangent-relative right
+    fun rollOf(tangent: Vec3, up: Vec3): Float {
+        val worldUp = Vec3(0.0, 1.0, 0.0)
+        if (tangent.lengthSqr() < 1.0E-12) return 0f
+        var right = tangent.cross(worldUp)
+        right = if (right.lengthSqr() < 1.0E-8) Vec3(1.0, 0.0, 0.0) else right.normalize()
+        val idealUp = right.cross(tangent).normalize()
+        return Math.toDegrees(
+            kotlin.math.atan2(up.dot(right), up.dot(idealUp))
+        ).toFloat()
+    }
 }

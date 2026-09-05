@@ -30,7 +30,24 @@ public abstract class EntityRenderDispatcherSlideMixin {
         PoseStack poseStack, MultiBufferSource bufferSource, int packedLight, CallbackInfo ci
     ) {
         EntitySlideClientSessions.Pose pose = EntitySlideClientSessions.INSTANCE.poseFor(entity, partialTicks);
-        if (pose == null) return;
+        if (pose == null) {
+            // riders of a sliding boat follow its smoothed pose, their own
+            // positions only step at packet rate
+            Entity vehicle = entity.getVehicle();
+            if (vehicle == null || entity instanceof net.minecraft.client.player.LocalPlayer) return;
+            EntitySlideClientSessions.Pose vehiclePose =
+                EntitySlideClientSessions.INSTANCE.poseFor(vehicle, partialTicks);
+            if (vehiclePose == null) return;
+            Vec3 seatOffset = new Vec3(0.0, 0.125, 0.0).yRot(
+                -vehicle.getYRot() * ((float) Math.PI / 180f));
+            Vec3 target = vehiclePose.getPosition()
+                .add(0.0, -EntitySlideClientSessions.INSTANCE.feetOffsetY(vehicle), 0.0)
+                .add(seatOffset)
+                .subtract(entity.getVehicleAttachmentPoint(vehicle));
+            Vec3 current = entity.getPosition(partialTicks);
+            poseStack.translate(target.x - current.x, target.y - current.y, target.z - current.z);
+            return;
+        }
 
         // the dispatcher anchored at the interpolated packet position; move
         // the anchor onto the sample (feet for the renderer); the delta is

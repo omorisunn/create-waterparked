@@ -171,6 +171,9 @@ object CreateWaterparkedClient {
             RenderLevelStageEvent.Stage.AFTER_LEVEL ->
                 {
                     val mc = Minecraft.getInstance()
+                    BoatRideClient.frame(
+                        event.partialTick.getGameTimeDeltaPartialTick(false)
+                    )
                     val camera = mc.gameRenderer.mainCamera
                     WaterslideCurveRenderer.endBatches(buffers)
                     WaterslideGhostRenderer.endBatches(buffers)
