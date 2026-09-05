@@ -316,7 +316,7 @@ public class WaterslideTubeVisual extends AbstractVisual
         StringBuilder sb = new StringBuilder();
         sb.append(WaterFlowSimulation.INSTANCE.version()).append('|');
         sb.append(ModClientConfig.INSTANCE.polygonScale()).append('|');
-        sb.append(ModClientConfig.INSTANCE.wallThickness()).append('|');
+        sb.append(net.omori_sunny.create_waterparked.config.ModConfig.INSTANCE.wallThickness()).append('|');
         sb.append(be.getRadius()).append('|');
         sb.append(be.supportMaterial(WaterslideSupportPart.BRACKET)).append('|');
         sb.append(be.supportMaterial(WaterslideSupportPart.BEAM)).append('|');
@@ -423,7 +423,7 @@ public class WaterslideTubeVisual extends AbstractVisual
         Vec3 tan = atFirst ? f.getPrevTangent() : f.getCurrTangent();
         Vec3 lat = atFirst ? f.getPrevLateral() : f.getCurrLateral();
         Vec3 faceUp = tan.cross(lat).normalize();
-        float wallOuter = ModClientConfig.INSTANCE.wallThickness() - WaterslideTubeMesh.BASE_WALL;
+        float wallOuter = net.omori_sunny.create_waterparked.config.ModConfig.INSTANCE.wallThickness() - WaterslideTubeMesh.BASE_WALL;
         float rOut = Math.max(0.1f, (atFirst ? f.getPrevRadius() : f.getCurrRadius()))
             + wallOuter + ModClientConfig.INSTANCE.supportThickness()
             + WaterslideTubeMesh.SUPPORT_HUG_EPSILON;
@@ -1209,7 +1209,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 .setChanged();
             // real cull bounds for the baked bracket shell
             float rAvgBracket = Math.max(0.1f, (f.getPrevRadius() + f.getCurrRadius()) * 0.5f)
-                + ModClientConfig.INSTANCE.wallThickness() + ModClientConfig.INSTANCE.supportThickness() + 0.75f;
+                + net.omori_sunny.create_waterparked.config.ModConfig.INSTANCE.wallThickness() + ModClientConfig.INSTANCE.supportThickness() + 0.75f;
             s.setBounds(mid.subtract(origin), rAvgBracket)
                 .setChanged();
             s.fullTileMode = 0f;
@@ -1241,7 +1241,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             Vec3 tangent = atFirst ? f.getPrevTangent() : f.getCurrTangent();
             Vec3 lateral = atFirst ? f.getPrevLateral() : f.getCurrLateral();
             Vec3 faceUp = tangent.cross(lateral).normalize();
-            float wallOuter = ModClientConfig.INSTANCE.wallThickness() - WaterslideTubeMesh.BASE_WALL;
+            float wallOuter = net.omori_sunny.create_waterparked.config.ModConfig.INSTANCE.wallThickness() - WaterslideTubeMesh.BASE_WALL;
             float rOut = Math.max(0.1f, (atFirst ? f.getPrevRadius() : f.getCurrRadius()))
                 + wallOuter + ModClientConfig.INSTANCE.supportThickness()
                 + WaterslideTubeMesh.SUPPORT_HUG_EPSILON;
@@ -1342,7 +1342,7 @@ public class WaterslideTubeVisual extends AbstractVisual
             Vec3 c1 = c0.add(f.getPrevTangent().scale(handle));
             Vec3 c2 = c3.subtract(f.getCurrTangent().scale(handle));
 
-            float wallOuter = ModClientConfig.INSTANCE.wallThickness() - WaterslideTubeMesh.BASE_WALL;
+            float wallOuter = net.omori_sunny.create_waterparked.config.ModConfig.INSTANCE.wallThickness() - WaterslideTubeMesh.BASE_WALL;
             float radiusOffset = wallOuter + WaterslideTubeMesh.SUPPORT_HUG_EPSILON
                 + ModClientConfig.INSTANCE.supportThickness();
             // snapped to the polygon grid, same as the rendered bracket shell
@@ -1729,7 +1729,7 @@ public class WaterslideTubeVisual extends AbstractVisual
                 buildSupportBracket();
                 return;
             }
-            float wallThickness = ModClientConfig.INSTANCE.wallThickness();
+            float wallThickness = net.omori_sunny.create_waterparked.config.ModConfig.INSTANCE.wallThickness();
             float mirror = this.mirror;
             if (translucent) {
                 // editing ghost: one composite mesh, sprite from the first sector

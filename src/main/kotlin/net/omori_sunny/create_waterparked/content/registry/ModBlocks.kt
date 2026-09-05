@@ -34,4 +34,12 @@ object ModBlocks {
     val WATERSLIDE_ANCHOR: WaterslideAnchorBlock by REGISTRY.register("waterslide_anchor") { ->
         WaterslideAnchorBlock(WaterslideAnchorBlock.defaultProperties())
     }
+
+    // extended CCS rivet for slide tube walls (sub-level placed, curve bound)
+    val WATERSLIDE_RIVET: net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetBlock by
+    REGISTRY.register("waterslide_rivet") { ->
+        net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetBlock(
+            dev.silvergold.simulatedcoasters.rivet.RivetBlock.defaultProperties()
+        )
+    }
 }

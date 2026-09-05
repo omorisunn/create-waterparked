@@ -34,4 +34,14 @@ object ModBlockEntities {
         resolvedType = type
         type
     }
+
+    val WATERSLIDE_RIVET_BE: BlockEntityType<net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetBlockEntity> by
+    REGISTRY.register("waterslide_rivet") { ->
+        BlockEntityType.Builder.of(
+            { pos, state ->
+                net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetBlockEntity(pos, state)
+            },
+            ModBlocks.WATERSLIDE_RIVET
+        ).build(null)
+    }
 }

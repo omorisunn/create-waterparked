@@ -53,6 +53,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
 
     val ghostBlocks: MutableMap<BlockPos, MutableList<GhostBlockEntry>> = mutableMapOf()
 
+
     val wateredCurves: MutableMap<BlockPos, Boolean> = mutableMapOf()
 
     var supportBracketMaterial: BlockState = AllBlocks.COPYCAT_BASE.get().defaultBlockState()
