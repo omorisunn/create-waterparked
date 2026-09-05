@@ -7,6 +7,7 @@
   "mixins": [
     "AnchorPeerFakeTracksMixin",
     "AnchorPeerCurveClientIndexMixin",
+    "BeltBlockBoatRideMixin",
     "BezierBankBlendMixin",
     "CoasterAnchorBezierOptimizerMixin",
     "CoasterAnchorpointBlockAngleMixin",
