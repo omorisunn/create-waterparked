@@ -1,6 +1,5 @@
 package net.omori_sunny.create_waterparked.game.physics
 
-import com.simibubi.create.AllItems
 import com.simibubi.create.content.contraptions.AbstractContraptionEntity
 import com.simibubi.create.content.equipment.armor.DivingBootsItem
 import com.simibubi.create.content.trains.track.BezierConnection
@@ -283,7 +282,7 @@ object PlayerSlideController {
     }
 
     private fun tryStartSlide(level: ServerLevel, entity: Entity) {
-        if (isWearingCopperDivingBoots(entity)) return
+        if (isWearingDivingBoots(entity)) return
         val player = entity as? ServerPlayer
         if (player != null && player.isShiftKeyDown) return
         // passengers are carried by their vehicle's own slide session
@@ -1111,13 +1110,12 @@ object PlayerSlideController {
         return key
     }
 
-    // Create copper diving boots are heavy enough to keep the player from
-    // being swept into a slide (netherite diving boots are intentionally NOT
-    // affected by this rule).
-    private fun isWearingCopperDivingBoots(entity: Entity): Boolean {
+    // Create diving boots (copper and netherite) are heavy enough to keep the
+    // wearer from being swept into a slide
+    private fun isWearingDivingBoots(entity: Entity): Boolean {
         if (entity !is LivingEntity) return false
         val worn = DivingBootsItem.getWornItem(entity)
-        return !worn.isEmpty && worn.item === AllItems.COPPER_DIVING_BOOTS.get()
+        return !worn.isEmpty && worn.item is DivingBootsItem
     }
 
     // Detected by registry id so the mod works identically with Aeronautics
