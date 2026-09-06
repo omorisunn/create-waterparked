@@ -21,6 +21,7 @@ import net.minecraft.core.HolderLookup
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.nbt.ListTag
 import net.minecraft.nbt.NbtUtils
+import net.minecraft.network.chat.Component
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.level.Level
@@ -648,6 +649,12 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         ghostBlocks.clear()
         ghostBlocks.putAll(remapped)
     }
+
+    // Create goggles overlay: tank-style water readout; the interface comes in
+    // through KineticBlockEntity, the data through the synced WaterTank.
+    // Hovering (no goggles) intentionally shows nothing.
+    override fun addToGoggleTooltip(tooltip: MutableList<Component>, isPlayerSneaking: Boolean): Boolean =
+        containedFluidTooltip(tooltip, isPlayerSneaking, waterHandler)
 
     companion object {
         @JvmStatic

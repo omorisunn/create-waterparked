@@ -534,21 +534,35 @@ object WaterslideSectorEdit {
     }
 
     @JvmStatic
-    fun pickWallAtCursor(mc: Minecraft): WallHit? {
+    @JvmOverloads
+    fun pickWallAtCursor(mc: Minecraft, step: Double = 0.15): WallHit? {
         val player = mc.player ?: return null
         val level = mc.level ?: return null
         val eye = player.eyePosition
         val view = player.getViewVector(1f)
+        return marchWallHit(level, eye, view, step)
+    }
+
+    /** shared view-ray march onto the nearest tube wall (ghost/rivet/SA placement) */
+    @JvmStatic
+    @JvmOverloads
+    fun marchWallHit(
+        level: Level,
+        eye: Vec3,
+        view: Vec3,
+        step: Double = 0.075,
+        maxDistance: Double = 6.0
+    ): WallHit? {
         var best: WallHit? = null
         var bestD = Double.MAX_VALUE
         var d = 0.0
-        while (d <= 6.0) {
+        while (d <= maxDistance) {
             val hit = resolveWallHit(level, eye.add(view.scale(d)))
             if (hit != null && d < bestD) {
                 bestD = d
                 best = hit
             }
-            d += 0.15
+            d += step
         }
         return best
     }

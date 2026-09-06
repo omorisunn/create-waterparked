@@ -50,20 +50,8 @@ object WaterslideRivetEdit {
         if (!held) return false
         if (!player.isShiftKeyDown) return false
 
-        val eye = player.eyePosition
-        val view = player.getViewVector(1f)
-        var best: WaterslideSectorEdit.WallHit? = null
-        var bestD = Double.MAX_VALUE
-        var d = 0.0
-        while (d <= 6.0) {
-            val hit = WaterslideSectorEdit.resolveWallHit(level, eye.add(view.scale(d)))
-            if (hit != null && d < bestD) {
-                bestD = d
-                best = hit
-            }
-            d += 0.075
-        }
-        val wall = best ?: return false
+        val wall = WaterslideSectorEdit.marchWallHit(level, player.eyePosition, player.getViewVector(1f))
+            ?: return false
 
         // send the hit point in the curve's own (plot/local) space; the
         // server derives the authoritative (t, angle)

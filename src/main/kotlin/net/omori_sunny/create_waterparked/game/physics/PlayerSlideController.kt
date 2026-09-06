@@ -1,6 +1,5 @@
 package net.omori_sunny.create_waterparked.game.physics
 
-import com.simibubi.create.AllItems
 import com.simibubi.create.content.contraptions.AbstractContraptionEntity
 import com.simibubi.create.content.equipment.armor.DivingBootsItem
 import com.simibubi.create.content.trains.track.BezierConnection
@@ -82,6 +81,9 @@ object PlayerSlideController {
         val boxRad: Double?
     ) {
         var elapsed = 0.0
+        // attachment speed effects ease the session clock (easeOut both ways)
+        var timeScale = 1.0
+        var targetScale = 1.0
         var lastSyncTick = 0L
         // entity rides send the trajectory only once a viewer is near
         var sentToClients = false
@@ -283,7 +285,7 @@ object PlayerSlideController {
     }
 
     private fun tryStartSlide(level: ServerLevel, entity: Entity) {
-        if (isWearingCopperDivingBoots(entity)) return
+        if (isWearingDivingBoots(entity)) return
         val player = entity as? ServerPlayer
         if (player != null && player.isShiftKeyDown) return
         // passengers are carried by their vehicle's own slide session
@@ -677,7 +679,18 @@ object PlayerSlideController {
             }
         }
 
-        session.elapsed += 1.0 / 20.0
+        // attachments (closing doors, ...) may brake or release the rider:
+        // ease the session clock toward the aggregated target, easeOut style
+        session.targetScale =
+            net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentManager
+                .sessionSpeedScale(entity).coerceIn(0.0, 1.0)
+        // decelerate twice as fast as releasing; snap to a full stop so the
+        // rider cannot creep or coast through a closed door
+        val ease = if (session.targetScale < session.timeScale) 0.5 else 0.25
+        session.timeScale += (session.targetScale - session.timeScale) * ease
+        if (session.targetScale <= 0.0 && session.timeScale < 0.25) session.timeScale = 0.0
+
+        session.elapsed += (1.0 / 20.0) * session.timeScale
         if (session.elapsed >= session.trajectory.duration) {
             // one precomputed trajectory per space, one handoff at the end
             val end = session.trajectory.sampleAt(session.trajectory.duration)
@@ -702,6 +715,10 @@ object PlayerSlideController {
         val worldTan = toWorldNormal(level, session, at.sample.tangent)
         val worldVel = toWorldVel(level, session, at.sample.position, at.sample.tangent.scale(at.sample.speed))
 
+        // attachment detectors watch the live rider position
+        net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentManager
+            .onSessionTick(level, entity, worldPos, worldVel)
+
         // keep Sable plot state in sync with the rider position
         bindToSpace(entity, sit, session.subLevel(level), at.sample.position)
         entity.setPos(sitPos)
@@ -715,21 +732,27 @@ object PlayerSlideController {
         }
         entity.fallDistance = 0f
 
-        if (player != null && level.gameTime - session.lastSyncTick >= 20) {
+        if (player != null && level.gameTime - session.lastSyncTick >= syncInterval(session)) {
             session.lastSyncTick = level.gameTime
             SlidePackets.sendTo(player, SlideSyncPayload(
-                session.id, (session.elapsed * 20.0).toInt()
+                session.id, (session.elapsed * 20.0).toInt(), session.timeScale.toFloat()
             ))
-        } else if (player == null && level.gameTime - session.lastSyncTick >= 20) {
+        } else if (player == null && level.gameTime - session.lastSyncTick >= syncInterval(session)) {
             session.lastSyncTick = level.gameTime
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayersInDimension(
                 level,
                 net.omori_sunny.create_waterparked.network.SlideEntitySyncPayload(
-                    session.id, (session.elapsed * 20.0).toInt()
+                    session.id, (session.elapsed * 20.0).toInt(), session.timeScale.toFloat()
                 )
             )
         }
     }
+
+    // sync faster while a speed effect is in motion so the client eases along
+    private fun syncInterval(session: Session): Long =
+        if (kotlin.math.abs(session.timeScale - 1.0) > 0.01 ||
+            kotlin.math.abs(session.targetScale - 1.0) > 0.01
+        ) 2L else 20L
 
     // apply the first sample of a fresh segment after a handoff
     private fun startPlaybackSegment(level: ServerLevel, session: Session) {
@@ -1111,13 +1134,12 @@ object PlayerSlideController {
         return key
     }
 
-    // Create copper diving boots are heavy enough to keep the player from
-    // being swept into a slide (netherite diving boots are intentionally NOT
-    // affected by this rule).
-    private fun isWearingCopperDivingBoots(entity: Entity): Boolean {
+    // Create diving boots (copper and netherite) are heavy enough to keep the
+    // wearer from being swept into a slide
+    private fun isWearingDivingBoots(entity: Entity): Boolean {
         if (entity !is LivingEntity) return false
         val worn = DivingBootsItem.getWornItem(entity)
-        return !worn.isEmpty && worn.item === AllItems.COPPER_DIVING_BOOTS.get()
+        return !worn.isEmpty && worn.item is DivingBootsItem
     }
 
     // Detected by registry id so the mod works identically with Aeronautics

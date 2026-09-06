@@ -57,6 +57,11 @@ object SlideClientSession {
         var lastCancelSentTick = 0L
         var targetOffsetTicks = 0.0
         var timeOffsetTicks = 0.0
+        // scaled session clock: advances by the server-reported time scale so
+        // attachment braking plays back smoothly at the rider's camera
+        var scaledTicks = 0.0
+        var scale = 1.0
+        var targetScale = 1.0
         var startTrackYaw = 0f
         var startTrackPitch = 0f
         var freeLookYaw = 0f
@@ -178,7 +183,7 @@ object SlideClientSession {
 
         if (!hit && level.gameTime - waterDebugTick >= 20) {
             waterDebugTick = level.gameTime
-            val elapsed = (level.gameTime - session.startTick + session.timeOffsetTicks) / 20.0
+            val elapsed = (session.scaledTicks + session.timeOffsetTicks) / 20.0
             val at = session.trajectory.sampleAt(elapsed)
             CreateWaterparked.LOGGER.info(
                 "[SplashWater] inTube={} watered={} worldTube={} subTube={} stream={} box={}",
@@ -232,7 +237,7 @@ object SlideClientSession {
         session.freeLookPitch += mouseDpitch
         session.lastEntityYaw = player.getYRot()
         session.lastEntityPitch = player.getXRot()
-        val nowTime = (level.gameTime - session.startTick + session.timeOffsetTicks + partialTick) / 20.0
+        val nowTime = (session.scaledTicks + session.scale * partialTick + session.timeOffsetTicks) / 20.0
         val prevTime = max(0.0, nowTime - 1.0 / 20.0)
         val atNow = session.trajectory.sampleAt(nowTime)
         val atPrev = session.trajectory.sampleAt(prevTime)
@@ -435,6 +440,8 @@ object SlideClientSession {
         session.startTick = payload.startTick
         session.timeOffsetTicks = 0.0
         session.targetOffsetTicks = 0.0
+        session.scaledTicks = 0.0
+        session.targetScale = 1.0
     }
 
     @JvmStatic
@@ -516,11 +523,12 @@ object SlideClientSession {
     }
 
     @JvmStatic
-    fun sync(sessionId: Long, elapsedTicks: Int) {
+    @JvmOverloads
+    fun sync(sessionId: Long, elapsedTicks: Int, timeScale: Float = 1f) {
         val session = active ?: return
         if (session.sessionId != sessionId) return
-        val level = Minecraft.getInstance().level ?: return
-        val drift = (level.gameTime - session.startTick) - elapsedTicks
+        session.targetScale = timeScale.toDouble()
+        val drift = session.scaledTicks - elapsedTicks
         session.targetOffsetTicks = if (kotlin.math.abs(drift) > 5) -drift.toDouble() else 0.0
     }
 
@@ -578,7 +586,12 @@ object SlideClientSession {
         }
 
         session.timeOffsetTicks += (session.targetOffsetTicks - session.timeOffsetTicks).coerceIn(-1.0, 1.0)
-        val elapsed = (level.gameTime - session.startTick + session.timeOffsetTicks) / 20.0
+        // ease toward the server-reported scale, then advance the scaled clock
+        val ease = if (session.targetScale < session.scale) 0.5 else 0.25
+        session.scale += (session.targetScale - session.scale) * ease
+        if (session.targetScale <= 0.0 && session.scale < 0.25) session.scale = 0.0
+        session.scaledTicks += session.scale
+        val elapsed = (session.scaledTicks + session.timeOffsetTicks) / 20.0
         val at = session.trajectory.sampleAt(elapsed)
         val worldPos = toWorldPos(level, session, at.sample.position)
         val sitPos = if (session.swimmingPose) worldPos

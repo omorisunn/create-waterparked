@@ -57,5 +57,11 @@
   "item.create_waterparked.waterslide_track.tooltip.summary": "用于_连接_水滑梯锚点",
   "item.create_waterparked.incomplete_waterslide_track": "未完成的水滑梯轨道",
   "item.create_waterparked.inflatable_boat_1x2": "充气船 1x2",
-  "entity.create_waterparked.inflatable_boat_1x2": "充气船 1x2"
+  "entity.create_waterparked.inflatable_boat_1x2": "充气船 1x2",
+  "create_waterparked.attachment.need_position": "请先在滑梯上选择位置",
+  "create_waterparked.attachment.no_slide": "绑定的滑梯已不存在",
+  "block.create_waterparked.mechanical_door_attachment": "滑梯机械门",
+  "create_waterparked.attachment.wrong_site": "该附件无法安装在此处",
+  "create_waterparked.attachment.placed": "滑梯附件已放置",
+  "create_waterparked.attachment.selected": "位置已选择——在滑梯附近放置绑定方块"
 }

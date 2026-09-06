@@ -31,4 +31,13 @@ object ModDataComponents {
             .networkSynchronized(ByteBufCodecs.STRING_UTF8)
             .build()
     }
+
+    // slide position selected on a held SAB item (phase 1 of attachment placement)
+    val SLIDE_ATTACHMENT_POS: DataComponentType<net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentPos> by
+    REGISTRY.register("slide_attachment_pos") { ->
+        DataComponentType.builder<net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentPos>()
+            .persistent(net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockItem.POSITION_CODEC)
+            .networkSynchronized(net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockItem.POSITION_STREAM_CODEC)
+            .build()
+    }
 }

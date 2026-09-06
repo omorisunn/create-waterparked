@@ -351,20 +351,8 @@ object WaterslideGhostPlacement {
         if (realHit != null &&
             level.getBlockState(realHit.blockPos).block is net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlock
         ) return null
-        val eye = player.eyePosition
-        val view = player.getViewVector(1f)
-        var best: WaterslideSectorEdit.WallHit? = null
-        var bestD = Double.MAX_VALUE
-        var d = 0.0
-        while (d <= 6.0) {
-            val hit = WaterslideSectorEdit.resolveWallHit(level, eye.add(view.scale(d)))
-            if (hit != null && d < bestD) {
-                bestD = d
-                best = hit
-            }
-            d += 0.075
-        }
-        val wall = best ?: return null
+        val wall = WaterslideSectorEdit.marchWallHit(level, player.eyePosition, player.getViewVector(1f))
+            ?: return null
         return toGhostPick(level, wall)
     }
 

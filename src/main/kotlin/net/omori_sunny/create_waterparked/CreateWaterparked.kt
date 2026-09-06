@@ -47,6 +47,7 @@ object CreateWaterparked {
         ModBlocks.REGISTRY.register(MOD_BUS)
         ModBlockEntities.REGISTRY.register(MOD_BUS)
         ModItems.REGISTRY.register(MOD_BUS)
+        net.omori_sunny.create_waterparked.content.attachment.ModSlideAttachments.init()
         ModEntityTypes.REGISTRY.register(MOD_BUS)
         ModRecipeSerializers.REGISTRY.register(MOD_BUS)
         ModDataComponents.REGISTRY.register(MOD_BUS)
@@ -63,6 +64,9 @@ object CreateWaterparked {
         MOD_BUS.addListener(::onConfigReloaded)
 
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onServerTick)
+        NeoForge.EVENT_BUS.addListener(
+            net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentManager::onServerTick
+        )
         NeoForge.EVENT_BUS.addListener(WaterslideSupportInteraction::onPlayerLoggedOut)
         NeoForge.EVENT_BUS.addListener(
             EventPriority.HIGHEST,

@@ -114,14 +114,17 @@ object WaterslideGhostCsg {
         }
 
         fun intersectionOf(piece: Polygon): List<Polygon> {
-            var cur: List<Polygon> = listOf(piece)
+            // defensive copy + difference()-style finalize hardening, so
+            // callers get the same robustness guarantees as the ghost path
+            val base = Polygon(piece.vertices.map { it.copy() }.toMutableList(), piece.fromSolid)
+            var cur: List<Polygon> = listOf(base)
             for (plane in planes) {
                 if (cur.isEmpty()) break
                 val next = ArrayList<Polygon>()
                 for (p in cur) plane.keepInside(p, next)
                 cur = next
             }
-            return cur
+            return cur.mapNotNull { finalize(it) }
         }
 
         fun subtractFrom(input: List<Polygon>): List<Polygon> {

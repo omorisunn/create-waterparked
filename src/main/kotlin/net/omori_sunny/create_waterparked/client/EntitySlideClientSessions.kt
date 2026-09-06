@@ -33,7 +33,11 @@ object EntitySlideClientSessions {
         var startGameTime: Long,
         // applied render-frame time correction, lerped toward the server clock
         var timeOffsetTicks: Double,
-        var targetOffsetTicks: Double
+        var targetOffsetTicks: Double,
+        // scaled clock: advances by the server-reported time scale
+        var scaledTicks: Double = 0.0,
+        var scale: Double = 1.0,
+        var targetScale: Double = 1.0
     )
 
     private val sessions = HashMap<Int, Active>()
@@ -70,13 +74,16 @@ object EntitySlideClientSessions {
         active.startGameTime = payload.startGameTime
         active.timeOffsetTicks = 0.0
         active.targetOffsetTicks = 0.0
+        active.scaledTicks = 0.0
+        active.targetScale = 1.0
     }
 
     @JvmStatic
-    fun sync(sessionId: Long, elapsedTicks: Int) {
+    @JvmOverloads
+    fun sync(sessionId: Long, elapsedTicks: Int, timeScale: Float = 1f) {
         val active = sessions.values.firstOrNull { it.sessionId == sessionId } ?: return
-        val level = Minecraft.getInstance().level ?: return
-        val drift = (level.gameTime - active.startGameTime) - elapsedTicks
+        active.targetScale = timeScale.toDouble()
+        val drift = active.scaledTicks - elapsedTicks
         active.targetOffsetTicks = if (kotlin.math.abs(drift) > 5) -drift.toDouble() else 0.0
     }
 
@@ -98,6 +105,9 @@ object EntitySlideClientSessions {
             sessions.values.forEach {
                 val diff = it.targetOffsetTicks - it.timeOffsetTicks
                 if (kotlin.math.abs(diff) > 0.01) it.timeOffsetTicks += diff * 0.2
+                it.scale += (it.targetScale - it.scale) * 0.25
+                if (it.targetScale <= 0.0 && it.scale < 0.1) it.scale = 0.0
+                it.scaledTicks += it.scale
             }
         }
     }
@@ -110,8 +120,7 @@ object EntitySlideClientSessions {
         if (player != null && player.distanceToSqr(entity) > VIEWER_RANGE_SQ) return null
         val level = entity.level()
         advanceClock(level, active)
-        val elapsed = (level.gameTime - active.startGameTime + active.timeOffsetTicks +
-            partialTick.toDouble()) / 20.0
+        val elapsed = (active.scaledTicks + active.scale * partialTick + active.timeOffsetTicks) / 20.0
         if (elapsed < 0.0) return null
         val clamped = elapsed.coerceAtMost(active.trajectory.duration)
         val at = active.trajectory.sampleAt(clamped)

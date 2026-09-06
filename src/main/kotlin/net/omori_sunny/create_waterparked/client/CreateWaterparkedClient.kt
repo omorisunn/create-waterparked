@@ -15,6 +15,7 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslideGhostPlacement
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRivetEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPreview
 import net.omori_sunny.create_waterparked.client.editor.WaterslideClipboardPaste
+import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentPlacement
 import net.omori_sunny.create_waterparked.client.editor.SlideClipboardCopy
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashParticle
@@ -79,6 +80,10 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideClipboardPaste::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideClipboardCopy::onUseItemKey)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onUseItemKey)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onRightClickBlock)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onRightClickItem)
+        NeoForge.EVENT_BUS.addListener(SlideAttachmentPlacement::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslidePlacementPreview::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideHotbarSync::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideSectorEdit::onClientTick)
@@ -111,6 +116,15 @@ object CreateWaterparkedClient {
             .factory { ctx, be, pt -> WaterslideTubeVisual(ctx, be, pt) }
             .neverSkipVanillaRender()
             .apply()
+        // SAB hubs spin their shaft like Create shafts; the attachment itself
+        // draws from the level stage renderer
+        for (type in net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes.all()) {
+            SimpleBlockEntityVisualizer.builder(type.blockEntityType.get())
+                .factory { ctx, be, pt ->
+                    com.simibubi.create.content.kinetics.base.ShaftVisual(ctx, be, pt)
+                }
+                .apply()
+        }
     }
 
     private fun onRegisterRenderers(event: EntityRenderersEvent.RegisterRenderers) {
@@ -122,6 +136,11 @@ object CreateWaterparkedClient {
         }
         event.registerBlockEntityRenderer(ModBlockEntities.WATERSLIDE_ANCHOR_BE) { ctx ->
             net.omori_sunny.create_waterparked.client.renderer.WaterslideTubeBlockEntityRenderer(ctx)
+        }
+        for (type in net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes.all()) {
+            event.registerBlockEntityRenderer(type.blockEntityType.get()) { ctx ->
+                net.omori_sunny.create_waterparked.client.attachment.SlideAttachmentBlockEntityRenderer(ctx)
+            }
         }
         event.registerEntityRenderer(ModEntityTypes.INFLATABLE_BOAT_1X2) { ctx ->
             net.omori_sunny.create_waterparked.client.renderer.InflatableBoat1x2Renderer(ctx)
@@ -167,6 +186,8 @@ object CreateWaterparkedClient {
                 {
                     WaterslideCurveRenderer.renderAllInEvent(event.poseStack, buffers)
                     WaterslideGhostRenderer.renderAllInEvent(event.poseStack, buffers)
+                    net.omori_sunny.create_waterparked.client.attachment.SlideAttachmentRenderer
+                        .renderAll(event.poseStack, buffers, event.camera.position, event.partialTick.getGameTimeDeltaPartialTick(false))
                 }
             RenderLevelStageEvent.Stage.AFTER_LEVEL ->
                 {

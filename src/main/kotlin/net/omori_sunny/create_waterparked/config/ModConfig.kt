@@ -107,7 +107,7 @@ object ModConfig {
             .defineInRange("waterSegmentLength", 0.5, 0.25, 4.0)
         WATER_DRAIN_RATE_MB = SERVER_BUILDER
             .comment("Water consumed per second while a slide is watered, in millibuckets.")
-            .defineInRange("waterDrainRateMbPerSecond", 2.0, 0.0, 1000.0)
+            .defineInRange("waterDrainRate", 50.0, 0.0, 1000.0)
         ANCHOR_FLUID_CAPACITY = SERVER_BUILDER
             .comment("Water capacity of a slide anchor, in millibuckets.")
             .defineInRange("anchorFluidCapacity", 1000, 1, 10000)
@@ -191,7 +191,7 @@ object ModConfig {
 
     fun waterSegmentLength(): Float = WATER_SEGMENT_LENGTH.safeGet(SERVER_SPEC).toFloat().coerceIn(0.25f, 4.0f)
 
-    fun waterDrainRateMbPerSecond(): Double = WATER_DRAIN_RATE_MB.safeGet(SERVER_SPEC).coerceIn(0.0, 1000.0)
+    fun waterDrainRate(): Double = WATER_DRAIN_RATE_MB.safeGet(SERVER_SPEC).coerceIn(0.0, 1000.0)
 
     fun anchorFluidCapacity(): Int = ANCHOR_FLUID_CAPACITY.safeGet(SERVER_SPEC).coerceIn(1, 10000)
 

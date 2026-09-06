@@ -58,5 +58,11 @@
   "create_waterparked.ponder.slide_ponder_2.text_1": "Hold a wrench in your main hand and a block in your offhand......",
   "create_waterparked.ponder.slide_ponder_2.text_2": "A ghost block is placed, hugging the outside of the tube wall.",
   "create_waterparked.ponder.slide_ponder_2.text_3": "Ghost blocks follow the curve of the slide.",
-  "create_waterparked.ponder.slide_ponder_2.text_4": "Right-clicking with an axe removes ghost blocks......"
+  "create_waterparked.ponder.slide_ponder_2.text_4": "Right-clicking with an axe removes ghost blocks......",
+  "create_waterparked.attachment.need_position": "Select a position on the slide first",
+  "create_waterparked.attachment.no_slide": "The bound slide is gone",
+  "block.create_waterparked.mechanical_door_attachment": "Mechanical Slide Door",
+  "create_waterparked.attachment.wrong_site": "This attachment cannot mount there",
+  "create_waterparked.attachment.placed": "Slide attachment placed",
+  "create_waterparked.attachment.selected": "Position selected - place the binding block near the slide"
 }

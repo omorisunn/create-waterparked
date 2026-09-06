@@ -22,7 +22,8 @@ public class WaterparkedCreativeTabLayout {
         Item item = stack.getItem();
         return item == ModItems.INSTANCE.getWATERSLIDE_TRACK() ||
             item == ModItems.INSTANCE.getWATERSLIDE_ANCHOR() ||
-            item == ModItems.INSTANCE.getINFLATABLE_BOAT_1X2();
+            item == ModItems.INSTANCE.getINFLATABLE_BOAT_1X2() ||
+            item instanceof net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockItem;
     }
 
     // banner row index, the empty row right before the first Waterparked item

@@ -236,14 +236,15 @@ class SlideEndPayload(
     }
 }
 
-// Periodic server time correction.
-class SlideSyncPayload(val sessionId: Long, val elapsedTicks: Int) : CustomPacketPayload {
+// Periodic server time correction; timeScale carries attachment speed
+// effects (e.g. a closing door braking the rider).
+class SlideSyncPayload(val sessionId: Long, val elapsedTicks: Int, val timeScale: Float = 1f) : CustomPacketPayload {
 
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
 
     fun handleOnClient(ctx: IPayloadContext) {
         ctx.enqueueWork {
-            SlideClientSession.sync(sessionId, elapsedTicks)
+            SlideClientSession.sync(sessionId, elapsedTicks, timeScale)
         }
     }
 
@@ -257,8 +258,9 @@ class SlideSyncPayload(val sessionId: Long, val elapsedTicks: Int) : CustomPacke
                 { buf, p ->
                     buf.writeLong(p.sessionId)
                     buf.writeInt(p.elapsedTicks)
+                    buf.writeFloat(p.timeScale)
                 },
-                { buf -> SlideSyncPayload(buf.readLong(), buf.readInt()) }
+                { buf -> SlideSyncPayload(buf.readLong(), buf.readInt(), buf.readFloat()) }
             )
     }
 }

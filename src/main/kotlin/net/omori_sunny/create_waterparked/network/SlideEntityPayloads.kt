@@ -52,12 +52,12 @@ class SlideEntityTrajectoryPayload(
     }
 }
 
-class SlideEntitySyncPayload(val sessionId: Long, val elapsedTicks: Int) : CustomPacketPayload {
+class SlideEntitySyncPayload(val sessionId: Long, val elapsedTicks: Int, val timeScale: Float = 1f) : CustomPacketPayload {
 
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
 
     fun handleOnClient(ctx: IPayloadContext) {
-        ctx.enqueueWork { EntitySlideClientSessions.sync(sessionId, elapsedTicks) }
+        ctx.enqueueWork { EntitySlideClientSessions.sync(sessionId, elapsedTicks, timeScale) }
     }
 
     companion object {
@@ -71,8 +71,9 @@ class SlideEntitySyncPayload(val sessionId: Long, val elapsedTicks: Int) : Custo
                 { buf, p ->
                     buf.writeLong(p.sessionId)
                     buf.writeInt(p.elapsedTicks)
+                    buf.writeFloat(p.timeScale)
                 },
-                { buf -> SlideEntitySyncPayload(buf.readLong(), buf.readInt()) }
+                { buf -> SlideEntitySyncPayload(buf.readLong(), buf.readInt(), buf.readFloat()) }
             )
     }
 }

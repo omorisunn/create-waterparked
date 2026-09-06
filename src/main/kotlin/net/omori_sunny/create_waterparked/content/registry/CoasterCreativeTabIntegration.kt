@@ -20,5 +20,8 @@ object CoasterCreativeTabIntegration {
             )
         )
         event.accept(boat)
+        for (type in net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes.all()) {
+            event.accept(type.item.get())
+        }
     }
 }

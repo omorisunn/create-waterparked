@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "axis=y": { "model": "create_waterparked:block/mechanical_door_attachment" },
+    "axis=z": { "model": "create_waterparked:block/mechanical_door_attachment" },
+    "axis=x": { "model": "create_waterparked:block/mechanical_door_attachment" }
+  }
+}
