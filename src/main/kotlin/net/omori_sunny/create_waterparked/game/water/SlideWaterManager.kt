@@ -25,7 +25,7 @@ object SlideWaterManager {
             be.resetDrainAccum()
             return
         }
-        val rate = ModConfig.waterDrainRateMbPerSecond()
+        val rate = ModConfig.waterDrainRate()
         be.addDrainAccum(rate / TICKS_PER_SECOND)
         val want = be.waterDrainAccum().toInt()
         if (want <= 0) return
