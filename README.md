@@ -9,6 +9,8 @@ Build real Waterparks with fully customizable slides!
 ![](https://img.shields.io/curseforge/dt/1648876?logo=curseforge&labelColor=F16436...)
 </div>
 
+**This project contains AI-generated codes.**
+
 ## Build
 ##### By GitHub Actions
 1. Fork this repository.
