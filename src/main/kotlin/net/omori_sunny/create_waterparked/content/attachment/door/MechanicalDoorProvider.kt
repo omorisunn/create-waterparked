@@ -12,39 +12,31 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentMode
 class MechanicalDoorProvider : SlideAttachmentModelProvider() {
 
     companion object {
+        private val shownOpen = HashMap<net.minecraft.core.BlockPos, Float>()
+
+        /** frame-smoothed open value, quantized for cheap cache signatures */
+        @JvmStatic
+        fun smoothedOpen(pos: net.minecraft.core.BlockPos, target: Float): Float {
+            var shown = shownOpen.getOrDefault(pos, target)
+            shown += (target - shown) * 0.25f
+            shownOpen[pos] = shown
+            // 200 steps: rebuilds stay rare, motion looks continuous
+            return (kotlin.math.floor(shown * 200f) / 200f).coerceIn(0f, 1f)
+        }
+
+        @JvmStatic
+        fun clearAnim(pos: net.minecraft.core.BlockPos) {
+            shownOpen.remove(pos)
+        }
+
         private const val FRAME = 0.11
         private const val PANEL_THICK = 0.14
         private const val DOOR_Z = 0.08
-
         private const val PANEL_COLOR = 0xC0AA7A
     }
 
-    // render-frame smoothing: prev/current open tracked per tick, lerped per frame
-    private val anim = HashMap<net.minecraft.core.BlockPos, Pair<Float, Float>>()
-    private var animTick = -1L
-
-    private fun openFraction(ctx: SlideAttachmentModelContext): Double {
-        val target = ctx.data.getFloat("DoorOpenF").coerceIn(0f, 1f)
-        val mc = net.minecraft.client.Minecraft.getInstance()
-        val now = ctx.level.gameTime
-        if (animTick != now) {
-            // new tick: current becomes prev; each provider call this tick
-            // sees the same prev and refreshes current toward the target
-            anim.entries.forEach { it.setValue(it.value.first to it.value.first) }
-            animTick = now
-        }
-        val cur = anim.getOrPut(ctx.sabPos) { target to target }
-        val updated = cur.first to target
-        anim[ctx.sabPos] = updated
-        val partial = try {
-            mc.timer.getGameTimeDeltaPartialTick(false)
-        } catch (t: Throwable) {
-            net.minecraft.util.Mth.lerp(
-                (mc.frameTimeNs % 50_000_000L) / 50_000_000f, 0f, 1f
-            )
-        }
-        return (updated.first + (updated.second - updated.first) * partial).toDouble()
-    }
+    private fun openFraction(ctx: SlideAttachmentModelContext): Double =
+        smoothedOpen(ctx.sabPos, ctx.data.getFloat("DoorOpenF")).toDouble()
 
     override fun boundingBox(ctx: SlideAttachmentModelContext): AABB {
         val outer = ctx.radius + ctx.wallThickness - 0.1

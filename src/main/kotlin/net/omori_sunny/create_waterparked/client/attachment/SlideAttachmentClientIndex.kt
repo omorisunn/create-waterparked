@@ -15,7 +15,7 @@ object SlideAttachmentClientIndex {
 
     fun add(be: SlideAttachmentBlockEntity) {
         if (be.entry != null && bes.add(be)) {
-            CreateWaterparked.LOGGER.info(
+            CreateWaterparked.LOGGER.debug(
                 "[SARender] index add at {} type={} size={}",
                 be.blockPos, be.entry?.typeId, bes.size
             )
@@ -24,7 +24,7 @@ object SlideAttachmentClientIndex {
 
     fun remove(be: SlideAttachmentBlockEntity) {
         if (bes.remove(be)) {
-            CreateWaterparked.LOGGER.info("[SARender] index remove at {} size={}", be.blockPos, bes.size)
+            CreateWaterparked.LOGGER.debug("[SARender] index remove at {} size={}", be.blockPos, bes.size)
         }
     }
 

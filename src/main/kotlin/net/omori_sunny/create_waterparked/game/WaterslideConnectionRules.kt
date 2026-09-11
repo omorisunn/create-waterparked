@@ -43,7 +43,7 @@ object WaterslideConnectionRules {
         }
         if (!beA.canAcceptAnchorPeer(b) || !beB.canAcceptAnchorPeer(a)) {
             if (!level.isClientSide) {
-                CreateWaterparked.LOGGER.info(
+                CreateWaterparked.LOGGER.debug(
                     "Slide connect rejected (anchor full): a={} legs={} b={} legs={}",
                     a, beA.legCount(), b, beB.legCount()
                 )

@@ -33,7 +33,6 @@ import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.sqrt
 
-// Client-side slide playback.
 @OnlyIn(Dist.CLIENT)
 object SlideClientSession {
 
@@ -57,8 +56,6 @@ object SlideClientSession {
         var lastCancelSentTick = 0L
         var targetOffsetTicks = 0.0
         var timeOffsetTicks = 0.0
-        // scaled session clock: advances by the server-reported time scale so
-        // attachment braking plays back smoothly at the rider's camera
         var scaledTicks = 0.0
         var scale = 1.0
         var targetScale = 1.0
@@ -81,7 +78,6 @@ object SlideClientSession {
         var lastFramePitch: Float? = null
         var lastAppliedPos: Vec3? = null
 
-        // landing transition eases long setPos moves so ReplayMod never sees a teleport
         var landFrom: Vec3? = null
         var landTo: Vec3? = null
         var landRemaining = 0
@@ -103,39 +99,21 @@ object SlideClientSession {
     }
 
     private var active: Active? = null
-    private var waterDebugTick = 0L
-
-    // true when in a replay view, detected without referencing ReplayMod
-    @Volatile
-    private var lastReplayLogTick = -1L
 
     @JvmStatic
     fun isReplayView(): Boolean {
         val mc = Minecraft.getInstance()
         val player = mc.player
         var replay = false
-        var why = "?"
         val conn = mc.connection
         if (conn == null) {
             replay = player != null && mc.level != null
-            why = "no-connection"
         } else if (conn.javaClass.name.startsWith("com.replaymod.replay.ReplayHandler")) {
             replay = true
-            why = "fake-connection"
         } else if (player?.javaClass?.name?.startsWith("com.replaymod") == true) {
             replay = true
-            why = "player-class"
         } else if (mc.level?.javaClass?.name?.startsWith("com.replaymod") == true) {
             replay = true
-            why = "level-class"
-        }
-        val gt = mc.level?.gameTime ?: 0L
-        if (replay && gt - lastReplayLogTick >= 100) {
-            lastReplayLogTick = gt
-            CreateWaterparked.LOGGER.info(
-                "[SlideReplay] replay view detected ({}) conn={} player={} level={}",
-                why, conn?.javaClass?.name, player?.javaClass?.name, mc.level?.javaClass?.name
-            )
         }
         return replay
     }
@@ -171,7 +149,6 @@ object SlideClientSession {
         val session = active ?: return false
         val playerBox = Minecraft.getInstance().player?.boundingBox ?: return false
 
-        // the box is authoritative, the trajectory inTube flag is not part of the gate
         val space = currentSpace()
         val sub = session.subLevel(level)
         val localBox = if (sub != null) toLocalBox(level, session, playerBox) else null
@@ -181,15 +158,6 @@ object SlideClientSession {
         val inStream = WaterFlowSimulation.intersectsStreamBox(level, playerBox, 0.45)
         val hit = worldTube || subTube || inStream
 
-        if (!hit && level.gameTime - waterDebugTick >= 20) {
-            waterDebugTick = level.gameTime
-            val elapsed = (session.scaledTicks + session.timeOffsetTicks) / 20.0
-            val at = session.trajectory.sampleAt(elapsed)
-            CreateWaterparked.LOGGER.info(
-                "[SplashWater] inTube={} watered={} worldTube={} subTube={} stream={} box={}",
-                at.sample.inTube, at.sample.watered, worldTube, subTube, inStream, playerBox
-            )
-        }
         return hit
     }
 
@@ -220,16 +188,13 @@ object SlideClientSession {
         )
     }
 
-    // Per-frame camera state, lerped by partialTick like Sable.
+    // per-frame camera state, lerped by partialTick like Sable
     @JvmStatic
     fun cameraState(partialTick: Float): CameraState? {
         val mc = Minecraft.getInstance()
         val level = mc.level ?: return null
         val player = mc.player ?: return null
         val session = active ?: return null
-        // In replay view the camera entity is ReForgePlay's own (it copies the
-        // recorded player's pos/rot into its camera every frame); do not drive a
-        // slide camera there.
         if (isReplayView()) return null
         val mouseDyaw = Mth.wrapDegrees(player.getYRot() - session.lastEntityYaw)
         val mouseDpitch = player.getXRot() - session.lastEntityPitch
@@ -289,7 +254,6 @@ object SlideClientSession {
         val vNext = toWorldNormal(level, session, atNext.sample.tangent).scale(atNext.sample.speed)
         val felt = vNext.subtract(vPrev).scale(10.0).add(0.0, 32.0, 0.0)
         val right = worldTanNow.cross(Vec3(0.0, 1.0, 0.0))
-        // roll is locked while flying outside a tube, released on the next entry
         val thrownNow = !atNow.sample.inTube
         val preThrownRoll = session.lastSmoothedRoll
         var roll: Float
@@ -320,7 +284,6 @@ object SlideClientSession {
             roll = smoothedRoll.coerceIn(-30f, 30f)
         }
         if (thrownNow) {
-            // First airborne sample: freeze at the last in-tube smoothed roll.
             if (session.thrownRollLock == null) {
                 session.thrownRollLock = preThrownRoll ?: roll
             }
@@ -329,7 +292,6 @@ object SlideClientSession {
             session.lastSmoothedRoll = locked
             roll = locked
         } else {
-            // Back inside a tube (possibly a later tube that caught the throw).
             session.thrownRollLock = null
         }
         val smoothing = ModClientConfig.cameraSmoothing()
@@ -373,7 +335,6 @@ object SlideClientSession {
 
     @JvmStatic
     fun start(payload: SlideTrajectoryPayload) {
-        // replay view: never create a session that writes the (virtual) player
         if (isReplayView()) return
         SlideSableOrientation.clearAll()
         val level = Minecraft.getInstance().level
@@ -395,7 +356,6 @@ object SlideClientSession {
             session.startTrackYaw = yawOf(tan)
             session.startTrackPitch = pitchOf(tan)
             if (player != null) {
-                // start the camera at the pre-entry view, then the track delta adds on
                 session.freeLookYaw = player.getYRot()
                 session.freeLookPitch = player.getXRot()
                 session.lastEntityYaw = player.getYRot()
@@ -404,13 +364,9 @@ object SlideClientSession {
                 session.lastEntityYaw = yawOf(tan)
                 session.lastEntityPitch = pitchOf(tan)
             }
-            // snap the smoothed camera to the entry view so the FIRST frame is
-            // immediate (no easing from zero); smoothing only applies afterwards
             session.lastCameraYaw = session.freeLookYaw
             session.lastCameraPitch = session.freeLookPitch
 
-            // pre-spawn the entry splash and entry sound right now, instead of
-            // waiting for the next client tick (removes the visible delay)
             val worldPos = toWorldPos(level, session, first.position)
             val bodyCenter = Vec3(
                 worldPos.x,
@@ -452,7 +408,6 @@ object SlideClientSession {
             "Slide end {} reason {}{}", payload.sessionId, payload.reason,
             if (isReplayView()) " (replay view -> not applying to player)" else ""
         )
-        // in replay view drop the session without touching the camera player
         if (isReplayView()) {
             active = null
             SlideSableOrientation.clearAll()
@@ -462,12 +417,11 @@ object SlideClientSession {
         val landPos = Vec3(payload.x.toDouble(), payload.y.toDouble(), payload.z.toDouble())
         if (player != null) {
             val dist = player.position().distanceTo(landPos)
-            CreateWaterparked.LOGGER.info(
+            CreateWaterparked.LOGGER.debug(
                 "[SlideLand] session={} dist={} from={} to={}",
                 payload.sessionId, dist, player.position(), landPos
             )
             if (dist > 8.0) {
-                // ease the drop over a few ticks, avoids a teleport packet in ReplayMod
                 val n = kotlin.math.ceil(dist / 8.0).toInt().coerceIn(2, 30)
                 session.landFrom = player.position()
                 session.landTo = landPos
@@ -478,13 +432,12 @@ object SlideClientSession {
                 )
                 session.landYaw = session.lastCameraYaw
                 session.landPitch = session.lastCameraPitch
-                return // eased in onClientTickPost; active stays until done
+                return
             }
         }
         applyLanding(session, payload)
     }
 
-    // finish the eased landing at the final step
     private fun finishLand(session: Active) {
         active = null
         val player = Minecraft.getInstance().player ?: return
@@ -504,7 +457,6 @@ object SlideClientSession {
         player.refreshDimensions()
     }
 
-    // final landing, restores gravity and pose and ends the session
     private fun applyLanding(session: Active, payload: SlideEndPayload) {
         active = null
         val player = Minecraft.getInstance().player ?: return
@@ -532,7 +484,7 @@ object SlideClientSession {
         session.targetOffsetTicks = if (kotlin.math.abs(drift) > 5) -drift.toDouble() else 0.0
     }
 
-    // Lock input before vanilla movement.
+    // lock input before vanilla movement
     @JvmStatic
     fun onClientTickPre(event: ClientTickEvent.Pre) {
         val player = Minecraft.getInstance().player ?: return
@@ -559,7 +511,7 @@ object SlideClientSession {
         session.wasShiftDown = shift
     }
 
-    // Play the trajectory after vanilla tick.
+    // play the trajectory after the vanilla tick
     @JvmStatic
     fun onClientTickPost(event: ClientTickEvent.Post) {
         val mc = Minecraft.getInstance()
@@ -567,12 +519,10 @@ object SlideClientSession {
         val level = mc.level ?: return
         val session = active ?: return
 
-        // in replay view the recorded player owns the camera, skip the playback
         if (isReplayView()) {
             return
         }
 
-        // ease the landing over a few ticks, no ReplayMod teleport packet
         if (session.landRemaining > 0) {
             session.landRemaining--
             val f = session.landFrom ?: return
@@ -586,9 +536,8 @@ object SlideClientSession {
         }
 
         session.timeOffsetTicks += (session.targetOffsetTicks - session.timeOffsetTicks).coerceIn(-1.0, 1.0)
-        // ease toward the server-reported scale, then advance the scaled clock
-        val ease = if (session.targetScale < session.scale) 0.5 else 0.25
-        session.scale += (session.targetScale - session.scale) * ease
+        if (session.targetScale < session.scale) session.scale = session.targetScale
+        else session.scale += (session.targetScale - session.scale) * 0.25
         if (session.targetScale <= 0.0 && session.scale < 0.25) session.scale = 0.0
         session.scaledTicks += session.scale
         val elapsed = (session.scaledTicks + session.timeOffsetTicks) / 20.0
@@ -636,7 +585,6 @@ object SlideClientSession {
             )
         }
 
-        // splash particles run after the playback velocity is written
         WaterslideSplashSpawner.tickSliding(mc)
     }
 

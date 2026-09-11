@@ -237,6 +237,7 @@ object CreateWaterparkedClient {
             WaterslideGhostRenderer.clear()
             SlideSableOrientation.clearAll()
             SlideClientSession.resetActive()
+            net.omori_sunny.create_waterparked.client.attachment.SlideAttachmentRenderer.clear()
             EntitySlideClientSessions.clear()
             WaterFlowSimulation.clear()
             WaterSlideSoundManager.stopAll()

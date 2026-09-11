@@ -34,7 +34,7 @@ class WaterslideWaterSyncPayload(
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
 
     fun handleOnClient(ctx: IPayloadContext) {
-        CreateWaterparked.LOGGER.info(
+        CreateWaterparked.LOGGER.debug(
             "Water payload arrived entries={}", entries.size
         )
         ctx.enqueueWork {

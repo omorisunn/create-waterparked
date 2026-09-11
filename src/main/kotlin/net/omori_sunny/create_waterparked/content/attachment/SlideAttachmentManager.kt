@@ -133,13 +133,6 @@ object SlideAttachmentManager {
         // no direction gate: the velocity sign destabilises while braking
         // (near-zero speed flips the dot product) and made demands oscillate.
         // A closed door brakes riders from either side purely by distance.
-        if (level.gameTime % 20L == 0L) {
-            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
-                "[DoorPath] rider={} arc={} t={} doorT={} demand={}",
-                rider.uuid, arc.toInt(), bestT, entry.t,
-                be.attachment()?.speedScaleAt(arc)
-            )
-        }
 
         be.attachment()?.onTrigger(level, be, rider)
         // record the distance-aware braking demand for this rider

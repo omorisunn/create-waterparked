@@ -20,8 +20,7 @@ import java.util.UUID
 @OnlyIn(Dist.CLIENT)
 object EntitySlideClientSessions {
 
-    // matches the server viewer range: beyond it the server pauses the ride
-    // and the client falls back to the plain packet position
+    // must match the server viewer range; beyond it the ride pauses
     const val VIEWER_RANGE_SQ = 48.0 * 48.0
 
     class Active(
@@ -31,10 +30,8 @@ object EntitySlideClientSessions {
         var subLevelId: UUID?,
         var contraptionEntityId: Int?,
         var startGameTime: Long,
-        // applied render-frame time correction, lerped toward the server clock
         var timeOffsetTicks: Double,
         var targetOffsetTicks: Double,
-        // scaled clock: advances by the server-reported time scale
         var scaledTicks: Double = 0.0,
         var scale: Double = 1.0,
         var targetScale: Double = 1.0
@@ -105,15 +102,15 @@ object EntitySlideClientSessions {
             sessions.values.forEach {
                 val diff = it.targetOffsetTicks - it.timeOffsetTicks
                 if (kotlin.math.abs(diff) > 0.01) it.timeOffsetTicks += diff * 0.2
-                it.scale += (it.targetScale - it.scale) * 0.25
-                if (it.targetScale <= 0.0 && it.scale < 0.1) it.scale = 0.0
+                if (it.targetScale < it.scale) it.scale = it.targetScale
+                else it.scale += (it.targetScale - it.scale) * 0.25
+                if (it.targetScale <= 0.0 && it.scale < 0.25) it.scale = 0.0
                 it.scaledTicks += it.scale
             }
         }
     }
 
-    // interpolated pose for the entity at the current render frame; null when
-    // the entity has no active ride or is too far from the viewer to bother
+    // null when there is no active ride or the entity is out of viewer range
     fun poseFor(entity: Entity, partialTick: Float): Pose? {
         val active = sessions[entity.id] ?: return null
         val player = Minecraft.getInstance().player
@@ -194,8 +191,7 @@ object EntitySlideClientSessions {
             kotlin.math.atan2(-tangent.y, kotlin.math.sqrt(tangent.x * tangent.x + tangent.z * tangent.z))
         ).toFloat()
 
-    // bank angle of the tube frame around the travel direction, degrees;
-    // positive when the sample's up leans toward the tangent-relative right
+    // degrees; positive when up leans toward the tangent-relative right
     fun rollOf(tangent: Vec3, up: Vec3): Float {
         val worldUp = Vec3(0.0, 1.0, 0.0)
         if (tangent.lengthSqr() < 1.0E-12) return 0f

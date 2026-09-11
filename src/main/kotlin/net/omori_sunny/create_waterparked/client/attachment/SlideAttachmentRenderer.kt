@@ -31,6 +31,15 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentType
 @OnlyIn(Dist.CLIENT)
 object SlideAttachmentRenderer {
 
+    @JvmStatic
+    fun clear() {
+        clipCaches.clear()
+    }
+
+    // clip results cached per SAB - the CSG is far too heavy for every frame
+    private class ClipCache(val signature: String, val polys: List<net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Polygon>)
+    private val clipCaches = HashMap<BlockPos, ClipCache>()
+
     // triangle buffer for CSG-clipped geometry (n-gon output), block atlas
     private val ATTACH_TRI_CUTOUT: RenderType = RenderType.create(
         "create_waterparked:attachment_tri_cutout",
@@ -98,7 +107,17 @@ object SlideAttachmentRenderer {
         val csg = net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg
         val innerSolid = innerPrismAt(ctx)
         var clipped: List<net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Polygon> = polys
-        if (innerSolid != null) {
+        val sig = buildString {
+            append(entry.t).append('|').append(entry.angle).append('|')
+                .append(net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorProvider
+                    .smoothedOpen(be.blockPos, entry.data.getFloat("DoorOpenF"))).append('|')
+                .append(ctx.radius).append('|').append(ctx.wallThickness).append('|')
+                .append(be.attachmentMaterial).append('|').append(polys.size)
+        }
+        val cached = clipCaches[be.blockPos]
+        if (cached != null && cached.signature == sig) {
+            clipped = cached.polys
+        } else if (innerSolid != null) {
             clipped = try {
                 val kept = ArrayList<net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Polygon>()
                 for (p in polys) {
@@ -110,7 +129,9 @@ object SlideAttachmentRenderer {
             } catch (t: Throwable) {
                 polys
             }
+            clipCaches[be.blockPos] = ClipCache(sig, clipped)
         }
+        if (be.isRemoved) clipCaches.remove(be.blockPos)
         // manually generated parts bypass the CSG entirely
         if (manualQuads.isNotEmpty()) {
             val consumer2 = buffers.getBuffer(ATTACH_TRI_CUTOUT)

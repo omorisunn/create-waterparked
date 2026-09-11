@@ -98,7 +98,7 @@ object WaterslideSupportInteraction {
             return false
         }
         val ok = apply(level, player, be, part, face, hand)
-        CreateWaterparked.LOGGER.info(
+        CreateWaterparked.LOGGER.debug(
             "[SupportApply] anchor={} part={} item={} ok={} deleted={} filled={}",
             be.blockPos, part, player.getItemInHand(hand).item.descriptionId, ok,
             !be.isSupportVisible(part), be.hasCustomSupportMaterial(part)

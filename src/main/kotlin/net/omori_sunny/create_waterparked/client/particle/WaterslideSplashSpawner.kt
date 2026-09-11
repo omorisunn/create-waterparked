@@ -32,11 +32,6 @@ object WaterslideSplashSpawner {
     private var standRightAccum = 0.0
     private var standWasContact = false
 
-    private var debugLogTick = 0L
-    private var debugSpawnTick = 0L
-    private var debugSpawnedTotal = 0
-    private var debugFirstSpawnLogged = false
-
     // handles players not sliding whose box touches a stream polyline
     fun tickStanding(mc: Minecraft) {
         if (SlideClientSession.isSliding()) return
@@ -189,7 +184,6 @@ object WaterslideSplashSpawner {
             rightPos.x, rightPos.y, rightPos.z,
             particleVel.x, particleVel.y, particleVel.z
         )
-        debugSpawnedTotal += 2
 
         val volume = min(
             1.0f,
@@ -208,8 +202,6 @@ object WaterslideSplashSpawner {
             rightAccum = 0.0
             wasContact = false
             slideEntryPrimed = false
-            debugSpawnedTotal = 0
-            debugFirstSpawnLogged = false
             return
         }
 
@@ -218,13 +210,6 @@ object WaterslideSplashSpawner {
             leftAccum = 0.0
             rightAccum = 0.0
             wasContact = false
-            if (level.gameTime - debugLogTick >= 20) {
-                debugLogTick = level.gameTime
-                net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
-                    "[SplashSpawn] sliding but box not in water pos={}",
-                    player.position()
-                )
-            }
             return
         }
 
@@ -234,13 +219,6 @@ object WaterslideSplashSpawner {
             leftAccum = 0.0
             rightAccum = 0.0
             wasContact = false
-            if (level.gameTime - debugLogTick >= 20) {
-                debugLogTick = level.gameTime
-                net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
-                    "[SplashSpawn] in water but speed=0 pos={}",
-                    player.position()
-                )
-            }
             return
         }
 
@@ -287,7 +265,6 @@ object WaterslideSplashSpawner {
                 particleVel.x, particleVel.y, particleVel.z
             )
             leftAccum -= 1.0
-            debugSpawnedTotal++
         }
         while (rightAccum >= 1.0) {
             level.addParticle(
@@ -296,22 +273,7 @@ object WaterslideSplashSpawner {
                 particleVel.x, particleVel.y, particleVel.z
             )
             rightAccum -= 1.0
-            debugSpawnedTotal++
         }
 
-        if (!debugFirstSpawnLogged && debugSpawnedTotal > 0) {
-            debugFirstSpawnLogged = true
-            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
-                "[SplashSpawn] first actual spawn total={} speed={} pos={}",
-                debugSpawnedTotal, speed, leftPos
-            )
-        }
-        if (level.gameTime - debugSpawnTick >= 20) {
-            debugSpawnTick = level.gameTime
-            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
-                "[SplashSpawn] spawning total={} speed={} rate={} left={} right={} vel={}",
-                debugSpawnedTotal, speed, ratePerSecond, leftPos, rightPos, particleVel
-            )
-        }
     }
 }

@@ -752,7 +752,7 @@ object PlayerSlideController {
     private fun syncInterval(session: Session): Long =
         if (kotlin.math.abs(session.timeScale - 1.0) > 0.01 ||
             kotlin.math.abs(session.targetScale - 1.0) > 0.01
-        ) 2L else 20L
+        ) 1L else 20L
 
     // apply the first sample of a fresh segment after a handoff
     private fun startPlaybackSegment(level: ServerLevel, session: Session) {
