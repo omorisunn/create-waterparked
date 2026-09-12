@@ -467,11 +467,12 @@ object WaterslideGhostRenderer {
             .setNormal(pose, c.nx, c.ny, c.nz)
     }
 
-    private fun buildPrismSolids(
+    internal fun buildPrismSolids(
         level: net.minecraft.world.level.Level,
         be: WaterslideAnchorBlockEntity,
         bc: BezierConnection,
-        cell: BlockPos
+        cell: BlockPos,
+        radiusBias: Double = 0.0
     ): List<WaterslideGhostCsg.Solid> {
         val a = bc.bePositions.getFirst()
         val b = bc.bePositions.getSecond()
@@ -511,7 +512,7 @@ object WaterslideGhostRenderer {
             val lat = worldDir(f.currLateral)
             val tangent = worldDir(f.currTangent)
             val up = tangent.cross(lat).normalize()
-            val r = ((f.currRadius + net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - BASE_WALL) * scale)
+            val r = ((f.currRadius + net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - BASE_WALL + radiusBias).toFloat() * scale)
                 .coerceAtLeast(0.05f)
             return List(crossN) { k ->
                 val deg = Math.toRadians((gridAnchor + k * degStep).toDouble())

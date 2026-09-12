@@ -20,8 +20,7 @@ import java.util.UUID
 @OnlyIn(Dist.CLIENT)
 object EntitySlideClientSessions {
 
-    // matches the server viewer range: beyond it the server pauses the ride
-    // and the client falls back to the plain packet position
+    // must match the server viewer range; beyond it the ride pauses
     const val VIEWER_RANGE_SQ = 48.0 * 48.0
 
     class Active(
@@ -31,9 +30,11 @@ object EntitySlideClientSessions {
         var subLevelId: UUID?,
         var contraptionEntityId: Int?,
         var startGameTime: Long,
-        // applied render-frame time correction, lerped toward the server clock
         var timeOffsetTicks: Double,
-        var targetOffsetTicks: Double
+        var targetOffsetTicks: Double,
+        var scaledTicks: Double = 0.0,
+        var scale: Double = 1.0,
+        var targetScale: Double = 1.0
     )
 
     private val sessions = HashMap<Int, Active>()
@@ -70,13 +71,16 @@ object EntitySlideClientSessions {
         active.startGameTime = payload.startGameTime
         active.timeOffsetTicks = 0.0
         active.targetOffsetTicks = 0.0
+        active.scaledTicks = 0.0
+        active.targetScale = 1.0
     }
 
     @JvmStatic
-    fun sync(sessionId: Long, elapsedTicks: Int) {
+    @JvmOverloads
+    fun sync(sessionId: Long, elapsedTicks: Int, timeScale: Float = 1f) {
         val active = sessions.values.firstOrNull { it.sessionId == sessionId } ?: return
-        val level = Minecraft.getInstance().level ?: return
-        val drift = (level.gameTime - active.startGameTime) - elapsedTicks
+        active.targetScale = timeScale.toDouble()
+        val drift = active.scaledTicks - elapsedTicks
         active.targetOffsetTicks = if (kotlin.math.abs(drift) > 5) -drift.toDouble() else 0.0
     }
 
@@ -98,20 +102,22 @@ object EntitySlideClientSessions {
             sessions.values.forEach {
                 val diff = it.targetOffsetTicks - it.timeOffsetTicks
                 if (kotlin.math.abs(diff) > 0.01) it.timeOffsetTicks += diff * 0.2
+                if (it.targetScale < it.scale) it.scale = it.targetScale
+                else it.scale += (it.targetScale - it.scale) * 0.25
+                if (it.targetScale <= 0.0 && it.scale < 0.25) it.scale = 0.0
+                it.scaledTicks += it.scale
             }
         }
     }
 
-    // interpolated pose for the entity at the current render frame; null when
-    // the entity has no active ride or is too far from the viewer to bother
+    // null when there is no active ride or the entity is out of viewer range
     fun poseFor(entity: Entity, partialTick: Float): Pose? {
         val active = sessions[entity.id] ?: return null
         val player = Minecraft.getInstance().player
         if (player != null && player.distanceToSqr(entity) > VIEWER_RANGE_SQ) return null
         val level = entity.level()
         advanceClock(level, active)
-        val elapsed = (level.gameTime - active.startGameTime + active.timeOffsetTicks +
-            partialTick.toDouble()) / 20.0
+        val elapsed = (active.scaledTicks + active.scale * partialTick + active.timeOffsetTicks) / 20.0
         if (elapsed < 0.0) return null
         val clamped = elapsed.coerceAtMost(active.trajectory.duration)
         val at = active.trajectory.sampleAt(clamped)
@@ -185,8 +191,7 @@ object EntitySlideClientSessions {
             kotlin.math.atan2(-tangent.y, kotlin.math.sqrt(tangent.x * tangent.x + tangent.z * tangent.z))
         ).toFloat()
 
-    // bank angle of the tube frame around the travel direction, degrees;
-    // positive when the sample's up leans toward the tangent-relative right
+    // degrees; positive when up leans toward the tangent-relative right
     fun rollOf(tangent: Vec3, up: Vec3): Float {
         val worldUp = Vec3(0.0, 1.0, 0.0)
         if (tangent.lengthSqr() < 1.0E-12) return 0f

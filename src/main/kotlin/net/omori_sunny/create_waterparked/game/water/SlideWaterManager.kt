@@ -13,9 +13,8 @@ object SlideWaterManager {
 
     @JvmStatic
     fun tickServer(level: ServerLevel, be: WaterslideAnchorBlockEntity) {
-        // diagnostic: periodic water amount report
         if (level.gameTime % REPORT_INTERVAL == 0L && be.hasWater()) {
-            CreateWaterparked.LOGGER.info(
+            CreateWaterparked.LOGGER.debug(
                 "Water anchor {} amount={} mb", be.blockPos, be.waterAmount()
             )
         }

@@ -1,0 +1,14 @@
+{
+  "type": "create:pressing",
+  "ingredients": [
+    {
+      "item": "create_waterparked:waterslide_track"
+    }
+  ],
+  "results": [
+    {
+      "count": 2,
+      "id": "create_waterparked:inflatable_boat_1x2"
+    }
+  ]
+}

@@ -38,12 +38,6 @@ public abstract class ColorwheelWaterEntityMixin {
 
         if (isWaterMesh && IrisColorwheelCompat.waterShadingActive()) {
             int stamp = IrisColorwheelCompat.waterStampId();
-            CreateWaterparked.INSTANCE.getLOGGER().info(
-                "[WaterStamp] stamping {} verts (uOver1={}, vSet={}) with id {} pack={} adapter={}",
-                count, hasUOver1, vSet.size(), stamp,
-                IrisColorwheelCompat.shaderpackName(),
-                ShaderpackWaterAdapters.activeOrGeneric().getClass().getSimpleName()
-            );
             for (int i = 0; i < count; i++) {
                 vertexView.entityX(i, (short) stamp);
                 vertexView.entityY(i, (short) 0);

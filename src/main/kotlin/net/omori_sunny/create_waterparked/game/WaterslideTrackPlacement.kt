@@ -161,7 +161,7 @@ object WaterslideTrackPlacement {
         })
         beA.initCurveSectorConfig(level, secondAnchor)
         logJunction(level, first, secondAnchor, placement)
-        CreateWaterparked.LOGGER.info("Slide connected {} -> {}", first, secondAnchor)
+        CreateWaterparked.LOGGER.debug("Slide connected {} -> {}", first, secondAnchor)
 
         clearPendingConnection(stack)
         player.setItemInHand(hand, stack)
@@ -189,7 +189,7 @@ object WaterslideTrackPlacement {
             val pAxis = axisAt(primaryBc, write.sharedAnchor()) ?: return@mapNotNull null
             nAxis.normalize().dot(pAxis.normalize())
         }
-        CreateWaterparked.LOGGER.info(
+        CreateWaterparked.LOGGER.debug(
             "Slide junction {} -> {}: smoothedNeighbors={} axisDot={}",
             a, b, result.neighborJoinWrites.size, dots
         )

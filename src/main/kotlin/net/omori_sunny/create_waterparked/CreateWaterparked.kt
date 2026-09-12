@@ -1,13 +1,16 @@
 package net.omori_sunny.create_waterparked
 
+import com.simibubi.create.api.stress.BlockStressValues
 import net.omori_sunny.create_waterparked.client.CreateWaterparkedClient
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.config.ModConfig
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.content.registry.ModBlocks
 import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
+import net.omori_sunny.create_waterparked.content.registry.ModDisplaySources
 import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
 import net.omori_sunny.create_waterparked.content.registry.ModItems
 import net.omori_sunny.create_waterparked.content.registry.ModParticles
@@ -47,6 +50,8 @@ object CreateWaterparked {
         ModBlocks.REGISTRY.register(MOD_BUS)
         ModBlockEntities.REGISTRY.register(MOD_BUS)
         ModItems.REGISTRY.register(MOD_BUS)
+        ModDisplaySources.REGISTRY.register(MOD_BUS)
+        net.omori_sunny.create_waterparked.content.attachment.ModSlideAttachments.init()
         ModEntityTypes.REGISTRY.register(MOD_BUS)
         ModRecipeSerializers.REGISTRY.register(MOD_BUS)
         ModDataComponents.REGISTRY.register(MOD_BUS)
@@ -58,11 +63,12 @@ object CreateWaterparked {
         }
 
         MOD_BUS.addListener(ModPayloads::register)
-        MOD_BUS.addListener(::onCommonSetup)
         MOD_BUS.addListener(CreateWaterparkedDataGen::gatherData)
-        MOD_BUS.addListener(::onConfigReloaded)
 
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onServerTick)
+        NeoForge.EVENT_BUS.addListener(
+            net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentManager::onServerTick
+        )
         NeoForge.EVENT_BUS.addListener(WaterslideSupportInteraction::onPlayerLoggedOut)
         NeoForge.EVENT_BUS.addListener(
             EventPriority.HIGHEST,
@@ -102,13 +108,27 @@ object CreateWaterparked {
     @SubscribeEvent
     fun onCommonSetup(event: FMLCommonSetupEvent) {
         LOGGER.info("Create Waterparked loaded.")
+        registerStressValues()
+        ModDisplaySources.bindToBlocks()
         WaterslideContraptionIntegration.register()
         WaterparkedCommands.register()
     }
 
+    // impact is per rpm; run once the blocks are registered
+    private fun registerStressValues() {
+        for (type in SlideAttachmentTypes.all()) {
+            if (type.stressImpact <= 0.0) continue
+            val block = type.block.get()
+            BlockStressValues.IMPACTS.register(
+                block,
+                java.util.function.DoubleSupplier { type.stressImpact }
+            )
+            LOGGER.debug("Stress impact {} x RPM for {}", type.stressImpact, type.id)
+        }
+    }
+
     @SubscribeEvent
     fun onConfigReloaded(event: ModConfigEvent.Reloading) {
-        // rebuild tube visuals so client rendering options apply immediately
         if (event.config.spec === ModClientConfig.SPEC) {
             WaterslideTubeMesh.clearModels()
             WaterslideTubeVisual.refreshAll()

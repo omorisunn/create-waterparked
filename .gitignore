@@ -58,3 +58,7 @@ docs/
 
 # Local dedicated server run directory
 run-server/
+
+# Local editor workspace
+.vscode/
+/tools/

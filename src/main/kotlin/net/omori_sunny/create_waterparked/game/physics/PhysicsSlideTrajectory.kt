@@ -145,7 +145,6 @@ object PhysicsSlideTrajectoryBuilder {
             // in tube segment
             val segStart = time
             var leftTube = false
-            var lastTraceTime = -1.0
             var lastProgress = 0.0
             // stall clock starts here so the first step is never judged stalled
             var lastProgressTime = segStart
@@ -207,10 +206,6 @@ object PhysicsSlideTrajectoryBuilder {
                     worldBlocksCollide(access.level, access.toWorld(pos), poseWidth, poseHeight)
                 ) {
                     hardStop = true
-                    CreateWaterparked.LOGGER.info(
-                        "[FallDiag] in-tube block hard stop t={} local={} world={}",
-                        time, pos, access.toWorld(pos)
-                    )
                     break
                 }
 
@@ -226,10 +221,6 @@ object PhysicsSlideTrajectoryBuilder {
                     lastProgress = progress
                     lastProgressTime = time
                 } else if (time - lastProgressTime >= 2.0 && time > 1.0) {
-                    CreateWaterparked.LOGGER.info(
-                        "SlideTrace stalled t={} pos={} vel={} speed={} idx={}",
-                        time, pos, vel, vel.length(), hit.idx
-                    )
                     if (hit.idx >= tube.frames.size - 3) {
                         val last = tube.frames.last()
                         vel = last.tangent.scale(vel.length())
@@ -237,20 +228,9 @@ object PhysicsSlideTrajectoryBuilder {
                     leftTube = true
                     break
                 }
-                if (time - lastTraceTime >= 1.0) {
-                    lastTraceTime = time
-                    CreateWaterparked.LOGGER.info(
-                        "SlideTrace t={} pos={} vel={} speed={} idx={} atEnd={} frames={}",
-                        time, pos, vel, vel.length(), hit.idx, hit.atEnd, tube.frames.size
-                    )
-                }
                 if (hit.idx >= tube.frames.size - 3) {
                     if (endApproachTime == Double.MAX_VALUE) endApproachTime = time
                     if (time - endApproachTime >= 3.0) {
-                        CreateWaterparked.LOGGER.info(
-                            "SlideTrace end-timeout t={} pos={} vel={} idx={}",
-                            time, pos, vel, hit.idx
-                        )
                         vel = hit.tangent.scale(vel.length())
                         leftTube = true
                         break
@@ -298,7 +278,6 @@ object PhysicsSlideTrajectoryBuilder {
             // own pipe reentry only after leaving every grid, other slides catch first
             var wasClear = false
             var prevLocal = pos
-            var lastWorldLog = -1.0
             while (time - fallStart < MAX_TIME && samples.size < maxSamples) {
                 prevLocal = pos
                 vel = vel.add(access.localGravity().scale(DT))
@@ -312,43 +291,20 @@ object PhysicsSlideTrajectoryBuilder {
                 // world coords for blocks and slides from other spaces
                 val worldPos = access.toWorld(pos)
                 val collided = worldBlocksCollide(access.level, worldPos, poseWidth, poseHeight)
-                if (time - lastWorldLog >= 0.5) {
-                    lastWorldLog = time
-                    val feet = BlockPos.containing(
-                        worldPos.x, worldPos.y - poseHeight / 2.0 - 0.01, worldPos.z
-                    )
-                    CreateWaterparked.LOGGER.info(
-                        "[FallDiag] t={} local={} world={} collide={} feet={} state={} localGround={}",
-                        time, pos, worldPos, collided, feet, access.level.getBlockState(feet),
-                        hitsGround(access, pos, poseHeight)
-                    )
-                }
                 if (collided) {
                     pos = prevLocal
                     hardStop = true
-                    CreateWaterparked.LOGGER.info(
-                        "[FallDiag] main-world block hard stop t={} world={} prevLocal={}",
-                        time, worldPos, prevLocal
-                    )
                     break
                 }
                 if (worldSlideGrid != null && worldSlideGrid.hit(worldPos) != null) {
                     pos = prevLocal
                     hardStop = true
-                    CreateWaterparked.LOGGER.info(
-                        "[FallDiag] other-space slide hard stop t={} world={}",
-                        time, worldPos
-                    )
                     break
                 }
                 // landing wins over reentry at a mouth on the ground
                 if (hitsGround(access, pos, poseHeight)) {
                     val surfaceY = groundSurfaceY(access, pos, poseHeight)
                     if (surfaceY != null) pos = Vec3(pos.x, surfaceY, pos.z)
-                    CreateWaterparked.LOGGER.info(
-                        "[FallDiag] local-space ground end t={} local={} world={} surfaceY={}",
-                        time, pos, access.toWorld(pos), surfaceY
-                    )
                     break
                 }
                 if (pos.y < access.level.minBuildHeight - 10) {
@@ -405,10 +361,6 @@ object PhysicsSlideTrajectoryBuilder {
                 tubeUp, tubeRadius, vel.length(), inTubeState, inTubeState && hit.watered
             )
         }
-        CreateWaterparked.LOGGER.info(
-            "SlideTrace done samples={} length={} exitPos={} exitVel={} limitHit={}",
-            samples.size, totalLength, pos, vel, limitHit
-        )
         return SlideTrajectory(samples, SlideEndReason.EXITED, false, vel, false)
     }
 

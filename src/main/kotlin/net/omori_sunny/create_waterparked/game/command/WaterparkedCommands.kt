@@ -50,7 +50,7 @@ object WaterparkedCommands {
                                         val lines = dumpSlides(level)
                                         for (line in lines) {
                                             ctx.source.sendSuccess({ Component.literal(line) }, false)
-                                            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
+                                            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.debug(
                                                 "[SlideDump] {}", line
                                             )
                                         }

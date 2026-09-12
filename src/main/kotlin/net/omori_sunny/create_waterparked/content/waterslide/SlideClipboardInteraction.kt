@@ -154,7 +154,7 @@ object SlideClipboardInteraction {
                 0, player.inventoryMenu.stateId, player.inventory.selected, fresh
             )
         )
-        net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
+        net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.debug(
             "[SlideClipboard] server copied, pages={}", list.size
         )
     }

@@ -126,7 +126,7 @@ object WaterFlowSimulation {
             else -> SlideSpace.Main
         }
         val key = space.cacheKey(level)
-        net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
+        net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.debug(
             "Water sync received space={} entries={}", key, payload.entries.size
         )
         val target = HashMap<Pair<Long, Long>, CurveWater>()

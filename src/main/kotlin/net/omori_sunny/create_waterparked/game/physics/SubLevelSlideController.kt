@@ -16,7 +16,7 @@ import java.util.UUID
 import kotlin.math.atan2
 import kotlin.math.sqrt
 
-// whole Sable sub-levels kinematically ride the slides; the opaque physics scene frame is derived at runtime via readPose
+// Sable sub-levels ride the slides; the physics scene pose is derived at runtime
 object SubLevelSlideController {
 
     private const val ENTRY_SCAN_TICKS = 5L
@@ -27,7 +27,6 @@ object SubLevelSlideController {
         var trajectory: SlideTrajectory,
         val access: SlideSpaceAccess,
         val orientationOffsetWorld: Quaterniond,
-        // constant rotation converting world vectors into the physics scene frame
         val worldToScene: Quaterniond,
         val scenePos0: Vector3d,
         val worldPath0: Vec3
@@ -36,7 +35,6 @@ object SubLevelSlideController {
         var skippedTicks = 0
     }
 
-    // per dimension: every level ticks and would wipe foreign sessions
     private val sessions = HashMap<net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level>, HashMap<UUID, SubSession>>()
     private val nextScan = HashMap<net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level>, Long>()
 
@@ -59,7 +57,7 @@ object SubLevelSlideController {
             if (sub == null) {
                 if (++session.skippedTicks > 40) {
                     levelSessions.remove(session.subId)
-                    CreateWaterparked.LOGGER.info("Sub-level slide abort {} (unresolvable)", session.subId)
+                    CreateWaterparked.LOGGER.debug("Sub-level slide abort {} (unresolvable)", session.subId)
                 }
                 continue
             }
@@ -96,12 +94,8 @@ object SubLevelSlideController {
             var best: PlayerSlideController.SlideMouth? = null
             var bestD = Double.MAX_VALUE
             for (mouth in mouths) {
-                // never capture through a mouth of its own slide
                 val mouthSub = (mouth.access as? SubSlideSpaceAccess)?.sub
                 if (mouthSub?.uniqueId == sub.uniqueId) continue
-                // capture only structures crossing INTO the tube opening:
-                // structures resting on the outer wall (e.g. blocks built on
-                // rivets) must stay put
                 val px = mouth.worldPos.x.coerceIn(box.minX, box.maxX)
                 val py = mouth.worldPos.y.coerceIn(box.minY, box.maxY)
                 val pz = mouth.worldPos.z.coerceIn(box.minZ, box.maxZ)
@@ -115,7 +109,11 @@ object SubLevelSlideController {
                 val rz = dz - along * mouth.worldTangent.z
                 val radialSq = rx * rx + ry * ry + rz * rz
                 val rr = mouth.radius.toDouble()
-                if (!insideBox && !(along > 0.1 && radialSq < rr * rr)) continue
+                if (insideBox) {
+                    if (!hasBlocksAtMouth(sub, mouth)) continue
+                } else if (!(along > 0.1 && radialSq < rr * rr)) {
+                    continue
+                }
                 val d = box.distanceToSqr(mouth.worldPos)
                 if (d >= bestD) continue
                 best = mouth
@@ -126,9 +124,27 @@ object SubLevelSlideController {
         }
     }
 
-    // rivet sub-levels are wall decorations; the slide NEVER rides them -
-    // blocked by the spawner's UUID registry (placement-time entry plus the
-    // ZERO-cell scan in its serverTick repopulates it after reloads)
+    // blocks live at plot coordinates, so the mouth is sampled in the local frame
+    private fun hasBlocksAtMouth(sub: ServerSubLevel, mouth: PlayerSlideController.SlideMouth): Boolean {
+        val access = mouth.access as? SubSlideSpaceAccess ?: return true
+        val local = access.worldToLocal(mouth.worldPos)
+        val r = (mouth.radius.toDouble() + 0.6).coerceAtLeast(1.0)
+        val cx = kotlin.math.floor(local.x).toInt()
+        val cy = kotlin.math.floor(local.y).toInt()
+        val cz = kotlin.math.floor(local.z).toInt()
+        val span = kotlin.math.ceil(r).toInt().coerceAtMost(3)
+        for (dx in -span..span) {
+            for (dy in -span..span) {
+                for (dz in -span..span) {
+                    val state = access.getBlockState(net.minecraft.core.BlockPos(cx + dx, cy + dy, cz + dz))
+                    if (!state.isAir) return true
+                }
+            }
+        }
+        return false
+    }
+
+    // rivet sub-levels are wall decorations and never ride the slide
     private fun isRivetSub(sub: ServerSubLevel): Boolean =
         net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetSpawner
             .rivetSubIds.contains(sub.uniqueId)
@@ -150,13 +166,11 @@ object SubLevelSlideController {
             startLocal, startVel, 0.9, 0.9, poseRad = 0.45
         ) ?: return
 
-        // raw scene pose - the same native frame teleport writes
         val pipeline = SubLevelPhysicsSystem.get(level)?.pipeline ?: return
         val scenePose = pipeline.readPose(sub, Pose3d())
         val scenePos0 = Vector3d(scenePose.position())
         val qScene0 = Quaterniond(scenePose.orientation())
         val qWorld0 = Quaterniond(sub.logicalPose().orientation())
-        // R = qWorld0 * qScene0^-1
         val worldToScene = Quaterniond(qWorld0).mul(Quaterniond(qScene0).invert())
         val orientationOffsetWorld = Quaterniond(tangentQuat(mouth.worldTangent)).invert().mul(qWorld0)
 
@@ -166,7 +180,7 @@ object SubLevelSlideController {
             orientationOffsetWorld, worldToScene, scenePos0,
             access.toWorld(first.position)
         )
-        CreateWaterparked.LOGGER.info(
+        CreateWaterparked.LOGGER.debug(
             "Sub-level slide start {} scenePos0={} worldPath0={} samples={}",
             sub.uniqueId, scenePos0, access.toWorld(first.position), trajectory.samples.size
         )
@@ -176,7 +190,7 @@ object SubLevelSlideController {
         session.elapsed += 1.0 / 20.0
         if (session.elapsed >= session.trajectory.duration) {
             levelSessions.remove(session.subId)
-            CreateWaterparked.LOGGER.info("Sub-level slide end {}", session.subId)
+            CreateWaterparked.LOGGER.debug("Sub-level slide end {}", session.subId)
             return
         }
         val at = session.trajectory.sampleAt(session.elapsed)
@@ -194,7 +208,6 @@ object SubLevelSlideController {
         if (!handle.isValid()) return
         handle.teleport(scenePos, sceneRot)
 
-        // keep the body coherent: tangent velocity at sample speed, no spin
         val target = Quaterniond(session.worldToScene)
             .transform(JOMLConversion.toJOML(tangent.scale(at.sample.speed)), Vector3d())
         val current = handle.getLinearVelocity(Vector3d())

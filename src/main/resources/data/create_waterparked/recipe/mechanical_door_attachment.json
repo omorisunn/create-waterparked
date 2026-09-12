@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "building",
+  "ingredients": [
+    {
+      "item": "create:shaft"
+    },
+    {
+      "item": "create_waterparked:waterslide_track"
+    }
+  ],
+  "result": {
+    "count": 1,
+    "id": "create_waterparked:mechanical_door_attachment"
+  }
+}

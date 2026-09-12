@@ -33,7 +33,6 @@ import org.joml.Matrix4f
 import org.joml.Vector3d
 import kotlin.math.abs
 
-// radius edit handle
 @OnlyIn(Dist.CLIENT)
 object WaterslideRadiusEdit {
 
@@ -48,15 +47,9 @@ object WaterslideRadiusEdit {
 
     private data class CircleFrame(val lateral: Vec3, val up: Vec3)
 
-    // dragging state
     @JvmStatic
     fun isDragging(): Boolean = dragging
 
-    // hover or drag, for CCS suppression. Only an ACTUAL radius drag (button
-    // held = use key down) suppresses vanilla use: a mere hover near the
-    // handle must never cancel the right-click, or support part clicks next
-    // to the tube mouth get eaten (hover hits the handle sphere, the user
-    // aimed at the support bracket).
     @JvmStatic
     fun isHoveringOrDragging(mc: Minecraft): Boolean {
         if (dragging) return true
@@ -78,7 +71,6 @@ object WaterslideRadiusEdit {
         return raySphere(eye, view, handleTipWorld(level, ctx.globalPos, ctx.be.radius), PICK_RADIUS)
     }
 
-    // preview radius
     @JvmStatic
     fun radiusAt(level: Level, anchorPos: BlockPos, fallback: Float): Float {
         previewRadii[anchorPos]?.let { return it }
@@ -93,6 +85,14 @@ object WaterslideRadiusEdit {
         if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return clear()
         val ctx = SableClientEdit.resolve(level, anchor) ?: return clear()
+        if (SlideEditState.isEditingAttachment()) {
+            if (net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
+                    .anyDragging()) return
+            if (!dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode.isActive()) {
+                return clear()
+            }
+        }
+        SlideEditState.enterSlide()
         val be = ctx.be
         if (WaterslideSectorEdit.isDraggingControlPoint() || BezierHandleDragManager.isDraggingHandle()) return
 
@@ -106,7 +106,6 @@ object WaterslideRadiusEdit {
         if (dragging) {
             val target = dragTarget(eye, view, level, ctx.globalPos) ?: return clear()
             val raw = radiusFromDistance(target.distanceTo(anchorCenter(level, ctx.globalPos)))
-            // 0.05-block grid snap, like the sector control points' 2-degree grid
             val radius = Math.round(raw / 0.05f) * 0.05f
             previewRadii[anchor] = radius
             player.displayClientMessage(
@@ -116,7 +115,6 @@ object WaterslideRadiusEdit {
                 ).withStyle(Style.EMPTY.withColor(TextColor.fromRgb(0xFFFFFF))),
                 true
             )
-            // drag tick per 0.05-block cell crossed, pitched by the in-cell amount
             if (lastDragSoundRadius.isNaN() || abs(radius - lastDragSoundRadius) >= 0.05f) {
                 val inCell = if (lastDragSoundRadius.isNaN()) 0f
                 else (abs(radius - lastDragSoundRadius) % 0.05f).coerceIn(0f, 0.05f) / 0.05f
@@ -132,27 +130,16 @@ object WaterslideRadiusEdit {
                 WaterslideEditSounds.playCommitSuccess()
             }
         } else if (useDown) {
-            // ghost placement (wrench main + offhand block) owns the click near
-            // the wall: the control-point drag yields so both can coexist
             if (player.mainHandItem.`is`(com.simibubi.create.AllItems.WRENCH.get()) &&
                 player.offhandItem.item is net.minecraft.world.item.BlockItem
             ) return
             val tip = handleTipWorld(level, ctx.globalPos, be.radius)
-            // only the control point starts a radius drag, the ring stays visual
             val hovering = raySphere(eye, view.normalize(), tip, PICK_RADIUS)
-            if (level.gameTime % 20 == 0L) {
-                CreateWaterparked.LOGGER.info(
-                    "[RadiusDiag] anchor={} global={} sub={} radius={} eye={} view={} tip={} tipDist={} hover={} dragging={}",
-                    anchor, ctx.globalPos, ctx.sub?.uniqueId, be.radius, eye, view, tip,
-                    rayDistance(eye, view, tip), hovering, dragging
-                )
-            }
             if (hovering) {
                 dragging = true
                 dragAnchor = anchor.immutable()
                 previewRadii[anchor] = be.radius
                 lastChainRefreshRadius = -1f
-                CreateWaterparked.LOGGER.info("[RadiusDiag] drag start anchor={}", anchor)
             }
         }
     }
@@ -166,6 +153,7 @@ object WaterslideRadiusEdit {
         cameraRotation: Matrix4f
     ) {
         val level = mc.level ?: return
+        if (SlideEditState.isEditingAttachment()) return
         if (!SubLevelEditFocus.isActive(level)) return
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return
         val ctx = SableClientEdit.resolve(level, anchor) ?: return
@@ -177,12 +165,6 @@ object WaterslideRadiusEdit {
         drawAnchorCircle(level, ctx, poseStack, bufferSource, cameraPos, cameraRotation, radius, 0.2f, 0.9f, 1.0f)
         val tipPlot = handleTipWorld(level, ctx.globalPos, radius)
         val tip = if (ctx.sub == null) tipPlot else SableClientEdit.toWorld(ctx.sub!!, tipPlot)
-        if (level.gameTime % 20 == 0L) {
-            CreateWaterparked.LOGGER.info(
-                "[RadiusRender] anchor={} global={} sub={} radius={} tipWorld={}",
-                anchor, ctx.globalPos, ctx.sub?.uniqueId, radius, tip
-            )
-        }
         val lateralPlot = handleLateral(level, ctx.globalPos)
         val lateral = if (ctx.sub == null) lateralPlot else SableClientEdit.toWorldNormal(ctx.sub!!, lateralPlot)
         val hovering = isHovering(mc, level, ctx.globalPos, radius)
@@ -274,13 +256,11 @@ object WaterslideRadiusEdit {
         )
     }
 
-    // opening center and face
     private fun openingFrame(
         level: Level,
         be: WaterslideAnchorBlockEntity,
         anchor: BlockPos
     ): Pair<Vec3, Triple<Vec3, Vec3, Vec3>>? {
-        // live bezier preview frame
         WaterslideSectorEdit.liveAnchorFrame(level, anchor)?.let { live ->
             val face = live.lateral.cross(live.up).normalize()
             return live.center to Triple(live.lateral, live.up, face)
@@ -326,7 +306,6 @@ object WaterslideRadiusEdit {
 
     private fun handleTipWorld(level: Level, pos: BlockPos, radius: Float): Vec3 {
         val center = anchorCenter(level, pos)
-        // tip on the ring
         return center.add(handleLateral(level, pos).scale(radius.toDouble()))
     }
 
@@ -355,7 +334,6 @@ object WaterslideRadiusEdit {
         return (t0 >= 1.0E-4) || (t1 >= 1.0E-4)
     }
 
-    // ray against the sampled opening circle, the whole rim is clickable
     private fun rayRing(
         ro: Vec3,
         rd: Vec3,
@@ -376,7 +354,6 @@ object WaterslideRadiusEdit {
         return false
     }
 
-    // diagnostics: perpendicular distance from the ray to a point / the whole ring
     private fun rayDistance(ro: Vec3, rd: Vec3, p: Vec3): Double {
         val oc = p.subtract(ro)
         val t = oc.dot(rd)

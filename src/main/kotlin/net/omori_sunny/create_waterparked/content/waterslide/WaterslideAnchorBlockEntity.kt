@@ -153,7 +153,7 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
                 IFluidHandler.FluidAction.EXECUTE
             )
             if (filled > 0) {
-                net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
+                net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.debug(
                     "Anchor {} refilled {} mb", blockPos, filled
                 )
             }

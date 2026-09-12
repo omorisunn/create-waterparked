@@ -37,7 +37,6 @@ public abstract class BezierHandleDragManagerMixin {
     @Shadow
     private static BlockPos dragLiftAnchorPos;
 
-// hud lift readout without the radius offset
     @WrapOperation(
         method = "renderBezierEditAnchorStatusHud(Lnet/minecraft/client/Minecraft;"
             + "Lnet/minecraft/client/gui/GuiGraphics;)V",
@@ -52,7 +51,6 @@ public abstract class BezierHandleDragManagerMixin {
         return be instanceof WaterslideAnchorBlockEntity slide ? value - slide.getRadius() : value;
     }
 
-// status hud radius segment
     @WrapOperation(
         method = "renderBezierEditAnchorStatusHud(Lnet/minecraft/client/Minecraft;"
             + "Lnet/minecraft/client/gui/GuiGraphics;)V",
@@ -78,7 +76,6 @@ public abstract class BezierHandleDragManagerMixin {
                 CoasterBezierHandleEdit.formatLiftMetersReadout(radius)));
     }
 
-// slide lift snaps to the independent max
     @WrapOperation(
         method = "liftDragVirtualTarget(Lnet/minecraft/client/Minecraft;"
             + "Lnet/minecraft/world/level/Level;Lnet/minecraft/world/phys/Vec3;)"
@@ -109,7 +106,6 @@ public abstract class BezierHandleDragManagerMixin {
         return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
     }
 
-// allow the secondary copy so drag works from either endpoint
     @Inject(
         method = "loadPrimary(Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;"
             + "Lnet/minecraft/core/BlockPos;)Lcom/simibubi/create/content/trains/track/BezierConnection;",
@@ -133,7 +129,9 @@ public abstract class BezierHandleDragManagerMixin {
     private static void waterslide$clientTick(Minecraft mc, CallbackInfo ci) {
         WaterslideRadiusEdit.mixinClientTick(mc);
         WaterslideSectorEdit.mixinClientTick(mc);
-        if (WaterslideRadiusEdit.isDragging() || WaterslideSectorEdit.isDraggingControlPoint()) {
+        if (WaterslideRadiusEdit.isDragging() || WaterslideSectorEdit.isDraggingControlPoint() ||
+            net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
+                .anyDragging()) {
             ci.cancel();
         }
     }
@@ -154,6 +152,8 @@ public abstract class BezierHandleDragManagerMixin {
 
     private static boolean hoveringOrDraggingAny(Minecraft mc) {
         return WaterslideRadiusEdit.isHoveringOrDragging(mc) ||
-            WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc);
+            WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc) ||
+            net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
+                .anyHoveringOrDragging(mc);
     }
 }

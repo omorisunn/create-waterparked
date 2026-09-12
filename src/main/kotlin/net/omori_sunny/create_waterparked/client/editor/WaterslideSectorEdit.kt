@@ -1,5 +1,4 @@
 package net.omori_sunny.create_waterparked.client.editor
-// Sector editor plus the shared wall-hit resolution (used by ghost placement too).
 
 import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
@@ -534,21 +533,34 @@ object WaterslideSectorEdit {
     }
 
     @JvmStatic
-    fun pickWallAtCursor(mc: Minecraft): WallHit? {
+    @JvmOverloads
+    fun pickWallAtCursor(mc: Minecraft, step: Double = 0.15): WallHit? {
         val player = mc.player ?: return null
         val level = mc.level ?: return null
         val eye = player.eyePosition
         val view = player.getViewVector(1f)
+        return marchWallHit(level, eye, view, step)
+    }
+
+    @JvmStatic
+    @JvmOverloads
+    fun marchWallHit(
+        level: Level,
+        eye: Vec3,
+        view: Vec3,
+        step: Double = 0.075,
+        maxDistance: Double = 6.0
+    ): WallHit? {
         var best: WallHit? = null
         var bestD = Double.MAX_VALUE
         var d = 0.0
-        while (d <= 6.0) {
+        while (d <= maxDistance) {
             val hit = resolveWallHit(level, eye.add(view.scale(d)))
             if (hit != null && d < bestD) {
                 bestD = d
                 best = hit
             }
-            d += 0.15
+            d += step
         }
         return best
     }
@@ -743,6 +755,14 @@ object WaterslideSectorEdit {
         if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return clear()
         val ctx = SableClientEdit.resolve(level, anchor) ?: return clear()
+        if (SlideEditState.isEditingAttachment()) {
+            if (net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
+                    .anyDragging()) return
+            if (!dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode.isActive()) {
+                return clear()
+            }
+        }
+        SlideEditState.enterSlide()
         val anchorGlobal = ctx.globalPos
         val be = ctx.be
         if (WaterslideRadiusEdit.isDragging() || BezierHandleDragManager.isDraggingHandle()) return
@@ -866,6 +886,7 @@ object WaterslideSectorEdit {
         cameraRotation: Matrix4f
     ) {
         val level = mc.level ?: return
+        if (SlideEditState.isEditingAttachment()) return
         if (!SubLevelEditFocus.isActive(level)) return
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return
         val ctx = SableClientEdit.resolve(level, anchor) ?: return
