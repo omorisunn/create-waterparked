@@ -1,5 +1,4 @@
 package net.omori_sunny.create_waterparked.client.editor
-// Sector editor plus the shared wall-hit resolution (used by ghost placement too).
 
 import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
@@ -543,7 +542,6 @@ object WaterslideSectorEdit {
         return marchWallHit(level, eye, view, step)
     }
 
-    /** shared view-ray march onto the nearest tube wall (ghost/rivet/SA placement) */
     @JvmStatic
     @JvmOverloads
     fun marchWallHit(
@@ -757,6 +755,14 @@ object WaterslideSectorEdit {
         if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return clear()
         val ctx = SableClientEdit.resolve(level, anchor) ?: return clear()
+        if (SlideEditState.isEditingAttachment()) {
+            if (net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
+                    .anyDragging()) return
+            if (!dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode.isActive()) {
+                return clear()
+            }
+        }
+        SlideEditState.enterSlide()
         val anchorGlobal = ctx.globalPos
         val be = ctx.be
         if (WaterslideRadiusEdit.isDragging() || BezierHandleDragManager.isDraggingHandle()) return
@@ -880,6 +886,7 @@ object WaterslideSectorEdit {
         cameraRotation: Matrix4f
     ) {
         val level = mc.level ?: return
+        if (SlideEditState.isEditingAttachment()) return
         if (!SubLevelEditFocus.isActive(level)) return
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return
         val ctx = SableClientEdit.resolve(level, anchor) ?: return

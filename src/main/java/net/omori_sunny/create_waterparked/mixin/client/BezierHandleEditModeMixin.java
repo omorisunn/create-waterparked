@@ -1,5 +1,4 @@
 package net.omori_sunny.create_waterparked.mixin.client;
-// Mixin: wrench curve-editor gate for waterslide anchors.
 
 import dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode;
 import net.omori_sunny.create_waterparked.client.editor.WaterslideGhostPlacement;
@@ -30,11 +29,16 @@ public abstract class BezierHandleEditModeMixin {
         throw new AssertionError("mixin");
     }
 
-    // wrench + offhand block = ghost wall placement combo; per the interaction
-    // rules the wrench editor only runs with an EMPTY offhand
+    // wrench + offhand block combo: the wrench editor only runs with an empty offhand
     private static boolean waterslide$ghostComboOwnsClick(Player player) {
         return player != null && WaterslideGhostPlacement.INSTANCE
             .ghostPlacementStack(player) != null;
+    }
+
+    // only clicks aimed at an attachment are ours; slide clicks reach the slide editor
+    private static boolean waterslide$attachmentEditOwnsClick() {
+        return net.omori_sunny.create_waterparked.client.editor.SlideAttachmentEdit
+            .pickHitsAttachment();
     }
 
     private static boolean waterslide$supportOwnsClick(Player player, BlockPos anchorPos) {
@@ -69,6 +73,10 @@ public abstract class BezierHandleEditModeMixin {
         boolean enforceReach,
         CallbackInfo ci
     ) {
+        if (waterslide$attachmentEditOwnsClick()) {
+            ci.cancel();
+            return;
+        }
         if (!(level.getBlockEntity(anchorPos) instanceof WaterslideAnchorBlockEntity)) return;
         if (waterslide$ghostComboOwnsClick(player) || waterslide$supportOwnsClick(player, anchorPos)) {
             ci.cancel();
@@ -87,9 +95,33 @@ public abstract class BezierHandleEditModeMixin {
         BlockPos anchorPos,
         CallbackInfoReturnable<Boolean> cir
     ) {
+        if (waterslide$attachmentEditOwnsClick()) {
+            cir.setReturnValue(false);
+            return;
+        }
         if (!(level.getBlockEntity(anchorPos) instanceof WaterslideAnchorBlockEntity)) return;
         if (waterslide$ghostComboOwnsClick(player) || waterslide$supportOwnsClick(player, anchorPos)) {
             cir.setReturnValue(false);
+        }
+    }
+
+    // CCS's curve-interaction activation order is load-order dependent: the attachment pick must win
+    @Inject(
+        method = "tryActivateFromCurveInteract(Lnet/minecraft/world/level/Level;"
+            + "Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/core/BlockPos;)V",
+        at = @At("HEAD"),
+        cancellable = true
+    )
+    private static void waterslide$attachmentEditFirst(
+        Level level,
+        Player player,
+        BlockPos anchorPos,
+        CallbackInfo ci
+    ) {
+        if (net.omori_sunny.create_waterparked.client.editor.SlideAttachmentEdit
+            .pickHitsAttachment() ||
+            waterslide$attachmentEditOwnsClick()) {
+            ci.cancel();
         }
     }
 }

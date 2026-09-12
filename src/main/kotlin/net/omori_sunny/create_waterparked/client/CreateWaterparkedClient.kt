@@ -15,6 +15,7 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslideGhostPlacement
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRivetEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPreview
 import net.omori_sunny.create_waterparked.client.editor.WaterslideClipboardPaste
+import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentEdit
 import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentPlacement
 import net.omori_sunny.create_waterparked.client.editor.SlideClipboardCopy
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
@@ -84,6 +85,9 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onRightClickItem)
         NeoForge.EVENT_BUS.addListener(SlideAttachmentPlacement::onClientTick)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, true, SlideAttachmentEdit::onUseItemKey)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentEdit::onRightClickBlock)
+        NeoForge.EVENT_BUS.addListener(SlideAttachmentEdit::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslidePlacementPreview::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideHotbarSync::onClientTick)
         NeoForge.EVENT_BUS.addListener(WaterslideSectorEdit::onClientTick)
@@ -95,6 +99,7 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(SlideCameraHandler::onComputeCameraAngles)
         NeoForge.EVENT_BUS.addListener(SlideCameraHandler::onComputeFov)
         NeoForge.EVENT_BUS.addListener(::onRenderLevelStage)
+        NeoForge.EVENT_BUS.addListener(::onRenderGuiLayerPost)
         NeoForge.EVENT_BUS.addListener(::onClientLevelUnload)
 
         @Suppress("DEPRECATION")
@@ -112,6 +117,13 @@ object CreateWaterparkedClient {
         ) {
             event.enqueueWork { PonderIndex.addPlugin(WaterslidePonderPlugin()) }
         }
+        // attachment editor factories (key -> control point editor)
+        net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideAttachmentEditorRegistry
+            .registerFactory(
+                net.omori_sunny.create_waterparked.content.attachment.door.DoorStopDistanceEditor.EDITOR_KEY
+            ) { pos ->
+                net.omori_sunny.create_waterparked.content.attachment.door.DoorStopDistanceEditor(pos)
+            }
         SimpleBlockEntityVisualizer.builder(ModBlockEntities.WATERSLIDE_ANCHOR_BE)
             .factory { ctx, be, pt -> WaterslideTubeVisual(ctx, be, pt) }
             .neverSkipVanillaRender()
@@ -206,13 +218,28 @@ object CreateWaterparkedClient {
                         mc, event.poseStack, buffers,
                         camera.position, event.modelViewMatrix
                     )
+                    net.omori_sunny.create_waterparked.client.editor.controlpoint
+                        .SlideControlPointEditor.renderAll(
+                            mc, event.poseStack, buffers, camera.position, event.modelViewMatrix
+                        )
                     buffers.endBatch(WaterslideEditorRenderTypes.COLORED_QUADS)
+                    WaterslideEditorRenderTypes.endBoundaryHandleBillboardBatches(buffers)
+                    buffers.endBatch(WaterslideEditorRenderTypes.SEE_THROUGH_LINES)
                 }
             else -> {}
         }
     }
 
     private var lastDebugState: Boolean? = null
+
+    // SA edit info bar: drawn on the same HUD row CCS uses for the slide
+    // status, so both editors report at the same height
+    private fun onRenderGuiLayerPost(event: net.neoforged.neoforge.client.event.RenderGuiLayerEvent.Post) {
+        if (event.getName() != net.neoforged.neoforge.client.gui.VanillaGuiLayers.SELECTED_ITEM_NAME) return
+        val mc = Minecraft.getInstance()
+        net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
+            .renderStatusHud(mc, event.getGuiGraphics())
+    }
 
     private fun onClientTick(event: ClientTickEvent.Post) {
         val mc = Minecraft.getInstance()
@@ -221,6 +248,11 @@ object CreateWaterparkedClient {
         net.omori_sunny.create_waterparked.client.editor.SubLevelEditFocus.tick(mc)
         WaterSlideSoundManager.tick()
         WaterslideSplashSpawner.tickStanding(mc)
+        // SA control point editors tick and render on our own hooks - CCS's
+        // overlay method returns early once we release the anchor, so the UI
+        // must not depend on that injection
+        net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
+            .tickAll(mc)
         val debug = ModClientConfig.waterSimDebug()
         if (mc.connection != null && lastDebugState != debug) {
             lastDebugState = debug

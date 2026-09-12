@@ -17,16 +17,20 @@ import java.util.HashMap
 import java.util.OptionalDouble
 import kotlin.math.abs
 
-// editor render types
 object WaterslideEditorRenderTypes {
 
-    // reserved boundary textures
     val SECTOR_BOUNDARY_HANDLE_DEFAULT: ResourceLocation =
         ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "textures/ui/sector_boundary_handle.png")
     val SECTOR_BOUNDARY_HANDLE_HOVER: ResourceLocation =
         ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "textures/ui/sector_boundary_handle_hover.png")
     val SECTOR_BOUNDARY_HANDLE_DRAGGING: ResourceLocation =
         ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "textures/ui/sector_boundary_handle_drag.png")
+    val ATTACHMENT_HANDLE_DEFAULT: ResourceLocation =
+        ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "textures/ui/attachment_handle.png")
+    val ATTACHMENT_HANDLE_HOVER: ResourceLocation =
+        ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "textures/ui/attachment_handle_hover.png")
+    val ATTACHMENT_HANDLE_DRAGGING: ResourceLocation =
+        ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "textures/ui/attachment_handle_drag.png")
 
     private val boundaryBillboards = HashMap<ResourceLocation, RenderType>()
 
@@ -63,7 +67,6 @@ object WaterslideEditorRenderTypes {
             .createCompositeState(false)
     )
 
-    // texture billboard
     @JvmStatic
     fun boundaryHandleBillboard(texture: ResourceLocation): RenderType =
         boundaryBillboards.getOrPut(texture) {
@@ -88,12 +91,11 @@ object WaterslideEditorRenderTypes {
 
     @JvmStatic
     fun endBoundaryHandleBillboardBatches(bufferSource: MultiBufferSource.BufferSource) {
-        bufferSource.endBatch(boundaryHandleBillboard(SECTOR_BOUNDARY_HANDLE_DEFAULT))
-        bufferSource.endBatch(boundaryHandleBillboard(SECTOR_BOUNDARY_HANDLE_HOVER))
-        bufferSource.endBatch(boundaryHandleBillboard(SECTOR_BOUNDARY_HANDLE_DRAGGING))
+        for (rt in boundaryBillboards.values.toList()) {
+            bufferSource.endBatch(rt)
+        }
     }
 
-    // eye-space quad
     @JvmStatic
     fun billboardQuad(
         poseStack: PoseStack,
@@ -116,7 +118,6 @@ object WaterslideEditorRenderTypes {
         consumer.addVertex(mat, eye.x - h, eye.y + h, eye.z).setColor(r, g, b, a)
     }
 
-    // camera strip
     @JvmStatic
     fun billboardStrip(
         poseStack: PoseStack,
@@ -163,7 +164,6 @@ object WaterslideEditorRenderTypes {
         consumer.addVertex(mat, eTipL.x, eTipL.y, eTipL.z).setColor(r, g, b, a)
     }
 
-    // textured quad
     @JvmStatic
     fun billboardTexturedQuad(
         poseStack: PoseStack,
@@ -182,7 +182,6 @@ object WaterslideEditorRenderTypes {
         consumer.addVertex(mat, eye.x - h, eye.y + h, eye.z).setUv(0f, 0f).setColor(1f, 1f, 1f, 1f)
     }
 
-    // oriented textured quad
     @JvmStatic
     fun billboardOrientedTexturedQuad(
         poseStack: PoseStack,
@@ -224,8 +223,32 @@ object WaterslideEditorRenderTypes {
         consumer.addVertex(mat, eTl.x, eTl.y, eTl.z).setUv(0f, 0f).setColor(1f, 1f, 1f, 1f)
     }
 
-    // world to eye
     @JvmStatic
+    fun worldLine(
+        poseStack: PoseStack,
+        consumer: VertexConsumer,
+        cameraPos: Vec3,
+        cameraRotation: Matrix4f,
+        a: Vec3,
+        b: Vec3,
+        halfWidth: Float,
+        r: Float, g: Float, bl: Float, a1: Float
+    ) {
+        val len = a.distanceTo(b)
+        if (len < 1.0E-6) return
+        val pieces = kotlin.math.ceil(len / 0.5).toInt().coerceAtLeast(1)
+        for (i in 0 until pieces) {
+            val t0 = i.toDouble() / pieces
+            val t1 = (i + 1).toDouble() / pieces
+            val p0 = a.add(b.subtract(a).scale(t0))
+            val p1 = a.add(b.subtract(a).scale(t1))
+            billboardStrip(
+                poseStack, consumer, cameraPos, cameraRotation,
+                p0, p1, halfWidth, r, g, bl, a1
+            )
+        }
+    }
+
     fun worldToEye(cameraPos: Vec3, cameraRotation: Matrix4f, world: Vec3): Vector3f {
         val v = Vector3f(
             (world.x - cameraPos.x).toFloat(),
@@ -236,7 +259,6 @@ object WaterslideEditorRenderTypes {
         return v
     }
 
-    // eye line
     @JvmStatic
     fun billboardLine(
         poseStack: PoseStack,

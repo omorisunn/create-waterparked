@@ -63,5 +63,6 @@
   "block.create_waterparked.mechanical_door_attachment": "滑梯机械门",
   "create_waterparked.attachment.wrong_site": "该附件无法安装在此处",
   "create_waterparked.attachment.placed": "滑梯附件已放置",
-  "create_waterparked.attachment.selected": "位置已选择——在滑梯附近放置绑定方块"
+  "create_waterparked.attachment.selected": "位置已选择——在滑梯附近放置绑定方块",
+  "create_waterparked.track.attachment_edit_readout": "位置：%s | 停止距离：%s-%s"
 }

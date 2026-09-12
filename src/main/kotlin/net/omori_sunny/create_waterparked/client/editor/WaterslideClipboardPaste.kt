@@ -55,7 +55,7 @@ object WaterslideClipboardPaste {
             val lines = com.simibubi.create.content.equipment.clipboard.ClipboardEntry.readAll(content)
                 .flatMap { it.toList() }
             val first = lines.firstOrNull()?.text?.getString()?.take(48) ?: "<empty>"
-            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
+            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.debug(
                 "[SlidePaste] enter lines={} first=\"{}\" glint={}",
                 lines.size, first, stack.get(DataComponents.ENCHANTMENT_GLINT_OVERRIDE) != null
             )

@@ -16,7 +16,10 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentType
 class MechanicalDoorAttachment(
     type: SlideAttachmentType,
     entry: SlideAttachmentEntry
-) : SlideAttachment(type, entry) {
+) : SlideAttachment(type, entry),
+    net.omori_sunny.create_waterparked.content.attachment.IHaveSlideAttachmentEditor {
+
+    override fun slideEditorKey(): String? = DoorStopDistanceEditor.EDITOR_KEY
 
     companion object {
         private const val TAG_OPEN = "DoorOpenF"
@@ -71,11 +74,19 @@ class MechanicalDoorAttachment(
 
     override fun speedScaleAt(distance: Double): Double? {
         if (open >= PASS_THRESHOLD) return null
-        // hard stop zone: inside 1.2 blocks the demand is EXACTLY zero - a
-        // positive ramp here would let riders creep through the closed door
-        if (distance <= 1.2) return 0.0
-        val x = ((distance - 1.2) / (5.0 - 1.2)).coerceIn(0.0, 1.0)
+        val stop = currentStopDistance().toDouble()
+        // hard stop zone: inside the stop distance the demand is EXACTLY zero
+        // - a positive ramp here would let riders creep through the door
+        if (distance <= stop) return 0.0
+        val x = ((distance - stop) / (5.0 - stop)).coerceIn(0.0, 1.0)
         // OutCubic braking: strong deceleration first, gentle settle at the stop
         return x * x * x
     }
+
+    /** per-side stop distance; the manager sets which side the rider is on */
+    var riderSide: Int = 0
+
+    private fun currentStopDistance(): Float =
+        if (riderSide < 0) DoorStopDistanceEditor.stopL(data)
+        else DoorStopDistanceEditor.stopR(data)
 }

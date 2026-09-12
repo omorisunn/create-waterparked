@@ -9,13 +9,10 @@ import net.minecraft.world.phys.Vec3
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
 import java.util.concurrent.ConcurrentHashMap
 
-// server-side index of all loaded SAB block entities, keyed by the anchor
-// their attachment rides on; rebuilt lazily from BE onLoad/remove events
-// (SlideAnchorIndex pattern). Detectors and render queries walk this index.
+// server-side index of loaded attachments, keyed by the anchor they ride on
 object SlideAttachmentManager {
 
     private val byAnchor = ConcurrentHashMap<Long, MutableSet<SlideAttachmentBlockEntity>>()
-    // per-tick distance-aware speed demands keyed by rider uuid
     private val pathDemands = ConcurrentHashMap<java.util.UUID, Double>()
     private val all = ConcurrentHashMap.newKeySet<SlideAttachmentBlockEntity>()
 
@@ -36,11 +33,7 @@ object SlideAttachmentManager {
     fun forAnchor(anchorPos: BlockPos): Collection<SlideAttachmentBlockEntity> =
         byAnchor[anchorPos.asLong()] ?: emptyList()
 
-    // ---- detector + speed control entry points ----
-
-    /** aggregated speed scale a slide session should run at for this rider */
     fun sessionSpeedScale(rider: Entity): Double {
-        // consume the demand recorded by this tick's path detectors
         val demanded = pathDemands.remove(rider.uuid) ?: return if (all.isEmpty()) 1.0 else 1.0
         return demanded.coerceIn(0.0, 1.0)
         var scale = 1.0
@@ -53,11 +46,7 @@ object SlideAttachmentManager {
         return scale
     }
 
-    /**
-     * per-tick session detector: proximity and path triggers fire while the
-     * rider is anywhere near an attachment. worldPos/worldVel = the rider's
-     * live session position/velocity.
-     */
+    // worldPos and worldVel are the live session values, not the entity's
     fun onSessionTick(level: ServerLevel, rider: Entity, worldPos: Vec3, worldVel: Vec3) {
         if (all.isEmpty()) return
         for (be in all.toList()) {
@@ -67,11 +56,9 @@ object SlideAttachmentManager {
                 is SlideAttachmentTriggerSpec.Path ->
                     pathCheck(level, be, rider, worldPos, worldVel, trigger)
                 is SlideAttachmentTriggerSpec.Proximity -> {
-                    // proximity scans living entities around the attachment
                     proximityCheck(level, be, trigger)
                 }
                 SlideAttachmentTriggerSpec.Custom -> {
-                    // custom attachments watch on their own from serverTick
                 }
             }
         }
@@ -111,7 +98,6 @@ object SlideAttachmentManager {
         val curve = resolved.curve
         val ctx = resolved.context
 
-        // project the rider onto the attachment's curve (coarse nearest-t)
         val steps = 48
         var bestT = -1.0
         var bestDist = Double.MAX_VALUE
@@ -126,22 +112,20 @@ object SlideAttachmentManager {
         }
         if (bestDist > 16.0 * 16.0) return
 
-        // arc length between rider and attachment along the curve
         val arc = arcLengthBetween(curve, bestT, entry.t.toDouble())
         if (arc > trigger.distanceBlocks) return
 
-        // no direction gate: the velocity sign destabilises while braking
-        // (near-zero speed flips the dot product) and made demands oscillate.
-        // A closed door brakes riders from either side purely by distance.
-
         be.attachment()?.onTrigger(level, be, rider)
-        // record the distance-aware braking demand for this rider
+        be.attachment()?.let { att ->
+            if (att is net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorAttachment) {
+                att.riderSide = if (bestT < entry.t) -1 else 1
+            }
+        }
         be.attachment()?.speedScaleAt(arc)?.let { scale ->
             pathDemands.merge(rider.uuid, scale.coerceIn(0.0, 1.0)) { a, b -> kotlin.math.min(a, b) }
         }
     }
 
-    /** sampled arc length between two curve parameters */
     private fun arcLengthBetween(
         curve: com.simibubi.create.content.trains.track.BezierConnection,
         t0: Double,
@@ -161,7 +145,7 @@ object SlideAttachmentManager {
         return sum
     }
 
-    /** per-tick validation pass host: drops SABs whose curve disappeared */
+    // per-tick validation pass: attachments whose curve is gone are dropped
     fun onServerTick(event: net.neoforged.neoforge.event.tick.ServerTickEvent.Post) {
         if (all.isEmpty()) return
         for (level in event.server.allLevels) {
@@ -177,7 +161,6 @@ object SlideAttachmentManager {
                 net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
             val alive = anchor != null && anchor.anchorPeerCurvesView.containsKey(entry.curveB.immutable())
             if (!alive) {
-                // the slide is gone: break the binding block naturally
                 level.destroyBlock(be.blockPos, true)
             }
         }

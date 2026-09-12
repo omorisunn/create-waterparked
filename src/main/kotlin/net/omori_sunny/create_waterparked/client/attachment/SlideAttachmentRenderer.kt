@@ -54,6 +54,25 @@ object SlideAttachmentRenderer {
             .createCompositeState(true)
     )
 
+    // translucent variant used while the attachment is being edited
+    private val ATTACH_TRI_TRANSLUCENT: RenderType = RenderType.create(
+        "create_waterparked:attachment_tri_translucent",
+        com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK,
+        com.mojang.blaze3d.vertex.VertexFormat.Mode.TRIANGLES,
+        131072,
+        RenderType.CompositeState.builder()
+            // mirror vanilla RenderType.translucent() exactly: the translucent
+            // output target and a colour-only write mask, otherwise the depth
+            // written by the front faces hides the blending behind them
+            .setShaderState(net.minecraft.client.renderer.RenderStateShard.RENDERTYPE_TRANSLUCENT_SHADER)
+            .setTextureState(net.minecraft.client.renderer.RenderStateShard.BLOCK_SHEET_MIPPED)
+            .setTransparencyState(net.minecraft.client.renderer.RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+            .setOutputState(net.minecraft.client.renderer.RenderStateShard.TRANSLUCENT_TARGET)
+            .setWriteMaskState(net.minecraft.client.renderer.RenderStateShard.COLOR_WRITE)
+            .setLightmapState(net.minecraft.client.renderer.RenderStateShard.LIGHTMAP)
+            .createCompositeState(true)
+    )
+
     /** draw all attachments; origin = world position to subtract from the pose */
     fun renderAll(poseStack: PoseStack, buffers: MultiBufferSource, origin: Vec3, partialTick: Float) {
         for (be in SlideAttachmentClientIndex.all()) {
@@ -86,6 +105,20 @@ object SlideAttachmentRenderer {
             null
         }
 
+        // translucency derives from the same editor set that draws the control
+        // points, so a visible handle implies a translucent model
+        val editing = net.omori_sunny.create_waterparked.client.editor.controlpoint
+            .SlideControlPointEditor.isEditingAt(be.blockPos) ||
+            net.omori_sunny.create_waterparked.client.editor.SlideAttachmentEdit.isEditing(be)
+        val alpha = if (editing) (0.35f * 255).toInt() else 255
+        editAlpha = alpha
+        // edge-triggered: a sampled probe can miss a flip-flop, this cannot
+        val prevEdit = lastEditState.put(be.blockPos, editing)
+        if (prevEdit != null && prevEdit != editing) {
+            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
+                "[SADebug] translucency {}->{} for {}", prevEdit, editing, be.blockPos
+            )
+        }
         poseStack.pushPose()
         poseStack.translate(-origin.x, -origin.y, -origin.z)
         // collect raw part polygons, then run the ghost-block CSG against the
@@ -113,6 +146,7 @@ object SlideAttachmentRenderer {
                     .smoothedOpen(be.blockPos, entry.data.getFloat("DoorOpenF"))).append('|')
                 .append(ctx.radius).append('|').append(ctx.wallThickness).append('|')
                 .append(be.attachmentMaterial).append('|').append(polys.size)
+                .append('|').append(editing)
         }
         val cached = clipCaches[be.blockPos]
         if (cached != null && cached.signature == sig) {
@@ -134,10 +168,10 @@ object SlideAttachmentRenderer {
         if (be.isRemoved) clipCaches.remove(be.blockPos)
         // manually generated parts bypass the CSG entirely
         if (manualQuads.isNotEmpty()) {
-            val consumer2 = buffers.getBuffer(ATTACH_TRI_CUTOUT)
+            val consumer2 = buffers.getBuffer(if (editing) ATTACH_TRI_TRANSLUCENT else ATTACH_TRI_CUTOUT)
             for (q in manualQuads) emitManualQuad(q, ctx, sprite, level, poseStack.last(), consumer2)
         }
-        val consumer = buffers.getBuffer(ATTACH_TRI_CUTOUT)
+        val consumer = buffers.getBuffer(if (editing) ATTACH_TRI_TRANSLUCENT else ATTACH_TRI_CUTOUT)
         for (poly in clipped) {
             val vs = poly.vertices
             if (vs.size < 3) continue
@@ -148,6 +182,7 @@ object SlideAttachmentRenderer {
         poseStack.popPose()
         if (buffers is MultiBufferSource.BufferSource) {
             buffers.endBatch(ATTACH_TRI_CUTOUT)
+            buffers.endBatch(ATTACH_TRI_TRANSLUCENT)
         }
     }
 
@@ -217,6 +252,15 @@ object SlideAttachmentRenderer {
     }
 
 
+    // edit translucency shared by all emit paths
+    private var editAlpha: Int = 255
+
+    // last editing state per attachment, for edge-triggered diagnostics
+    private val lastEditState = HashMap<BlockPos, Boolean>()
+
+    private fun withEditAlpha(argb: Int): Int =
+        if (editAlpha >= 255) argb else (argb and 0x00FFFFFF) or (editAlpha shl 24)
+
     /** emit a manually built local-space quad with material UVs */
     private fun emitManualQuad(
         q: SlideAttachmentModelProvider.Quad,
@@ -248,7 +292,7 @@ object SlideAttachmentRenderer {
         for (i in intArrayOf(0, 1, 2, 0, 2, 3)) {
             val (pos, u, v) = corners[i]
             consumer.addVertex(pose, pos.x.toFloat(), pos.y.toFloat(), pos.z.toFloat())
-                .setColor(255, 255, 255, 255)
+                .setColor(255, 255, 255, editAlpha)
                 .setUv(u, v)
                 .setOverlay(OverlayTexture.NO_OVERLAY)
                 .setLight(light)
@@ -263,11 +307,14 @@ object SlideAttachmentRenderer {
         b: net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Vertex,
         c: net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Vertex
     ) {
-        consumer.addVertex(pose, a.x, a.y, a.z).setColor(a.color).setUv(a.u, a.v)
+        // CSG output carries vertex colours from the source polygons (alpha
+        // 255) - the edit translucency must be applied here too, otherwise
+        // clipped parts (the door panels) stay opaque
+        consumer.addVertex(pose, a.x, a.y, a.z).setColor(withEditAlpha(a.color)).setUv(a.u, a.v)
             .setOverlay(a.overlay).setLight(a.light).setNormal(pose, a.nx, a.ny, a.nz)
-        consumer.addVertex(pose, b.x, b.y, b.z).setColor(b.color).setUv(b.u, b.v)
+        consumer.addVertex(pose, b.x, b.y, b.z).setColor(withEditAlpha(b.color)).setUv(b.u, b.v)
             .setOverlay(b.overlay).setLight(b.light).setNormal(pose, b.nx, b.ny, b.nz)
-        consumer.addVertex(pose, c.x, c.y, c.z).setColor(c.color).setUv(c.u, c.v)
+        consumer.addVertex(pose, c.x, c.y, c.z).setColor(withEditAlpha(c.color)).setUv(c.u, c.v)
             .setOverlay(c.overlay).setLight(c.light).setNormal(pose, c.nx, c.ny, c.nz)
     }
 
@@ -426,7 +473,7 @@ object SlideAttachmentRenderer {
         }
         fun add(w: Vec3, u: Float, v: Float) {
             consumer.addVertex(pose, w.x.toFloat(), w.y.toFloat(), w.z.toFloat())
-                .setColor(255, 255, 255, 255)
+                .setColor(255, 255, 255, editAlpha)
                 .setUv(u, v)
                 .setOverlay(OverlayTexture.NO_OVERLAY)
                 .setLight(light)

@@ -3,17 +3,13 @@ package net.omori_sunny.create_waterparked.content.attachment
 import net.minecraft.core.BlockPos
 import net.minecraft.nbt.CompoundTag
 
-// serializable attachment placement: which curve (anchor pair), where on the
-// tube (site + t + wall angle) and the subclass's own data. The position is
-// never resolved to world coordinates on disk - renderers and detectors
-// re-derive it from the live curve every frame/tick, so radius and curve
-// edits move the attachment along automatically.
+// stored per curve and re-derived live, so curve edits move it along
 class SlideAttachmentEntry(
     val typeId: String,
     val curveA: BlockPos,
     val curveB: BlockPos,
     val site: SlideAttachmentSite,
-    val t: Float,
+    var t: Float,
     val angle: Float,
     val data: CompoundTag = CompoundTag()
 ) {
@@ -46,8 +42,7 @@ class SlideAttachmentEntry(
     }
 }
 
-// the "selected slide position" stored on the SAB item between the two
-// placement phases; persisted so the glint item survives relogging
+// held on the item between the two placement phases and persisted across relog
 data class SlideAttachmentPos(
     val curveA: BlockPos,
     val curveB: BlockPos,
