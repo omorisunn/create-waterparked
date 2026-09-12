@@ -10,6 +10,7 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentType
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.content.registry.ModBlocks
 import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
+import net.omori_sunny.create_waterparked.content.registry.ModDisplaySources
 import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
 import net.omori_sunny.create_waterparked.content.registry.ModItems
 import net.omori_sunny.create_waterparked.content.registry.ModParticles
@@ -49,6 +50,7 @@ object CreateWaterparked {
         ModBlocks.REGISTRY.register(MOD_BUS)
         ModBlockEntities.REGISTRY.register(MOD_BUS)
         ModItems.REGISTRY.register(MOD_BUS)
+        ModDisplaySources.REGISTRY.register(MOD_BUS)
         net.omori_sunny.create_waterparked.content.attachment.ModSlideAttachments.init()
         ModEntityTypes.REGISTRY.register(MOD_BUS)
         ModRecipeSerializers.REGISTRY.register(MOD_BUS)
@@ -61,9 +63,6 @@ object CreateWaterparked {
         }
 
         MOD_BUS.addListener(ModPayloads::register)
-        // onCommonSetup and onConfigReloaded are already registered through the
-        // @EventBusSubscriber / @SubscribeEvent pair on this object; adding the
-        // same methods here as well made both run twice on every startup.
         MOD_BUS.addListener(CreateWaterparkedDataGen::gatherData)
 
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onServerTick)
@@ -110,12 +109,12 @@ object CreateWaterparked {
     fun onCommonSetup(event: FMLCommonSetupEvent) {
         LOGGER.info("Create Waterparked loaded.")
         registerStressValues()
+        ModDisplaySources.bindToBlocks()
         WaterslideContraptionIntegration.register()
         WaterparkedCommands.register()
     }
 
-    // Create's stress registry is a thread-safe SimpleRegistry keyed by Block;
-    // it wants the base impact at 1 RPM, so fill it once the blocks exist.
+    // impact is per rpm; run once the blocks are registered
     private fun registerStressValues() {
         for (type in SlideAttachmentTypes.all()) {
             if (type.stressImpact <= 0.0) continue
@@ -124,13 +123,12 @@ object CreateWaterparked {
                 block,
                 java.util.function.DoubleSupplier { type.stressImpact }
             )
-            LOGGER.info("Stress impact {} x RPM for {}", type.stressImpact, type.id)
+            LOGGER.debug("Stress impact {} x RPM for {}", type.stressImpact, type.id)
         }
     }
 
     @SubscribeEvent
     fun onConfigReloaded(event: ModConfigEvent.Reloading) {
-        // rebuild tube visuals so client rendering options apply immediately
         if (event.config.spec === ModClientConfig.SPEC) {
             WaterslideTubeMesh.clearModels()
             WaterslideTubeVisual.refreshAll()

@@ -76,5 +76,9 @@
   "create_waterparked.door.mode_slot": "开启方式",
   "create_waterparked.door.mode.slide": "左右分开",
   "create_waterparked.door.mode.lift": "上下分开",
-  "create_waterparked.door.mode.aperture": "相机光圈"
+  "create_waterparked.door.mode.aperture": "相机光圈",
+  "create_waterparked.display_source.mechanical_door": "机械门开启比例",
+  "create_waterparked.display_source.mechanical_door.display": "显示格式",
+  "create_waterparked.display_source.mechanical_door.percent": "百分比",
+  "create_waterparked.display_source.mechanical_door.progress_bar": "进度条"
 }

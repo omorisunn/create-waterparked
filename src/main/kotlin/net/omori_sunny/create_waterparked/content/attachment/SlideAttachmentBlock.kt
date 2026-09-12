@@ -20,11 +20,7 @@ import net.minecraft.world.phys.shapes.CollisionContext
 import net.minecraft.world.phys.shapes.Shapes
 import net.minecraft.world.phys.shapes.VoxelShape
 
-// binding block of a slide attachment (SAB): a kinetic block whose BE carries
-// the attachment's slide position and runs its server logic. The pillar axis
-// accepts a Create shaft - attachment types decide what rotation means (the
-// mechanical door opens while driven and closes when the shaft stops). Right
-// click with a block item sets the attachment material, support beam style.
+// what rotation means is up to the attachment type
 class SlideAttachmentBlock(
     properties: Properties,
     private val typeRef: () -> SlideAttachmentType
@@ -48,8 +44,6 @@ class SlideAttachmentBlock(
 
     override fun getRotationAxis(state: BlockState): Direction.Axis = state.getValue(AXIS)
 
-    // ---- material selection, support beam/bracket style ----
-
     override fun useItemOn(
         stack: ItemStack,
         state: BlockState,
@@ -61,12 +55,7 @@ class SlideAttachmentBlock(
     ): ItemInteractionResult {
         val be = level.getBlockEntity(pos) as? SlideAttachmentBlockEntity
             ?: return super.useItemOn(stack, state, level, pos, player, hand, hitResult)
-        // kinetic items (shafts, cogwheels, ...) must still PLACE onto the
-        // hub: only plain block items act as material skins, sneak bypasses
-        if (!player.isShiftKeyDown && isKineticItem(stack)) {
-            return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION
-        }
-        if (stack.item is BlockItem) {
+        if (!player.isShiftKeyDown && !isPlaceableInsteadOfSkin(stack)) {
             if (level.isClientSide) return ItemInteractionResult.SUCCESS
             val blockItem = stack.item as BlockItem
             val material = blockItem.block.defaultBlockState()
@@ -82,6 +71,15 @@ class SlideAttachmentBlock(
         return super.useItemOn(stack, state, level, pos, player, hand, hitResult)
     }
 
+    private fun isPlaceableInsteadOfSkin(stack: ItemStack): Boolean {
+        val blockItem = stack.item as? BlockItem ?: return true
+        if (isKineticItem(stack)) return true
+        if (com.simibubi.create.AllBlocks.DISPLAY_LINK.isIn(stack)) return true
+        val shape = blockItem.block.defaultBlockState()
+            .getShape(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO)
+        return !net.minecraft.world.level.block.Block.isShapeFullBlock(shape)
+    }
+
     private fun isKineticItem(stack: ItemStack): Boolean =
         com.simibubi.create.AllBlocks.SHAFT.isIn(stack) ||
             com.simibubi.create.AllBlocks.COGWHEEL.isIn(stack) ||
@@ -95,7 +93,6 @@ class SlideAttachmentBlock(
         player: Player,
         hitResult: BlockHitResult
     ): InteractionResult {
-        // wrench on the hub: reset the material, refund the consumed item
         val be = level.getBlockEntity(pos) as? SlideAttachmentBlockEntity ?: return InteractionResult.PASS
         if (!com.simibubi.create.AllItems.WRENCH.isIn(player.mainHandItem)) return InteractionResult.PASS
         if (level.isClientSide) return InteractionResult.SUCCESS
@@ -106,12 +103,9 @@ class SlideAttachmentBlock(
         return InteractionResult.SUCCESS
     }
 
-    // the attachment visual lives at the slide; the block renders its own model
     override fun getRenderShape(state: BlockState): RenderShape = RenderShape.MODEL
 
-    // the visible model is only the 3..13 hub, so the pick ray and the block
-    // outline stop on the model instead of on the full cube. Collisions keep the
-    // whole block, so nothing about movement or placement changes
+    // pick and outline use the hub shape while collisions stay a full block
     override fun getShape(
         state: BlockState,
         level: BlockGetter,
@@ -127,8 +121,6 @@ class SlideAttachmentBlock(
     ): VoxelShape = Shapes.block()
 
     companion object {
-        // hub cube of the block model, in voxels; the block shape and the mode slot
-        // anchor both derive from it so the two can never drift apart
         const val HUB_MIN_VOXEL = 3.0
         const val HUB_MAX_VOXEL = 13.0
 
