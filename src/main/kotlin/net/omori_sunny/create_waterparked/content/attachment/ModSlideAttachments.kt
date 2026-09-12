@@ -14,6 +14,9 @@ object ModSlideAttachments {
             provider(::MechanicalDoorProvider)
             trigger(SlideAttachmentTriggerSpec.Path(distanceBlocks = 5.0))
             maxHostDistance(16.0)
+            // Create stress budget unit is SU per RPM; the kinetic network
+            // multiplies by |speed| itself, so 2.0 == "2 x RPM"
+            stressImpact(2.0)
         }
     }
 

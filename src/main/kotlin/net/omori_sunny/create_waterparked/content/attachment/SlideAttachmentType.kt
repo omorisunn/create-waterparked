@@ -26,6 +26,7 @@ class SlideAttachmentType(
     val providerFactory: () -> SlideAttachmentModelProvider,
     val trigger: SlideAttachmentTriggerSpec,
     val maxHostDistance: Double,
+    val stressImpact: Double,
     val block: DeferredBlock<out SlideAttachmentBlock>,
     val blockEntityType: DeferredHolder<BlockEntityType<*>, BlockEntityType<SlideAttachmentBlockEntity>>,
     val item: DeferredItem<out SlideAttachmentBlockItem>
@@ -58,6 +59,7 @@ class SlideAttachmentSpec internal constructor(
     internal var providerFactory: (() -> SlideAttachmentModelProvider)? = null
     internal var trigger: SlideAttachmentTriggerSpec = SlideAttachmentTriggerSpec.Custom
     internal var maxHostDistance: Double = 16.0
+    internal var stressImpact: Double = 0.0
     internal var blockProperties: () -> Properties = {
         Properties.of().mapColor(MapColor.METAL).strength(1.2f).sound(SoundType.METAL).noOcclusion()
     }
@@ -80,6 +82,12 @@ class SlideAttachmentSpec internal constructor(
     /** max distance between the placed SAB block and its slide wall point */
     fun maxHostDistance(blocks: Double): SlideAttachmentSpec {
         maxHostDistance = blocks
+        return this
+    }
+
+    /** stress impact in SU per RPM; Create renders this as "N x RPM" */
+    fun stressImpact(suPerRpm: Double): SlideAttachmentSpec {
+        stressImpact = suPerRpm
         return this
     }
 
@@ -123,6 +131,7 @@ object SlideAttachmentRegistry {
             builder.providerFactory ?: error("provider() missing for $name"),
             builder.trigger,
             builder.maxHostDistance,
+            builder.stressImpact,
             block,
             blockEntityType,
             item

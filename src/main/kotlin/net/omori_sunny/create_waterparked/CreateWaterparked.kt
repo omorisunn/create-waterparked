@@ -1,10 +1,12 @@
 package net.omori_sunny.create_waterparked
 
+import com.simibubi.create.api.stress.BlockStressValues
 import net.omori_sunny.create_waterparked.client.CreateWaterparkedClient
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.config.ModConfig
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.content.registry.ModBlocks
 import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
@@ -107,8 +109,23 @@ object CreateWaterparked {
     @SubscribeEvent
     fun onCommonSetup(event: FMLCommonSetupEvent) {
         LOGGER.info("Create Waterparked loaded.")
+        registerStressValues()
         WaterslideContraptionIntegration.register()
         WaterparkedCommands.register()
+    }
+
+    // Create's stress registry is a plain, non-frozen map keyed by Block and
+    // expects the base impact per RPM; it must be filled once the blocks exist.
+    private fun registerStressValues() {
+        for (type in SlideAttachmentTypes.all()) {
+            if (type.stressImpact <= 0.0) continue
+            val block = type.block.get()
+            BlockStressValues.IMPACTS.register(
+                block,
+                java.util.function.DoubleSupplier { type.stressImpact }
+            )
+            LOGGER.info("Stress impact {} x RPM for {}", type.stressImpact, type.id)
+        }
     }
 
     @SubscribeEvent
