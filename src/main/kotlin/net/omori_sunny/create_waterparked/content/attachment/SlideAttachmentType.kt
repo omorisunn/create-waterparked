@@ -1,5 +1,6 @@
 package net.omori_sunny.create_waterparked.content.attachment
 
+import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour
 import net.minecraft.core.registries.Registries
 import net.minecraft.resources.ResourceLocation
 import net.minecraft.world.item.Item
@@ -16,9 +17,7 @@ import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.content.registry.ModBlocks
 import net.omori_sunny.create_waterparked.content.registry.ModItems
 
-// registered attachment kind: factories + detector config + the wired
-// binding block (SAB). Types live in a plain map keyed by id - both sides run
-// the same registration code, so no vanilla registry is needed.
+// kept in a plain id-keyed map, not a vanilla registry: both sides register the same way
 class SlideAttachmentType(
     val id: ResourceLocation,
     val site: SlideAttachmentSite,
@@ -27,6 +26,7 @@ class SlideAttachmentType(
     val trigger: SlideAttachmentTriggerSpec,
     val maxHostDistance: Double,
     val stressImpact: Double,
+    val extraBehaviours: ((SlideAttachmentBlockEntity) -> List<BlockEntityBehaviour>)?,
     val block: DeferredBlock<out SlideAttachmentBlock>,
     val blockEntityType: DeferredHolder<BlockEntityType<*>, BlockEntityType<SlideAttachmentBlockEntity>>,
     val item: DeferredItem<out SlideAttachmentBlockItem>
@@ -49,8 +49,6 @@ object SlideAttachmentTypes {
     }
 }
 
-// builder DSL: one chain registers the attachment type together with its
-// binding block, block entity and item (Registrate feel, no extra deps)
 class SlideAttachmentSpec internal constructor(
     private val name: String,
     var site: SlideAttachmentSite
@@ -60,6 +58,7 @@ class SlideAttachmentSpec internal constructor(
     internal var trigger: SlideAttachmentTriggerSpec = SlideAttachmentTriggerSpec.Custom
     internal var maxHostDistance: Double = 16.0
     internal var stressImpact: Double = 0.0
+    internal var extraBehaviours: ((SlideAttachmentBlockEntity) -> List<BlockEntityBehaviour>)? = null
     internal var blockProperties: () -> Properties = {
         Properties.of().mapColor(MapColor.METAL).strength(1.2f).sound(SoundType.METAL).noOcclusion()
     }
@@ -79,15 +78,20 @@ class SlideAttachmentSpec internal constructor(
         return this
     }
 
-    /** max distance between the placed SAB block and its slide wall point */
+    // distance in blocks from the binding block to its slide wall point
     fun maxHostDistance(blocks: Double): SlideAttachmentSpec {
         maxHostDistance = blocks
         return this
     }
 
-    /** base impact in SU per RPM; the item tooltip shows "N x RPM", goggles show impact x |speed| */
+    // stress units per rpm; the shown impact is multiplied by speed
     fun stressImpact(suPerRpm: Double): SlideAttachmentSpec {
         stressImpact = suPerRpm
+        return this
+    }
+
+    fun extraBehaviours(factory: (SlideAttachmentBlockEntity) -> List<BlockEntityBehaviour>): SlideAttachmentSpec {
+        extraBehaviours = factory
         return this
     }
 
@@ -105,8 +109,6 @@ object SlideAttachmentRegistry {
     ): SlideAttachmentType {
         val builder = SlideAttachmentSpec(name, site).apply(spec)
         val blockName = "${name}_attachment"
-        // resolved before the registry events fire, read when the block/item
-        // instances are actually created
         var resolved: SlideAttachmentType? = null
         val block: DeferredBlock<SlideAttachmentBlock> =
             ModBlocks.REGISTRY.register(blockName) { ->
@@ -132,6 +134,7 @@ object SlideAttachmentRegistry {
             builder.trigger,
             builder.maxHostDistance,
             builder.stressImpact,
+            builder.extraBehaviours,
             block,
             blockEntityType,
             item

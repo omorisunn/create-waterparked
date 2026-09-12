@@ -9,11 +9,16 @@ import net.minecraft.world.InteractionResult
 import net.minecraft.world.entity.player.Player
 import net.minecraft.world.item.BlockItem
 import net.minecraft.world.item.ItemStack
+import net.minecraft.world.level.BlockGetter
 import net.minecraft.world.level.Level
+import net.minecraft.world.level.block.Block
 import net.minecraft.world.level.block.RenderShape
 import net.minecraft.world.level.block.entity.BlockEntityType
 import net.minecraft.world.level.block.state.BlockState
 import net.minecraft.world.phys.BlockHitResult
+import net.minecraft.world.phys.shapes.CollisionContext
+import net.minecraft.world.phys.shapes.Shapes
+import net.minecraft.world.phys.shapes.VoxelShape
 
 // binding block of a slide attachment (SAB): a kinetic block whose BE carries
 // the attachment's slide position and runs its server logic. The pillar axis
@@ -103,4 +108,33 @@ class SlideAttachmentBlock(
 
     // the attachment visual lives at the slide; the block renders its own model
     override fun getRenderShape(state: BlockState): RenderShape = RenderShape.MODEL
+
+    // the visible model is only the 3..13 hub, so the pick ray and the block
+    // outline stop on the model instead of on the full cube. Collisions keep the
+    // whole block, so nothing about movement or placement changes
+    override fun getShape(
+        state: BlockState,
+        level: BlockGetter,
+        pos: BlockPos,
+        context: CollisionContext
+    ): VoxelShape = HUB_SHAPE
+
+    override fun getCollisionShape(
+        state: BlockState,
+        level: BlockGetter,
+        pos: BlockPos,
+        context: CollisionContext
+    ): VoxelShape = Shapes.block()
+
+    companion object {
+        // hub cube of the block model, in voxels; the block shape and the mode slot
+        // anchor both derive from it so the two can never drift apart
+        const val HUB_MIN_VOXEL = 3.0
+        const val HUB_MAX_VOXEL = 13.0
+
+        private val HUB_SHAPE: VoxelShape = Block.box(
+            HUB_MIN_VOXEL, HUB_MIN_VOXEL, HUB_MIN_VOXEL,
+            HUB_MAX_VOXEL, HUB_MAX_VOXEL, HUB_MAX_VOXEL
+        )
+    }
 }

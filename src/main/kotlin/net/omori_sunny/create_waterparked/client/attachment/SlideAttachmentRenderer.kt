@@ -21,6 +21,7 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentGeom
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentModelContext
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentModelProvider
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes
+import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorAttachment
 
 // draws every live attachment from its provider parts, mirroring the support
 // beam/bracket rendering architecture: block-atlas cutout quads, constant
@@ -143,7 +144,8 @@ object SlideAttachmentRenderer {
         val sig = buildString {
             append(entry.t).append('|').append(entry.angle).append('|')
                 .append(net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorProvider
-                    .smoothedOpen(be.blockPos, entry.data.getFloat("DoorOpenF"))).append('|')
+                    .smoothedOpen(be.blockPos, entry.data.getFloat(MechanicalDoorAttachment.TAG_OPEN))).append('|')
+                .append(entry.data.getInt(MechanicalDoorAttachment.TAG_MODE)).append('|')
                 .append(ctx.radius).append('|').append(ctx.wallThickness).append('|')
                 .append(be.attachmentMaterial).append('|').append(polys.size)
                 .append('|').append(editing)

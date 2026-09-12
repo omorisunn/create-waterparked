@@ -1,5 +1,6 @@
 package net.omori_sunny.create_waterparked.content.attachment.door
 
+import com.simibubi.create.foundation.blockEntity.behaviour.scrollValue.ScrollOptionBehaviour
 import net.createmod.catnip.lang.LangBuilder
 import net.minecraft.ChatFormatting
 import net.minecraft.nbt.CompoundTag
@@ -27,7 +28,9 @@ class MechanicalDoorAttachment(
     override fun slideEditorKey(): String? = DoorStopDistanceEditor.EDITOR_KEY
 
     companion object {
-        private const val TAG_OPEN = "DoorOpenF"
+        const val TAG_OPEN = "DoorOpenF"
+
+        const val TAG_MODE = "DoorMode"
 
         // riders pass once the opening exceeds this fraction
         private const val PASS_THRESHOLD = 0.7f
@@ -36,8 +39,9 @@ class MechanicalDoorAttachment(
         // the door readout is the same length as the steam engine's
         private const val BAR_LENGTH = 18
 
-        // full swing per 40 ticks at reference speed 16 RPM
-        private const val OPEN_PER_TICK_AT_REF = 1.0f / 40f
+        // one full swing per half shaft revolution: at 16 RPM a tick is 16 / 1200
+        // of a turn, so 180 degrees take 37.5 ticks
+        private const val OPEN_PER_TICK_AT_REF = 1.0f / 37.5f
         private const val REF_SPEED = 16f
     }
 
@@ -54,6 +58,12 @@ class MechanicalDoorAttachment(
         open = data.getFloat(TAG_OPEN).coerceIn(0f, 1f)
     }
 
+    // ordinal of the mode slot value, mirrored into the attachment data so the
+    // client renderer can read it without touching the behaviour
+    private fun currentMode(sab: SlideAttachmentBlockEntity): Int =
+        (sab.getBehaviour(ScrollOptionBehaviour.TYPE) as? ScrollOptionBehaviour<*>)
+            ?.value?.coerceIn(0, MechanicalDoorMode.entries.size - 1) ?: 0
+
     /** the hub is driven when ANY adjacent kinetic block spins */
     private fun drivenSpeed(level: ServerLevel, sab: SlideAttachmentBlockEntity): Float {
         val own = sab as? com.simibubi.create.content.kinetics.base.KineticBlockEntity
@@ -68,6 +78,13 @@ class MechanicalDoorAttachment(
     }
 
     override fun serverTick(level: ServerLevel, sab: SlideAttachmentBlockEntity) {
+        // the mode must reach the client even while the shaft is stopped, so it
+        // is mirrored BEFORE the zero-speed early-out below
+        val mode = currentMode(sab)
+        if (data.getInt(TAG_MODE) != mode) {
+            data.putInt(TAG_MODE, mode)
+            sync(sab)
+        }
         val speed = drivenSpeed(level, sab)
         if (speed == 0f) return
         // wind open on clockwise, close on counter-clockwise; stop at the ends

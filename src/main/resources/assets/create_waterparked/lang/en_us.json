@@ -66,5 +66,9 @@
   "create_waterparked.attachment.placed": "Slide attachment placed",
   "create_waterparked.attachment.selected": "Position selected - place the binding block near the slide",
   "create_waterparked.track.attachment_edit_readout": "Position: %s | Stop distance: %s-%s",
-  "create_waterparked.gui.goggles.door_open_ratio": "Open ratio:"
+  "create_waterparked.gui.goggles.door_open_ratio": "Open ratio:",
+  "create_waterparked.door.mode_slot": "Opening mode",
+  "create_waterparked.door.mode.slide": "Split sideways",
+  "create_waterparked.door.mode.lift": "Split up and down",
+  "create_waterparked.door.mode.aperture": "Camera aperture"
 }
