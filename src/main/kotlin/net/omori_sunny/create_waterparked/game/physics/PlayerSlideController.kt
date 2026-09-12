@@ -53,14 +53,12 @@ import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.sqrt
 
-// Server-side slide sessions.
+// server-side only
 object PlayerSlideController {
 
     private const val SIT_HEIGHT = 0.7
     private const val RIDER_SIG_CACHE_TICKS = 5L
-    // lock the rider to the exit point, release it after the landing
     private const val POST_RIDE_STICK_TICKS = 10L
-    // entity rides pause entirely when no player is in range
     private const val VIEWER_RANGE_SQ = 48.0 * 48.0
     private val CREATIVE_PHYSICS_STAFF =
         ResourceLocation.fromNamespaceAndPath("simulated", "creative_physics_staff")
@@ -75,17 +73,13 @@ object PlayerSlideController {
         val swimmingPose: Boolean,
         val sit: SlideSitEntity?,
         var startTick: Long,
-        // rider box geometry: non-player sessions integrate the box CENTRE and
-        // clamp with the circumscribed radius; players keep the tuned point model
         val centreOffset: Double,
         val boxRad: Double?
     ) {
         var elapsed = 0.0
-        // attachment speed effects ease the session clock (easeOut both ways)
         var timeScale = 1.0
         var targetScale = 1.0
         var lastSyncTick = 0L
-        // entity rides send the trajectory only once a viewer is near
         var sentToClients = false
 
         fun subLevel(level: ServerLevel): ServerSubLevel? {
@@ -124,9 +118,6 @@ object PlayerSlideController {
     private val curveFramesCache = HashMap<Pair<Long, Long>, CurveFrames>()
     private val entryCooldown = mutableMapOf<UUID, Long>()
     private var nextSessionId = 1L
-    private var perfEntryNs = 0L
-    private var perfSwitchNs = 0L
-    private var perfSamples = 0
 
     @JvmStatic
     fun onServerTick(event: ServerTickEvent.Post) {
@@ -174,13 +165,11 @@ object PlayerSlideController {
             BeltSlideFeeder.tick(level)
             SubLevelSlideController.tick(level)
             net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetSpawner.serverTick(level)
-            // track contraption poses so fresh accessors report correct velocity
             ContraptionSlideSpaces.updatePrev(level)
             for (session in sessions.values.toList()) {
                 if (session.entity.level() != level) continue
                 tickSession(level, session)
             }
-            // scan every slide space: main, sub levels, contraptions
             val seenEntities = HashSet<Entity>()
             for (region in entityScanRegions(level)) {
                 for (entity in level.getEntities(null, region)) {
@@ -190,40 +179,21 @@ object PlayerSlideController {
                     if (entity is net.minecraft.world.entity.player.Player) continue
                     val prev = lastPos.put(entity.uuid, entity.position())
                     if (!sessions.containsKey(entity.uuid) && prev != null) {
-                        val t0 = System.nanoTime()
                         tryStartSlide(level, entity)
-                        perfEntryNs += System.nanoTime() - t0
-                        perfSamples++
                     }
                 }
             }
-            // check players directly, also works inside a Sable sub level
             for (player in level.players()) {
                 if (player.isRemoved || sessions.containsKey(player.uuid)) continue
                 val prev = lastPos.put(player.uuid, player.position())
                 if (prev == null) continue
-                val t0 = System.nanoTime()
                 tryStartSlide(level, player)
-                perfEntryNs += System.nanoTime() - t0
-                perfSamples++
             }
-            if (level.gameTime % 200 == 0L && perfSamples > 0) {
-                CreateWaterparked.LOGGER.info(
-                    "[SlidePerf] entryUs={} switchUs={} samples={}",
-                    perfEntryNs / perfSamples / 1000, perfSwitchNs / 200 / 1000, perfSamples
-                )
-                perfEntryNs = 0L
-                perfSwitchNs = 0L
-                perfSamples = 0
-            }
-            // water flow pushes players standing inside the tube (not while sliding)
             for (player in level.players()) {
                 if (player.isRemoved || sessions.containsKey(player.uuid)) continue
-                // never push the physics staff holder, it chases the dragged sub level
                 if (isHoldingCreativePhysicsStaff(player)) continue
                 val center = player.position().add(0.0, player.bbHeight / 2.0, 0.0)
                 val waterVel = ServerWaterSimulation.waterVelocityAt(level, center) ?: continue
-                // push scales with the player's velocity relative to the water
                 val relVel = waterVel.subtract(player.deltaMovement.scale(20.0))
                 player.addDeltaMovement(relVel.scale(0.2 / 20.0))
             }
@@ -240,7 +210,6 @@ object PlayerSlideController {
 
     @JvmStatic
     fun onPlayerLoggedIn(event: PlayerEvent.PlayerLoggedInEvent) {
-        // resync the water field for late joiners
         val level = event.entity.level()
         ServerWaterSimulation.resync(level)
         if (level is ServerLevel) ServerWaterSimulation.resendTo(level)
@@ -265,7 +234,7 @@ object PlayerSlideController {
         val at = session.trajectory.sampleAt(session.elapsed)
         val worldPos = toWorldPos(level, session, at.sample.position)
         val worldVel = toWorldVel(level, session, at.sample.position, at.sample.tangent.scale(at.sample.speed))
-        CreateWaterparked.LOGGER.info(
+        CreateWaterparked.LOGGER.debug(
             "Slide cancel {} pos {} vel {}",
             session.id, worldPos, worldVel
         )
@@ -288,7 +257,6 @@ object PlayerSlideController {
         if (isWearingDivingBoots(entity)) return
         val player = entity as? ServerPlayer
         if (player != null && player.isShiftKeyDown) return
-        // passengers are carried by their vehicle's own slide session
         if (entity.isPassenger) return
         val cd = entryCooldown[entity.uuid]
         if (cd != null) {
@@ -299,12 +267,11 @@ object PlayerSlideController {
         val entry = found.second
         val entryAccess = found.first
 
-        // never auto capture a player holding the creative physics staff
         if (entity is ServerPlayer && isHoldingCreativePhysicsStaff(entity) &&
             entryAccess is SubSlideSpaceAccess
         ) {
             if (level.gameTime % 200 == 0L) {
-                CreateWaterparked.LOGGER.info(
+                CreateWaterparked.LOGGER.debug(
                     "[StaffGuard] skipped sub-level slide entry for staff holder {}", entity.uuid
                 )
             }
@@ -317,7 +284,6 @@ object PlayerSlideController {
             entity.refreshDimensions()
         }
 
-        // keep the standing body height when switching to the sitting pose
         if (!swimming && entity is LivingEntity) {
             val lift = (entity.getDimensions(Pose.STANDING).height -
                 entity.getDimensions(Pose.SITTING).height).coerceAtLeast(0f)
@@ -327,25 +293,20 @@ object PlayerSlideController {
         }
 
         val dims = entityDimensions(entity)
-        // entity riders integrate the box centre with its circumscribed radius
         val boxRad = if (player == null)
             kotlin.math.sqrt(dims.width * dims.width + dims.height * dims.height) / 2.0
         else null
         val anchorOffset = if (player == null) Vec3(0.0, centreOffsetY(entity), 0.0) else Vec3.ZERO
-        // include inherited velocity so the player keeps the structure motion
         val inherited = (entity as? LivingEntityMovementExtension)?.`sable$getInheritedVelocity`()
         val playerVelPerTick = if (inherited == null) entity.deltaMovement
         else entity.deltaMovement.add(inherited.x, inherited.y, inherited.z)
-        // real per tick velocity, blocks per tick to blocks per second
         val rawVelWorld = playerVelPerTick.scale(20.0)
         val entryTanWorld = entryTangentWorld(level, entryAccess, entry)
         val subLevel = (entryAccess as? SubSlideSpaceAccess)?.sub
         val contraptionEntity = (entryAccess as? ContraptionSlideSpaceAccess)?.entity
         val access = entryAccess
-        // stuck sub-level entities are already in plot-local coordinates
         val startPos = if (player == null) entity.localIn(access).add(anchorOffset)
         else access.worldToLocal(entity.position())
-        // abort only when the target is absurd at world scale
         val wouldPos = access.toWorld(startPos)
         val spaceLabel = access.space.cacheKey(level)
         val playerIsPlotScaled = kotlin.math.abs(entity.position().x) > 1.0E5 ||
@@ -362,14 +323,12 @@ object PlayerSlideController {
             restoreEntity(entity)
             return
         }
-        // sub level entities follow the structure two ways, subtract the velocity only for collision inheritance
         val structureVel = access.worldVelocityAt(startPos)
         val plotTracked = (entity as? EntityStickExtension)?.`sable$getPlotPosition`() != null
         val velWorld = if (plotTracked) rawVelWorld
         else rawVelWorld.subtract(structureVel)
         val along = velWorld.dot(entryTanWorld)
         if (along < -0.5) return
-        // keep the real 3D velocity and add the entrance boost
         var startVelWorld = velWorld
             .add(entryTanWorld.scale(ModConfig.entranceBoost() * 20.0))
         val maxSpeed = ModConfig.slideMaxEntrySpeed()
@@ -377,7 +336,7 @@ object PlayerSlideController {
             startVelWorld = startVelWorld.normalize().scale(maxSpeed)
         }
         val startVel = access.worldNormalToLocal(startVelWorld)
-        CreateWaterparked.LOGGER.info(
+        CreateWaterparked.LOGGER.debug(
             "[EntryVel] sub={} delta={} inherited={} rawWorld={} structure={} relative={} along={} tangentWorld={} startWorld={} startLocal={} gravity={} plotTracked={}",
             subLevel?.uniqueId, entity.deltaMovement, inherited, rawVelWorld, structureVel, velWorld, along,
             entryTanWorld, startVelWorld, startVel, access.localGravity(), plotTracked
@@ -392,13 +351,10 @@ object PlayerSlideController {
             return
         }
 
-        // No realtime state: main-branch style precomputed trajectory playback.
         val sit = if (player != null && !swimming) spawnSit(level, player) else null
         if (sit != null && player != null) player.startRiding(sit, true)
         postRideRelease.remove(entity.uuid)
-        // track a sub level rider before the vanilla movement pass
         bindToSpace(entity, sit, subLevel, startPos)
-        // startPos is the player feet / entity box centre: put the FEET back for setPos
         val startFeetLocal = if (player == null) startPos.subtract(anchorOffset) else startPos
         entity.setPos(access.toWorld(startFeetLocal))
         sit?.setPos(access.toWorld(startFeetLocal))
@@ -407,7 +363,7 @@ object PlayerSlideController {
             subLevel?.uniqueId, contraptionEntity, swimming, sit, level.gameTime,
             centreOffsetY(entity), boxRad
         )
-        CreateWaterparked.LOGGER.info(
+        CreateWaterparked.LOGGER.debug(
             "Slide start {} entity {} dir {} pos {} vel {} samples={} last={} reason={}",
             session.id, entity.uuid, entry.towardSecond, startPos, startVel,
             trajectory.samples.size, trajectory.exitPosition, trajectory.endReason
@@ -428,7 +384,7 @@ object PlayerSlideController {
         }
     }
 
-    // entity ride trajectory broadcast for render-frame smoothing
+    // for render-frame smoothing on the client
     private fun sendEntityTrajectory(level: ServerLevel, session: Session, startGameTime: Long) {
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayersInDimension(
             level,
@@ -487,7 +443,6 @@ object PlayerSlideController {
             }
         }
 
-        // Create contraptions carrying a waterslide are their own slide space.
         for (cp in contraptionCandidates(level, entity)) {
             val access = ContraptionSlideSpaceAccess(level, cp)
             val hit = findSlideEntryInSpace(level, access, entity, requireSolid) ?: continue
@@ -496,7 +451,6 @@ object PlayerSlideController {
         return null
     }
 
-    // contraptions with a slide whose bounds touch the player
     private fun contraptionCandidates(level: ServerLevel, entity: Entity): List<AbstractContraptionEntity> {
         val box = entity.boundingBox.inflate(6.0)
         val out = ArrayList<AbstractContraptionEntity>()
@@ -515,10 +469,8 @@ object PlayerSlideController {
     ): Pair<SlideSpaceAccess, SlideEntry>? {
         val dims = entityDimensions(entity)
         val isPlayer = entity is net.minecraft.world.entity.player.Player
-        // players keep the tuned point gate; entities gate by box overlap and fit
         val boxRad = kotlin.math.sqrt(dims.width * dims.width + dims.height * dims.height) / 2.0
         val gateMargin = if (isPlayer) -(dims.width / 2.0) * 0.5 else boxRad
-        // entities test feet and box centre alike
         val testPoints = if (isPlayer) listOf(access.worldToLocal(entity.position()))
         else listOf(
             entity.localIn(access),
@@ -558,7 +510,6 @@ object PlayerSlideController {
         return best?.let { access to it.entry }
     }
 
-    // cached per-curve tube envelope; no max-radius guess
     private fun curveFrames(
         access: SlideSpaceAccess,
         bc: BezierConnection,
@@ -574,7 +525,6 @@ object PlayerSlideController {
         val sig = "${access.space.cacheKey(access.level)}|$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()}"
         curveFramesCache[key]?.let { if (it.sig == sig) return it }
 
-        // entry only inside the real tube, never on the open-end extension
         val frames = SlideCurveGeometry.sampleFrames(access, bc, r0, r1, includeExtensions = false)
         if (frames.size < 2) return null
         var minX = Double.MAX_VALUE
@@ -615,7 +565,6 @@ object PlayerSlideController {
         val radial = p.subtract(closest)
         val axisDist = radial.length()
         val radius = (fa.radius + (fb.radius - fa.radius) * f.toFloat()).toDouble()
-        // tuned player gate vs entity box-overlap gate
         if (axisDist > radius - SLIDE_WALL_THICKNESS + gateMargin) return null
 
         val tan = fa.tangent.lerp(fb.tangent, f).normalize()
@@ -652,9 +601,8 @@ object PlayerSlideController {
             onCancel(player, session.id)
             return
         }
-        // never chase the physics staff holder along the trajectory
         if (player != null && session.subLevelId != null && isHoldingCreativePhysicsStaff(player)) {
-            CreateWaterparked.LOGGER.info(
+            CreateWaterparked.LOGGER.debug(
                 "[StaffGuard] cancelling sub-level slide session {} for staff holder {}",
                 session.id, player.uuid
             )
@@ -667,7 +615,6 @@ object PlayerSlideController {
             return
         }
 
-        // entity rides pause when nobody can see them: no computation at all
         if (player == null) {
             val viewerNear = level.players().any {
                 !it.isSpectator && it.distanceToSqr(entity) < VIEWER_RANGE_SQ
@@ -679,26 +626,19 @@ object PlayerSlideController {
             }
         }
 
-        // attachments (closing doors, ...) may brake or release the rider:
-        // ease the session clock toward the aggregated target, easeOut style
         session.targetScale =
             net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentManager
                 .sessionSpeedScale(entity).coerceIn(0.0, 1.0)
-        // decelerate twice as fast as releasing; snap to a full stop so the
-        // rider cannot creep or coast through a closed door
         val ease = if (session.targetScale < session.timeScale) 0.5 else 0.25
         session.timeScale += (session.targetScale - session.timeScale) * ease
         if (session.targetScale <= 0.0 && session.timeScale < 0.25) session.timeScale = 0.0
 
         session.elapsed += (1.0 / 20.0) * session.timeScale
         if (session.elapsed >= session.trajectory.duration) {
-            // one precomputed trajectory per space, one handoff at the end
             val end = session.trajectory.sampleAt(session.trajectory.duration)
             val endWorldPos = toWorldPos(level, session, end.sample.position)
             val endWorldVel = toWorldVel(level, session, end.sample.position, session.trajectory.exitVelocity)
-            val t0 = System.nanoTime()
             val switched = trySwitchSpace(level, session, endWorldPos, endWorldVel)
-            perfSwitchNs += System.nanoTime() - t0
             if (switched) {
                 startPlaybackSegment(level, session)
                 return
@@ -709,20 +649,17 @@ object PlayerSlideController {
 
         val at = session.trajectory.sampleAt(session.elapsed)
         val worldPos = toWorldPos(level, session, at.sample.position)
-        // players keep the 0.7 seat, entities anchor the box centre
         val sitPos = if (sit != null) worldPos.subtract(0.0, SIT_HEIGHT, 0.0)
         else worldPos.subtract(0.0, session.centreOffset, 0.0)
         val worldTan = toWorldNormal(level, session, at.sample.tangent)
         val worldVel = toWorldVel(level, session, at.sample.position, at.sample.tangent.scale(at.sample.speed))
 
-        // attachment detectors watch the live rider position
         net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentManager
             .onSessionTick(level, entity, worldPos, worldVel)
 
-        // keep Sable plot state in sync with the rider position
         bindToSpace(entity, sit, session.subLevel(level), at.sample.position)
         entity.setPos(sitPos)
-        entity.setDeltaMovement(worldVel)
+        entity.setDeltaMovement(worldVel.scale(session.timeScale))
         sit?.setPos(sitPos)
         applyRotation(entity, worldTan)
         if (entity is LivingEntity) {
@@ -748,13 +685,12 @@ object PlayerSlideController {
         }
     }
 
-    // sync faster while a speed effect is in motion so the client eases along
+    // tighter sync interval while a speed effect is in motion
     private fun syncInterval(session: Session): Long =
         if (kotlin.math.abs(session.timeScale - 1.0) > 0.01 ||
             kotlin.math.abs(session.targetScale - 1.0) > 0.01
         ) 1L else 20L
 
-    // apply the first sample of a fresh segment after a handoff
     private fun startPlaybackSegment(level: ServerLevel, session: Session) {
         val entity = session.entity
         val player = session.player
@@ -766,7 +702,7 @@ object PlayerSlideController {
         val newWorldVel = toWorldVel(level, session, first.position, first.tangent.scale(first.speed))
         bindToSpace(entity, sit, session.subLevel(level), first.position)
         entity.setPos(newSitPos)
-        entity.setDeltaMovement(newWorldVel)
+        entity.setDeltaMovement(newWorldVel.scale(session.timeScale))
         sit?.setPos(newSitPos)
         applyRotation(entity, toWorldNormal(level, session, first.tangent))
         if (player != null) {
@@ -777,10 +713,8 @@ object PlayerSlideController {
         } else if (session.sentToClients && level.players().any {
                 !it.isSpectator && it.distanceToSqr(entity) < VIEWER_RANGE_SQ
             }) {
-            // handoff segment: restart the client clock on the new samples
             sendEntityTrajectory(level, session, level.gameTime)
         } else {
-            // no viewer around: wait for the resume path to resend
             session.sentToClients = false
         }
     }
@@ -800,7 +734,6 @@ object PlayerSlideController {
         val worldVelPerSecond = worldVel.scale(20.0)
 
         fun tryTarget(access: SlideSpaceAccess, cp: AbstractContraptionEntity?): Boolean {
-            // skip only the exact same space, other switches are allowed
             if (access.space == currentSpace) return false
             val localNow = access.worldToLocal(worldPos)
             val found = findSlideEntryInSpace(level, access, session.entity, requireSolid = false) ?: return false
@@ -822,7 +755,6 @@ object PlayerSlideController {
 
         if ((currentSub != null || currentCp != null) && tryTarget(MainSlideSpaceAccess(level), null)) return true
 
-        // Create contraptions carrying slides
         val box = AABB(worldPos, worldPos).inflate(8.0)
         for (cp in level.getEntitiesOfClass(AbstractContraptionEntity::class.java, box)) {
             if (currentCp?.id == cp.id) continue
@@ -850,20 +782,18 @@ object PlayerSlideController {
         else {
             val cp = session.contraption
             if (cp != null) {
-                // do not inherit the contraption structure velocity on landing
                 val cAccess = ContraptionSlideSpaceAccess(level, cp)
                 cAccess.toWorldNormal(localVel).scale(localVel.length()).scale(1.0 / 20.0)
             } else {
                 toWorldVel(level, session, localPos, localVel)
             }
         }
-        CreateWaterparked.LOGGER.info(
+        CreateWaterparked.LOGGER.debug(
             "Slide end {} reason {} pos {} vel {}",
             session.id, reason, worldPos, worldVel
         )
 
         cleanupSit(session, entity)
-        // entity samples are box centres, drop to the feet
         val landPos = if (player == null) worldPos.subtract(0.0, session.centreOffset, 0.0)
         else worldPos
         entity.setPos(landPos)
@@ -872,14 +802,12 @@ object PlayerSlideController {
         releaseStickAfterRide(level, entity, session.subLevel(level))
         sessions.remove(entity.uuid)
         if (player == null) {
-            // exit cooldown so an entity does not re-enter at the mouth
             entryCooldown[entity.uuid] = level.gameTime + 20L
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayersInDimension(
                 level, net.omori_sunny.create_waterparked.network.SlideEntityEndPayload(session.id)
             )
         }
         if (player != null) {
-            // send world space respawn coords, plot local coords are too large for float32
             SlidePackets.sendTo(player, SlideEndPayload(
                 session.id, reason.ordinal.toByte(),
                 worldPos.x.toFloat(), worldPos.y.toFloat(), worldPos.z.toFloat(),
@@ -911,7 +839,6 @@ object PlayerSlideController {
         (entity as? EntityMovementExtension)?.`sable$setTrackingSubLevel`(null)
     }
 
-    // release the plot lock now or after a grace period
     private fun releaseStickAfterRide(level: ServerLevel, entity: Entity, sub: ServerSubLevel?) {
         if (sub == null) {
             clearStick(entity)
@@ -947,7 +874,6 @@ object PlayerSlideController {
         localPos: Vec3,
         localVel: Vec3
     ): Vec3 {
-        // contraption spaces rotate as a unit, sub level scale stays untouched
         val cp = session.contraption
         if (cp != null) {
             val access = ContraptionSlideSpaceAccess(level, cp)
@@ -967,7 +893,6 @@ object PlayerSlideController {
 
     private val boundsCache = mutableMapOf<ResourceKey<Level>, Pair<Int, AABB?>>()
 
-    // scan regions for every slide space in the level
     private fun entityScanRegions(level: ServerLevel): List<AABB> {
         val out = ArrayList<AABB>()
         slideBounds(level)?.let { out += it }
@@ -975,7 +900,6 @@ object PlayerSlideController {
             val sub = raw as? ServerSubLevel ?: return@forEach
             val access = SubSlideSpaceAccess(level, sub)
             val local = spaceLocalBounds(level, access) ?: return@forEach
-            // world-posed region plus the raw plot region for stuck entities
             out += poseToWorldBox(access, local)
             out += local
         }
@@ -994,7 +918,6 @@ object PlayerSlideController {
         if (access is SubSlideSpaceAccess && trackedSubOf(this) == access.sub.uniqueId) position()
         else access.worldToLocal(position())
 
-    // slide tube bounds in the space's local coordinates
     private fun spaceLocalBounds(level: ServerLevel, access: SlideSpaceAccess): AABB? {
         var minX = Double.MAX_VALUE
         var minY = Double.MAX_VALUE
@@ -1111,7 +1034,6 @@ object PlayerSlideController {
         return result
     }
 
-    // structural fingerprint: only rebuild the box when the slide graph changes
     private fun boundsKey(level: ServerLevel): Int {
         var key = 0
         for (pos in SlideAnchorIndex.all(level, SlideSpace.Main)) {
@@ -1134,16 +1056,13 @@ object PlayerSlideController {
         return key
     }
 
-    // Create diving boots (copper and netherite) are heavy enough to keep the
-    // wearer from being swept into a slide
     private fun isWearingDivingBoots(entity: Entity): Boolean {
         if (entity !is LivingEntity) return false
         val worn = DivingBootsItem.getWornItem(entity)
         return !worn.isEmpty && worn.item is DivingBootsItem
     }
 
-    // Detected by registry id so the mod works identically with Aeronautics
-    // (and therefore the whole Simulated library) absent from the mod list.
+    // matched by registry id so the mod works without Aeronautics installed
     private fun isHoldingCreativePhysicsStaff(entity: Entity): Boolean {
         if (entity !is LivingEntity) return false
         return isCreativePhysicsStaff(entity.mainHandItem) ||
@@ -1159,8 +1078,7 @@ object PlayerSlideController {
         if (entity is LivingEntity) entity.getDimensions(entity.getPose())
         else entity.getDimensions(Pose.STANDING)
 
-    // trajectory anchor of an entity session: the box centre above the origin;
-    // the boat hull centres above the vanilla bbHeight/2 guess
+    // box centre above the origin, except the boat which uses its hull
     private fun centreOffsetY(entity: Entity): Double =
         (entity as? net.omori_sunny.create_waterparked.content.raft.InflatableBoat1x2Entity)
             ?.slideCentreOffsetY()
@@ -1181,14 +1099,11 @@ object PlayerSlideController {
         val localPos: Vec3,
         @JvmField val worldPos: Vec3,
         @JvmField val worldTangent: Vec3,
-        // tube radius at this mouth end, for the entry-disc capture test
         @JvmField val radius: Float,
-        // curve the mouth belongs to, for direct trajectory building
         val curve: com.simibubi.create.content.trains.track.BezierConnection,
         val towardSecond: Boolean
     )
 
-    // every open tube end in any space; contraption belts have no live inventory
     @JvmStatic
     fun allSlideMouths(level: ServerLevel): List<SlideMouth> {
         val out = ArrayList<SlideMouth>()
@@ -1212,7 +1127,6 @@ object PlayerSlideController {
                     if (cf.frames.size < 2) continue
                     val first = cf.frames.first()
                     val last = cf.frames.last()
-                    // both open ends are mouths; the tangent points into the tube
                     out += SlideMouth(
                         access, first.center,
                         access.toWorld(first.center),
@@ -1231,8 +1145,7 @@ object PlayerSlideController {
         return out
     }
 
-    // true when a world position sits on a waterslide tube inner wall
-    // (exempts player-placed rivet blocks from hostless-rivet cleanup)
+    // exempts player-placed rivets from the hostless-rivet cleanup
     @JvmStatic
     fun isRivetOnSlideWall(level: ServerLevel, pos: BlockPos): Boolean {
         val point = Vec3.atCenterOf(pos)

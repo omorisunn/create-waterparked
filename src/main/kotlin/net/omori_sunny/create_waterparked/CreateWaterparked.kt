@@ -59,9 +59,10 @@ object CreateWaterparked {
         }
 
         MOD_BUS.addListener(ModPayloads::register)
-        MOD_BUS.addListener(::onCommonSetup)
+        // onCommonSetup and onConfigReloaded are already registered through the
+        // @EventBusSubscriber / @SubscribeEvent pair on this object; adding the
+        // same methods here as well made both run twice on every startup.
         MOD_BUS.addListener(CreateWaterparkedDataGen::gatherData)
-        MOD_BUS.addListener(::onConfigReloaded)
 
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onServerTick)
         NeoForge.EVENT_BUS.addListener(
