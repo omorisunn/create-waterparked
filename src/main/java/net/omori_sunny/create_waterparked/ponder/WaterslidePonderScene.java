@@ -1,8 +1,10 @@
 package net.omori_sunny.create_waterparked.ponder;
 
+import com.simibubi.create.AllBlocks;
 import com.simibubi.create.AllItems;
 import com.simibubi.create.foundation.ponder.CreateSceneBuilder;
 import net.createmod.catnip.math.Pointing;
+import net.createmod.ponder.api.PonderPalette;
 import net.createmod.ponder.api.element.ElementLink;
 import net.createmod.ponder.api.element.WorldSectionElement;
 import net.createmod.ponder.api.scene.SceneBuilder;
@@ -10,9 +12,18 @@ import net.createmod.ponder.api.scene.SceneBuildingUtil;
 import net.createmod.ponder.api.scene.Selection;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.RotatedPillarBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
+import net.omori_sunny.create_waterparked.content.attachment.ModSlideAttachments;
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockEntity;
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentSite;
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentType;
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes;
+import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorAttachment;
 import net.omori_sunny.create_waterparked.content.registry.ModItems;
 import net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial;
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity;
@@ -25,6 +36,22 @@ public class WaterslidePonderScene {
     private static final BlockPos ANCHOR_LEFT = new BlockPos(3, DISPLAY_Y, 7);
     private static final BlockPos ANCHOR_RIGHT = new BlockPos(11, DISPLAY_Y, 7);
     private static final Vec3 OFFSCREEN = new Vec3(0.0, -100.0, 0.0);
+
+    // this level's curve (anchors (1,1,13) -> (13,1,1), Create handle length
+    // 3.889) has its middle at (8.18, 4.14, 7.65) with radius 1.4, so the angle
+    // 0 wall point (6.72, 4.14, 6.60) lands in this block: the door story bolts
+    // its hub straight onto the wall there and drives it along -z, the axis that
+    // is 36.3 degrees off the door normal against 54.5 for x - a block aligned
+    // shaft can never match the oblique door plane any closer
+    private static final BlockPos DOOR_POS = new BlockPos(6, 4, 6);
+    private static final BlockPos DOOR_SHAFT_A = new BlockPos(6, 4, 5);
+    private static final BlockPos DOOR_SHAFT_B = new BlockPos(6, 4, 4);
+    // the placement story binds that same wall point, then puts the block down
+    // on the display plate below the middle of the slide
+    private static final BlockPos ATTACH_HOST_POS = new BlockPos(7, DISPLAY_Y, 7);
+    private static final String SITE_OUTLINE = "create_waterparked:attachment_site";
+    // where along the curve both stories mount their attachment
+    private static final float ATTACH_T = 0.5f;
 
     private WaterslidePonderScene() {
     }
@@ -503,6 +530,313 @@ public class WaterslidePonderScene {
         scene.world().hideIndependentSection(anchorLayer, Direction.UP);
         scene.idle(60);
     }
+
+    // ------------------------------------------------------------------
+    // ponder.md scene: sa_ponder_0 (mounting a slide attachment)
+    // ------------------------------------------------------------------
+
+    public static void placeAttachment(SceneBuilder builder, SceneBuildingUtil util) {
+        CreateSceneBuilder scene = new CreateSceneBuilder(builder);
+        scene.title(WaterslidePonderScenes.ATTACHMENT_SCENE_ID, "Mounting a Slide Attachment");
+        scene.configureBasePlate(0, 0, 15);
+        scene.scaleSceneView(0.7f);
+        scene.setSceneOffsetY(-1.0f);
+        scene.showBasePlate();
+        scene.idle(10);
+
+        BlockPos[] anchors = WaterslidePonderRestore.schemaAnchors(scene.getScene().getWorld());
+        BlockPos anchorLeft = anchors.length >= 1 ? anchors[0] : ANCHOR_LEFT;
+        BlockPos anchorRight = anchors.length >= 2 ? anchors[1] : ANCHOR_RIGHT;
+        int anchorY = Math.min(anchorLeft.getY(), anchorRight.getY());
+
+        // the slide is on screen from the start: this story mounts an
+        // attachment onto a slide that already exists, like the sector and
+        // ghost block stories
+        ElementLink<WorldSectionElement> anchorLayer = scene.world()
+            .showIndependentSection(
+                util.select().fromTo(
+                    anchorLeft.getX(), anchorY, anchorLeft.getZ(),
+                    anchorRight.getX(), anchorY, anchorRight.getZ()
+                ).substract(util.select().position(ATTACH_HOST_POS)),
+                Direction.DOWN
+            );
+        WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, anchorY, anchorY, anchorLeft, anchorRight);
+
+        // every attachment type follows the same placement flow, so one story
+        // serves them all and shows the first registered type as the example
+        SlideAttachmentType type = attachmentExample();
+        ItemStack bindingStack = new ItemStack(type.getItem()
+            .get());
+        Vec3 siteTop = util.vector().topOf(DOOR_POS);
+        Vec3 hostTop = util.vector().topOf(ATTACH_HOST_POS);
+        Vec3 midTop = util.vector().topOf(
+            (anchorLeft.getX() + anchorRight.getX()) / 2, anchorY,
+            (anchorLeft.getZ() + anchorRight.getZ()) / 2
+        );
+        scene.idle(30);
+
+        // [1] pick the wall spot on the slide
+        scene.overlay()
+            .showText(90)
+            .independent(20)
+            .text("Right-click the slide with a slide attachment to pick a spot")
+            .placeNearTarget()
+            .pointAt(siteTop);
+        scene.idle(30);
+        scene.overlay().showControls(siteTop, Pointing.DOWN, 70).withItem(bindingStack).rightClick();
+        scene.overlay().showOutline(PonderPalette.GREEN, SITE_OUTLINE, util.select().position(DOOR_POS), 70);
+        scene.overlay().showLine(PonderPalette.GREEN, hostTop, siteTop, 70);
+
+        // [2] bind that spot to the item
+        scene.overlay()
+            .showText(80)
+            .attachKeyFrame()
+            .text("Then place the block on the ground")
+            .placeNearTarget()
+            .pointAt(siteTop);
+        scene.idle(30);
+        scene.overlay().showControls(siteTop, Pointing.DOWN, 60).withItem(bindingStack).rightClick();
+        scene.idle(30);
+        scene.world().setBlock(ATTACH_HOST_POS, bindingBlock(type), true);
+        scene.world().showIndependentSection(util.select().position(ATTACH_HOST_POS), Direction.UP);
+
+        // [4] the attachment is built on the slide, not on the block
+        bindAttachment(scene, util, ATTACH_HOST_POS, type, anchorLeft, anchorRight);
+        scene.overlay()
+            .showText(80)
+            .text("The attachment appears on the slide at the bound spot")
+            .placeNearTarget()
+            .pointAt(midTop);
+    }
+
+    // ------------------------------------------------------------------
+    // ponder.md scene: door_ponder_0 (driving the mechanical door)
+    // ------------------------------------------------------------------
+
+    public static void mechanicalDoor(SceneBuilder builder, SceneBuildingUtil util) {
+        CreateSceneBuilder scene = new CreateSceneBuilder(builder);
+        scene.title(WaterslidePonderScenes.DOOR_SCENE_ID, "Using the Mechanical Door");
+        scene.configureBasePlate(0, 0, 15);
+        scene.scaleSceneView(0.7f);
+        scene.setSceneOffsetY(-1.0f);
+        // the camera axis sits 78 degrees off the door normal from the default
+        // side view; the quarter turn the sector scene uses brings it to 45 and
+        // keeps the drive train on the camera side
+        scene.rotateCameraY(90f);
+        scene.showBasePlate();
+        scene.idle(10);
+
+        BlockPos[] anchors = WaterslidePonderRestore.schemaAnchors(scene.getScene().getWorld());
+        BlockPos anchorLeft = anchors.length >= 1 ? anchors[0] : ANCHOR_LEFT;
+        BlockPos anchorRight = anchors.length >= 2 ? anchors[1] : ANCHOR_RIGHT;
+        int anchorY = Math.min(anchorLeft.getY(), anchorRight.getY());
+
+        // the slide is on screen from the start: this story drives a door that
+        // is mounted on a slide that already exists
+        ElementLink<WorldSectionElement> anchorLayer = scene.world()
+            .showIndependentSection(
+                util.select().fromTo(
+                    anchorLeft.getX(), anchorY, anchorLeft.getZ(),
+                    anchorRight.getX(), anchorY, anchorRight.getZ()
+                ),
+                Direction.DOWN
+            );
+        WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, anchorY, anchorY, anchorLeft, anchorRight);
+
+        // the shipped level's ring half above the curve is already OPEN, so the
+        // glass is not what makes the door visible: it is the roof the author
+        // asked for, and the lower half keeps the level's own gray concrete
+        setRingGlass(scene, anchorLeft, anchorRight);
+        setRingGlass(scene, anchorRight, anchorLeft);
+
+        Vec3 hubTop = util.vector().topOf(DOOR_POS);
+        ItemStack shaftStack = new ItemStack(AllBlocks.SHAFT.get());
+
+        // [1] the door hub and the shaft that drives it
+        scene.world().setBlock(DOOR_POS, doorBlock(), true);
+        ElementLink<WorldSectionElement> doorLayer = scene.world()
+            .showIndependentSection(util.select().position(DOOR_POS), Direction.UP);
+        bindDoor(scene, util, anchorLeft, anchorRight);
+        scene.idle(30);
+        scene.overlay()
+            .showText(90)
+            .independent(20)
+            .text("Put a shaft into the door hub and it will drive the door")
+            .placeNearTarget()
+            .pointAt(hubTop);
+        scene.idle(20);
+        scene.overlay().showControls(hubTop, Pointing.DOWN, 60).withItem(shaftStack);
+        scene.world().setBlock(DOOR_SHAFT_A, shaftBlock(), true);
+        ElementLink<WorldSectionElement> shaftALayer = scene.world()
+            .showIndependentSection(util.select().position(DOOR_SHAFT_A), Direction.UP);
+        scene.world().setBlock(DOOR_SHAFT_B, shaftBlock(), true);
+        ElementLink<WorldSectionElement> shaftBLayer = scene.world()
+            .showIndependentSection(util.select().position(DOOR_SHAFT_B), Direction.UP);
+        scene.idle(40);
+
+        // [2] the driving shaft winds the door open
+        scene.overlay()
+            .showText(80)
+            .attachKeyFrame()
+            .text("How far the shaft turns decides how far the door opens")
+            .placeNearTarget()
+            .pointAt(hubTop);
+        scene.idle(30);
+
+        // 用户要求：这个地方开慢一点
+        setDoor(scene, util, 0.2f, 0);
+        scene.idle(6);
+        setDoor(scene, util, 0.4f, 0);
+        scene.idle(6);
+        setDoor(scene, util, 0.6f, 0);
+        scene.idle(6);
+        setDoor(scene, util, 0.8f, 0);
+        scene.idle(6);
+        setDoor(scene, util, 1f, 0);
+        scene.idle(70);
+
+        // 用户要求：这个地方关慢一点
+        setDoor(scene, util, 0.8f, 0);
+        scene.idle(6);
+        setDoor(scene, util, 0.6f, 0);
+        scene.idle(6);
+        setDoor(scene, util, 0.4f, 0);
+        scene.idle(6);
+        setDoor(scene, util, 0.2f, 0);
+        scene.idle(6);
+        setDoor(scene, util, 0f, 0);
+        scene.idle(70);
+        scene.world().hideIndependentSection(doorLayer, Direction.DOWN);
+        scene.world().hideIndependentSection(shaftALayer, Direction.DOWN);
+        scene.world().hideIndependentSection(shaftBLayer, Direction.DOWN);
+
+        // a section fade lasts 15 ticks: clear the blocks only after it is done,
+        // otherwise the redraw behind the setBlock rebuilds the fading section
+        // empty and the blocks pop out instead of fading
+        scene.idle(15);
+
+        // the door is packed away with the slide it was bolted onto
+        scene.world().setBlock(DOOR_POS, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), false);
+        scene.world().setBlock(DOOR_SHAFT_A, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), false);
+        scene.world().setBlock(DOOR_SHAFT_B, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), false);
+        scene.world().hideIndependentSection(anchorLayer, Direction.UP);
+    }
+
+    // the placement story speaks for every attachment type, so it shows the
+    // first registered one - they only differ in the model on the slide
+    private static SlideAttachmentType attachmentExample() {
+        return SlideAttachmentTypes.INSTANCE.all()
+            .iterator()
+            .next();
+    }
+
+    private static BlockState doorBlock() {
+        return ModSlideAttachments.INSTANCE.getMECHANICAL_DOOR()
+            .getBlock()
+            .get()
+            .defaultBlockState()
+            .setValue(RotatedPillarBlock.AXIS, Direction.Axis.Z);
+    }
+
+    private static BlockState bindingBlock(SlideAttachmentType type) {
+        return type.getBlock()
+            .get()
+            .defaultBlockState()
+            .setValue(RotatedPillarBlock.AXIS, Direction.Axis.Y);
+    }
+
+    private static BlockState shaftBlock() {
+        return AllBlocks.SHAFT.get()
+            .defaultBlockState()
+            .setValue(RotatedPillarBlock.AXIS, Direction.Axis.Z);
+    }
+
+    // the door hub is bound to the same wall point the placement story uses
+    private static void bindDoor(
+        CreateSceneBuilder scene,
+        SceneBuildingUtil util,
+        BlockPos curveA,
+        BlockPos curveB
+    ) {
+        bindAttachment(scene, util, DOOR_POS, ModSlideAttachments.INSTANCE.getMECHANICAL_DOOR(), curveA, curveB);
+        setDoor(scene, util, 0f, 0);
+    }
+
+    // without this entry a binding block has no geometry: the keys are the ones
+    // SlideAttachmentEntry.write uses, with the curve this level's slide spans
+    private static void bindAttachment(
+        CreateSceneBuilder scene,
+        SceneBuildingUtil util,
+        BlockPos block,
+        SlideAttachmentType type,
+        BlockPos curveA,
+        BlockPos curveB
+    ) {
+        scene.world().modifyBlockEntityNBT(
+            util.select().position(block),
+            SlideAttachmentBlockEntity.class,
+            tag -> {
+                tag.putString("Type", type.getId()
+                    .toString());
+                tag.putLong("CurveA", curveA.asLong());
+                tag.putLong("CurveB", curveB.asLong());
+                tag.putString("Site", SlideAttachmentSite.INTERIOR.name());
+                tag.putFloat("CurveT", ATTACH_T);
+                tag.putFloat("WallAngle", 0f);
+                tag.put("Data", new CompoundTag());
+            }
+        );
+    }
+
+    // the door reads both the opening and the mode out of the entry data, and
+    // the server tick that normally mirrors the mode slot into it never runs in
+    // a ponder scene - so the story writes the data and the slot value together
+    private static void setDoor(CreateSceneBuilder scene, SceneBuildingUtil util, float open, int mode) {
+        scene.world().modifyBlockEntityNBT(
+            util.select().position(DOOR_POS),
+            SlideAttachmentBlockEntity.class,
+            tag -> {
+                tag.putInt("ScrollValue", mode);
+                tag.put("Data", doorData(open, mode));
+            }
+        );
+    }
+
+    private static CompoundTag doorData(float open, int mode) {
+        CompoundTag data = new CompoundTag();
+        data.putFloat(MechanicalDoorAttachment.TAG_OPEN, open);
+        data.putInt(MechanicalDoorAttachment.TAG_MODE, mode);
+        return data;
+    }
+
+    // glass over the ring half above the curve: the ring angle grows from 0 at
+    // the curve's side through 90 at its top, and the layout hands the first
+    // FIXED sector the first 180 degrees - the level's own roof is untouched
+    private static void setRingGlass(CreateSceneBuilder scene, BlockPos anchor, BlockPos peer) {
+        scene.world().modifyBlockEntity(anchor, WaterslideAnchorBlockEntity.class, be -> {
+            if (be == null) return;
+            net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig cfg =
+                be.sectorConfigFor(peer).copyOf();
+            cfg.setStartAngle(0f);
+            cfg.getSectors().clear();
+            cfg.getSectors().add(new net.omori_sunny.create_waterparked.content.waterslide.WaterslideSector(
+                cfg.newId(),
+                net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial.BLOCK,
+                net.minecraft.resources.ResourceLocation.parse("minecraft:glass"),
+                net.omori_sunny.create_waterparked.content.waterslide.SectorType.FIXED,
+                180f
+            ));
+            cfg.getSectors().add(new net.omori_sunny.create_waterparked.content.waterslide.WaterslideSector(
+                cfg.newId(),
+                net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial.BLOCK,
+                net.minecraft.resources.ResourceLocation.parse("minecraft:gray_concrete"),
+                net.omori_sunny.create_waterparked.content.waterslide.SectorType.FIXED,
+                180f
+            ));
+            be.setSectorConfig(peer, cfg);
+        });
+    }
+
 
     // ghost blocks are mirrored on both endpoint BEs, like the sector configs
     private static void addGhost(

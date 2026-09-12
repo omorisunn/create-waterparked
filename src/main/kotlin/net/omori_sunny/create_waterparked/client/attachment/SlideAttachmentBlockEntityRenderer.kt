@@ -1,12 +1,12 @@
 package net.omori_sunny.create_waterparked.client.attachment
 
 import com.simibubi.create.content.kinetics.base.ShaftRenderer
+import net.createmod.ponder.api.level.PonderLevel
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider
+import net.minecraft.world.phys.Vec3
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockEntity
 
-// fallback renderer for worlds without flywheel visualization (e.g. Ponder):
-// only the spinning shaft part - the attachment itself always draws from the
-// level stage renderer, which fires in every world
+// runs only without Flywheel visualization (e.g. Ponder)
 class SlideAttachmentBlockEntityRenderer(ctx: BlockEntityRendererProvider.Context) :
     ShaftRenderer<SlideAttachmentBlockEntity>(ctx) {
 
@@ -20,10 +20,12 @@ class SlideAttachmentBlockEntityRenderer(ctx: BlockEntityRendererProvider.Contex
     ) {
         val level = be.level ?: return
         if (dev.engine_room.flywheel.api.visualization.VisualizationManager.supportsVisualization(level)) {
-            // the shaft spins via ShaftVisual
             return
         }
         super.renderSafe(be, partialTick, poseStack, buffers, packedLight, packedOverlay)
+        if (level is PonderLevel) {
+            SlideAttachmentRenderer.renderOne(be, poseStack, buffers, Vec3.atLowerCornerOf(be.blockPos), partialTick)
+        }
     }
 
     override fun getViewDistance(): Int = 128

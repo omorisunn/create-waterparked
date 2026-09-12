@@ -23,25 +23,36 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentMode
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes
 import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorAttachment
 
-// draws every live attachment from its provider parts, mirroring the support
-// beam/bracket rendering architecture: block-atlas cutout quads, constant
-// white vertex colour (no tint, no manual shading), one real light sample per
-// part, and per-block tiled sprite UVs (one quad per block of face height).
-// One draw routine serves the real world (level stage) and worlds without
-// flywheel visualization (BER).
 @OnlyIn(Dist.CLIENT)
 object SlideAttachmentRenderer {
+
+    private const val CLIP_CACHE_LIMIT = 32
 
     @JvmStatic
     fun clear() {
         clipCaches.clear()
     }
 
-    // clip results cached per SAB - the CSG is far too heavy for every frame
-    private class ClipCache(val signature: String, val polys: List<net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Polygon>)
-    private val clipCaches = HashMap<BlockPos, ClipCache>()
+    // a Ponder level and a live world can share a block pos
+    private class ClipKey(val level: net.minecraft.world.level.Level, val pos: BlockPos) {
+        override fun equals(other: Any?): Boolean =
+            other is ClipKey && other.level === level && other.pos == pos
 
-    // triangle buffer for CSG-clipped geometry (n-gon output), block atlas
+        override fun hashCode(): Int = System.identityHashCode(level) * 31 + pos.hashCode()
+    }
+
+    private class ClipCache(
+        val signature: String,
+        val polys: List<net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Polygon>
+    )
+
+    private class ClipCacheMap : LinkedHashMap<ClipKey, ClipCache>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ClipKey, ClipCache>): Boolean =
+            size > CLIP_CACHE_LIMIT
+    }
+
+    private val clipCaches = ClipCacheMap()
+
     private val ATTACH_TRI_CUTOUT: RenderType = RenderType.create(
         "create_waterparked:attachment_tri_cutout",
         com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK,
@@ -55,16 +66,12 @@ object SlideAttachmentRenderer {
             .createCompositeState(true)
     )
 
-    // translucent variant used while the attachment is being edited
     private val ATTACH_TRI_TRANSLUCENT: RenderType = RenderType.create(
         "create_waterparked:attachment_tri_translucent",
         com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK,
         com.mojang.blaze3d.vertex.VertexFormat.Mode.TRIANGLES,
         131072,
         RenderType.CompositeState.builder()
-            // mirror vanilla RenderType.translucent() exactly: the translucent
-            // output target and a colour-only write mask, otherwise the depth
-            // written by the front faces hides the blending behind them
             .setShaderState(net.minecraft.client.renderer.RenderStateShard.RENDERTYPE_TRANSLUCENT_SHADER)
             .setTextureState(net.minecraft.client.renderer.RenderStateShard.BLOCK_SHEET_MIPPED)
             .setTransparencyState(net.minecraft.client.renderer.RenderStateShard.TRANSLUCENT_TRANSPARENCY)
@@ -74,7 +81,7 @@ object SlideAttachmentRenderer {
             .createCompositeState(true)
     )
 
-    /** draw all attachments; origin = world position to subtract from the pose */
+    // origin is world space
     fun renderAll(poseStack: PoseStack, buffers: MultiBufferSource, origin: Vec3, partialTick: Float) {
         for (be in SlideAttachmentClientIndex.all()) {
             if (be.isRemoved) continue
@@ -106,24 +113,14 @@ object SlideAttachmentRenderer {
             null
         }
 
-        // translucency derives from the same editor set that draws the control
-        // points, so a visible handle implies a translucent model
         val editing = net.omori_sunny.create_waterparked.client.editor.controlpoint
             .SlideControlPointEditor.isEditingAt(be.blockPos) ||
             net.omori_sunny.create_waterparked.client.editor.SlideAttachmentEdit.isEditing(be)
         val alpha = if (editing) (0.35f * 255).toInt() else 255
         editAlpha = alpha
-        // edge-triggered: a sampled probe can miss a flip-flop, this cannot
-        val prevEdit = lastEditState.put(be.blockPos, editing)
-        if (prevEdit != null && prevEdit != editing) {
-            net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.info(
-                "[SADebug] translucency {}->{} for {}", prevEdit, editing, be.blockPos
-            )
-        }
+        lastEditState.put(be.blockPos, editing)
         poseStack.pushPose()
         poseStack.translate(-origin.x, -origin.y, -origin.z)
-        // collect raw part polygons, then run the ghost-block CSG against the
-        // tube wall prisms: proper cut faces, no texture or winding artefacts
         var polys = ArrayList<net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Polygon>()
         val manualQuads = ArrayList<SlideAttachmentModelProvider.Quad>()
         for (part in provider.parts(ctx)) {
@@ -136,8 +133,6 @@ object SlideAttachmentRenderer {
                     drawModel(part, ctx, poseStack, buffers, level)
             }
         }
-        // clip: intersect the door with one convex prism at the door's own
-        // cross-section (inner polygon ring extruded along the tangent)
         val csg = net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg
         val innerSolid = innerPrismAt(ctx)
         var clipped: List<net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Polygon> = polys
@@ -150,7 +145,8 @@ object SlideAttachmentRenderer {
                 .append(be.attachmentMaterial).append('|').append(polys.size)
                 .append('|').append(editing)
         }
-        val cached = clipCaches[be.blockPos]
+        val cacheKey = ClipKey(level, be.blockPos)
+        val cached = clipCaches[cacheKey]
         if (cached != null && cached.signature == sig) {
             clipped = cached.polys
         } else if (innerSolid != null) {
@@ -165,10 +161,9 @@ object SlideAttachmentRenderer {
             } catch (t: Throwable) {
                 polys
             }
-            clipCaches[be.blockPos] = ClipCache(sig, clipped)
+            clipCaches[cacheKey] = ClipCache(sig, clipped)
         }
-        if (be.isRemoved) clipCaches.remove(be.blockPos)
-        // manually generated parts bypass the CSG entirely
+        if (be.isRemoved) clipCaches.remove(cacheKey)
         if (manualQuads.isNotEmpty()) {
             val consumer2 = buffers.getBuffer(if (editing) ATTACH_TRI_TRANSLUCENT else ATTACH_TRI_CUTOUT)
             for (q in manualQuads) emitManualQuad(q, ctx, sprite, level, poseStack.last(), consumer2)
@@ -188,10 +183,6 @@ object SlideAttachmentRenderer {
         }
     }
 
-
-
-    /** single convex prism: the tube's inner polygon ring at the door's
-     *  cross-section, extruded well past the door along the tangent */
     private fun innerPrismAt(
         ctx: SlideAttachmentModelContext
     ): net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Solid? {
@@ -212,9 +203,6 @@ object SlideAttachmentRenderer {
         return net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.prismSolid(ring0, ring1, c0, c1)
     }
 
-
-    /** one reversed quad per inner-wall facet: a single-plane solid whose
-     *  inside is the region beyond that wall edge */
     private fun innerHalfSpaceSlabs(
         ctx: SlideAttachmentModelContext
     ): List<net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Solid> {
@@ -232,8 +220,6 @@ object SlideAttachmentRenderer {
         val out = ArrayList<net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Solid>(sides)
         for (k in 0 until sides) {
             val j = (k + 1) % sides
-            // same winding as prismSolid's side quad, then REVERSED so the
-            // half-space points out of the tube
             val pts = listOf(
                 ringPoint(j, 2.0), ringPoint(k, 2.0),
                 ringPoint(k, -2.0), ringPoint(j, -2.0)
@@ -253,17 +239,13 @@ object SlideAttachmentRenderer {
         return out
     }
 
-
-    // edit translucency shared by all emit paths
     private var editAlpha: Int = 255
 
-    // last editing state per attachment, for edge-triggered diagnostics
     private val lastEditState = HashMap<BlockPos, Boolean>()
 
     private fun withEditAlpha(argb: Int): Int =
         if (editAlpha >= 255) argb else (argb and 0x00FFFFFF) or (editAlpha shl 24)
 
-    /** emit a manually built local-space quad with material UVs */
     private fun emitManualQuad(
         q: SlideAttachmentModelProvider.Quad,
         ctx: SlideAttachmentModelContext,
@@ -309,9 +291,6 @@ object SlideAttachmentRenderer {
         b: net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Vertex,
         c: net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Vertex
     ) {
-        // CSG output carries vertex colours from the source polygons (alpha
-        // 255) - the edit translucency must be applied here too, otherwise
-        // clipped parts (the door panels) stay opaque
         consumer.addVertex(pose, a.x, a.y, a.z).setColor(withEditAlpha(a.color)).setUv(a.u, a.v)
             .setOverlay(a.overlay).setLight(a.light).setNormal(pose, a.nx, a.ny, a.nz)
         consumer.addVertex(pose, b.x, b.y, b.z).setColor(withEditAlpha(b.color)).setUv(b.u, b.v)
@@ -320,7 +299,7 @@ object SlideAttachmentRenderer {
             .setOverlay(c.overlay).setLight(c.light).setNormal(pose, c.nx, c.ny, c.nz)
     }
 
-    /** plot-space -> render-space transform for slides inside Sable sub-levels */
+    // plot space to render space
     fun renderTransform(
         level: net.minecraft.world.level.Level,
         anchor: BlockPos
@@ -338,7 +317,7 @@ object SlideAttachmentRenderer {
         )
     }
 
-    /** world position of a local-space point (origin = attachment wall point) */
+    // local origin is the attachment wall point
     private fun localToWorld(
         ctx: SlideAttachmentModelContext,
         x: Double, y: Double, z: Double
@@ -347,12 +326,6 @@ object SlideAttachmentRenderer {
         return ctx.position.add(lat.scale(x)).add(up.scale(y)).add(tan.scale(z))
     }
 
-    /**
-     * support-style textured box: each face is split into one quad per block
-     * of height; u spans the face width as a sprite fraction, v repeats the
-     * whole sprite once per block (the beam tiling). Colour stays white and
-     * one light sample covers the whole part, exactly like the beams.
-     */
     private fun drawBox(
         part: SlideAttachmentModelProvider.BoxPart,
         ctx: SlideAttachmentModelContext,
@@ -416,12 +389,10 @@ object SlideAttachmentRenderer {
                 wn.x.toFloat(), wn.y.toFloat(), wn.z.toFloat(),
                 texU, texV, 0xFFFFFFFF.toInt(), light, OverlayTexture.NO_OVERLAY
             )
-        // local-space vertices; shifted to world inside the CSG space below
         val vs = mutableListOf(
             vert(u0, v0, ua, va), vert(u1, v0, ub, va),
             vert(u1, v1, ub, vb), vert(u0, v1, ua, vb)
         )
-        // convert to world/render space (the prism solids live there)
         val (lat, up, tan) = SlideAttachmentGeometry.basis(ctx)
         for (vx in vs) {
             val w = ctx.position
@@ -433,7 +404,6 @@ object SlideAttachmentRenderer {
         out.add(net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Polygon(vs, false))
     }
 
-    /** quad corners from a face origin + edge vectors, covering the u/v cell */
     private fun emitCell(
         consumer: VertexConsumer,
         ctx: SlideAttachmentModelContext,
@@ -448,9 +418,6 @@ object SlideAttachmentRenderer {
         val dvLen = len(dv)
         val duLen = len(du)
         fun corner(lx0: Double, ly0: Double, lz0: Double): Vec3 {
-            // clip onto the tube's inner wall, using the SAME polygon
-            // subdivision the tube mesh uses (crossSections sides, 90-degree
-            // grid anchor) so vertices land on the facet planes
             var lx = lx0
             var ly = ly0
             val dx = lx - clipCx
@@ -461,7 +428,6 @@ object SlideAttachmentRenderer {
                     .crossSections()
                 val step = 2.0 * Math.PI / sides
                 val phi = kotlin.math.atan2(dy, dx)
-                // facet normals sit between the vertex angles (90-degree anchor)
                 val m = phi - (Math.PI / 2.0 + step / 2.0)
                 val mNorm = ((m % step) + step) % step - step / 2.0
                 val boundary = clipR * kotlin.math.cos(step / 2.0) / kotlin.math.cos(mNorm)
@@ -484,7 +450,6 @@ object SlideAttachmentRenderer {
         val base = doubleArrayOf(
             part.cx + o[0], part.cy + o[1], part.cz + o[2]
         )
-        // cell corners at absolute face coords (u, v)
         fun pt(u: Double, v: Double): Vec3 {
             val p = doubleArrayOf(
                 base[0] + du[0] * u / duLen + dv[0] * v / dvLen,
@@ -508,8 +473,7 @@ object SlideAttachmentRenderer {
 
     private fun lengthOf(v: DoubleArray): Double = len(v)
 
-    /** support bracket anti-bleed mapping: the sprite border ring is never
-     *  sampled, f in [0,1] spans the inner strip */
+    // f spans the inner strip, the border ring is never sampled
     private fun borderU(sprite: TextureAtlasSprite, f: Float): Float {
         val texW = sprite.contents().width().toFloat()
         val border = net.omori_sunny.create_waterparked.config.ModConfig.sectorBorderPx().toFloat()
@@ -522,12 +486,10 @@ object SlideAttachmentRenderer {
         return sprite.v0 + ((border + f.coerceIn(0f, 1f) * (texH - 2 * border)) / texH) * (sprite.v1 - sprite.v0)
     }
 
-    /** face origin corner + (width, height) edge vectors + outward normal */
     private fun faceBasis(
         face: Direction, hx: Double, hy: Double, hz: Double,
         lat: Vec3, up: Vec3, tan: Vec3
     ): FaceBasis {
-        // local space: x = lateral, y = up, z = tangent
         return when (face) {
             Direction.DOWN -> FaceBasis(
                 doubleArrayOf(-hx, -hy, -hz), doubleArrayOf(2 * hx, 0.0, 0.0), doubleArrayOf(0.0, 0.0, 2 * hz),
@@ -596,7 +558,6 @@ object SlideAttachmentRenderer {
         poseStack.popPose()
     }
 
-    /** rotation taking local axes onto the (right-handed) frame basis */
     private fun rotationTo(lat: Vec3, up: Vec3, tan: Vec3): org.joml.Quaternionf {
         val m = org.joml.Matrix3f(
             lat.x.toFloat(), up.x.toFloat(), tan.x.toFloat(),
