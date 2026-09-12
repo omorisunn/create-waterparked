@@ -37,20 +37,11 @@ public class WaterslidePonderScene {
     private static final BlockPos ANCHOR_RIGHT = new BlockPos(11, DISPLAY_Y, 7);
     private static final Vec3 OFFSCREEN = new Vec3(0.0, -100.0, 0.0);
 
-    // this level's curve (anchors (1,1,13) -> (13,1,1), Create handle length
-    // 3.889) has its middle at (8.18, 4.14, 7.65) with radius 1.4, so the angle
-    // 0 wall point (6.72, 4.14, 6.60) lands in this block: the door story bolts
-    // its hub straight onto the wall there and drives it along -z, the axis that
-    // is 36.3 degrees off the door normal against 54.5 for x - a block aligned
-    // shaft can never match the oblique door plane any closer
     private static final BlockPos DOOR_POS = new BlockPos(6, 4, 6);
     private static final BlockPos DOOR_SHAFT_A = new BlockPos(6, 4, 5);
     private static final BlockPos DOOR_SHAFT_B = new BlockPos(6, 4, 4);
-    // the placement story binds that same wall point, then puts the block down
-    // on the display plate below the middle of the slide
     private static final BlockPos ATTACH_HOST_POS = new BlockPos(7, DISPLAY_Y, 7);
     private static final String SITE_OUTLINE = "create_waterparked:attachment_site";
-    // where along the curve both stories mount their attachment
     private static final float ATTACH_T = 0.5f;
 
     private WaterslidePonderScene() {
@@ -112,10 +103,6 @@ public class WaterslidePonderScene {
         scene.idle(80);
     }
 
-    // ------------------------------------------------------------------
-    // ponder.md scene: slide_ponder_0
-    // ------------------------------------------------------------------
-
     public static void useSlideTrack(SceneBuilder builder, SceneBuildingUtil util) {
         CreateSceneBuilder scene = new CreateSceneBuilder(builder);
         scene.title("slide_ponder_0", "Using the Waterslide Track");
@@ -125,13 +112,11 @@ public class WaterslidePonderScene {
         scene.showBasePlate();
         scene.idle(10);
 
-        // anchors come straight from the schematic so the layout always matches
         BlockPos[] anchors = WaterslidePonderRestore.schemaAnchors(scene.getScene().getWorld());
         BlockPos anchorLeft = anchors.length >= 1 ? anchors[0] : ANCHOR_LEFT;
         BlockPos anchorRight = anchors.length >= 2 ? anchors[1] : ANCHOR_RIGHT;
         int anchorY = Math.min(anchorLeft.getY(), anchorRight.getY());
 
-        // [1+2] show the base plate, then fade the two anchors in from above
         ElementLink<WorldSectionElement> anchorLayer = scene.world()
             .showIndependentSection(
                 util.select().fromTo(
@@ -141,14 +126,9 @@ public class WaterslidePonderScene {
                 Direction.DOWN
             );
         WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, anchorY, anchorY, anchorLeft, anchorRight);
-        // keep the tube hidden for now: the anchors stay visible, but the curve
-        // data is cleared so the BER draws nothing yet - the tube only appears
-        // at the [4] "slide appears" beat when the curve data is restored
         WaterslidePonderRestore.clearDisplayedCurves(scene, anchorY, anchorLeft, anchorRight);
         scene.idle(30);
 
-        // [3] item hint boxes + text (both track item boxes show at once, no
-        //     right-click icon; they vanish when the slide appears)
         Vec3 leftTop = util.vector().topOf(anchorLeft);
         Vec3 rightTop = util.vector().topOf(anchorRight);
         ItemStack trackStack = new ItemStack(ModItems.INSTANCE.getWATERSLIDE_TRACK());
@@ -164,13 +144,10 @@ public class WaterslidePonderScene {
         scene.overlay().showControls(rightTop, Pointing.DOWN, 50).withItem(trackStack);
 
         scene.idle(10);
-        // [4] restore the curve data: the tube appears right where it belongs
         WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, anchorY, anchorY, anchorLeft, anchorRight);
         WaterslideAnchorBlockEntity leftBe4 =
             scene.getScene().getWorld().getBlockEntity(anchorLeft) instanceof WaterslideAnchorBlockEntity be4 ? be4 : null;
         if (leftBe4 != null) {
-            // must run at the storyboard beat: a direct call here fires once at
-            // build time, so scene replays would play without water
             scene.addInstruction(sc -> {
                 if (sc.getWorld().getBlockEntity(anchorLeft) instanceof WaterslideAnchorBlockEntity live) {
                     net.omori_sunny.create_waterparked.ponder.PonderSlideHelper.waterFlowShow(live, 0.5f);
@@ -196,8 +173,6 @@ public class WaterslidePonderScene {
                 (anchorLeft.getX() + anchorRight.getX()) / 2, anchorY,
                 (anchorLeft.getZ() + anchorRight.getZ()) / 2
             ));
-        // [5] ease the slide into its concrete look while the text shows: one grey
-        // concrete AUTO sector, radius 1.0, drained, default supports
         if (leftBe4 != null) {
             WaterslideAnchorBlockEntity rightBe5 =
                 scene.getScene().getWorld().getBlockEntity(anchorRight) instanceof WaterslideAnchorBlockEntity be5 ? be5 : null;
@@ -244,8 +219,6 @@ public class WaterslidePonderScene {
         }
         scene.idle(80);
 
-        // [6] switch the slide to a drained state: no water, no copied support
-        //     material, radius eased down to 1.0
         scene.world().modifyBlockEntity(anchorLeft, WaterslideAnchorBlockEntity.class, be -> {
             if (be == null) return;
             be.setWaterActive(false);
@@ -301,7 +274,6 @@ public class WaterslidePonderScene {
         }
         scene.idle(40);
 
-        // [7] wrench beat: smooth spline lift while the water is drained
         scene.overlay()
             .showText(80)
             .text("A wrench can be used to adjust the path of the slide")
@@ -316,7 +288,6 @@ public class WaterslidePonderScene {
         }
         scene.idle(65);
 
-        // [8] point at the tube opening handle
         Vec3 handleTip = util.vector().topOf(anchorLeft);
         scene.overlay()
             .showText(70)
@@ -324,7 +295,6 @@ public class WaterslidePonderScene {
             .placeNearTarget()
             .pointAt(handleTip);
         scene.idle(30);
-        // [9] ease the tube opening to 1.5m
         WaterslideAnchorBlockEntity leftBe2 = scene.getScene().getWorld().getBlockEntity(anchorLeft) instanceof WaterslideAnchorBlockEntity be2a ? be2a : null;
         WaterslideAnchorBlockEntity rightBe2 = scene.getScene().getWorld().getBlockEntity(anchorRight) instanceof WaterslideAnchorBlockEntity be2b ? be2b : null;
         if (leftBe2 != null && rightBe2 != null) {
@@ -337,14 +307,9 @@ public class WaterslidePonderScene {
         }
         scene.idle(90);
 
-        // [10] fade the slide + anchors out
         scene.world().hideIndependentSection(anchorLayer, Direction.UP);
         scene.idle(60);
     }
-
-    // ------------------------------------------------------------------
-    // ponder.md scene: slide_ponder_1 (sector system)
-    // ------------------------------------------------------------------
 
     public static void sectorSystem(SceneBuilder builder, SceneBuildingUtil util) {
         CreateSceneBuilder scene = new CreateSceneBuilder(builder);
@@ -352,21 +317,15 @@ public class WaterslidePonderScene {
         scene.configureBasePlate(0, 0, 15);
         scene.scaleSceneView(0.7f);
         scene.setSceneOffsetY(-1.0f);
-        // manuscript: camera scale matches scene 1, view rotated by 90 degrees
-        // (end-on view so the sector ring on the tube opening reads clearly)
         scene.rotateCameraY(90f);
         scene.showBasePlate();
         scene.idle(10);
 
-        // anchors come straight from the schematic so the layout always matches
         BlockPos[] anchors = WaterslidePonderRestore.schemaAnchors(scene.getScene().getWorld());
         BlockPos anchorLeft = anchors.length >= 1 ? anchors[0] : ANCHOR_LEFT;
         BlockPos anchorRight = anchors.length >= 2 ? anchors[1] : ANCHOR_RIGHT;
         int anchorY = Math.min(anchorLeft.getY(), anchorRight.getY());
 
-        // [1+2] show the base plate, then fade the two anchors in from above.
-        //      Unlike scene 1 the tube stays visible from the start: this story
-        //      adds sectors onto the already-existing slide
         ElementLink<WorldSectionElement> anchorLayer = scene.world()
             .showIndependentSection(
                 util.select().fromTo(
@@ -387,7 +346,6 @@ public class WaterslidePonderScene {
         ItemStack planks = new ItemStack(Items.OAK_PLANKS);
         ItemStack axe = new ItemStack(Items.IRON_AXE);
 
-        // [3] block hint: same two-item-box mechanism and timing as scene 1
         scene.overlay()
             .showText(90)
             .independent(20)
@@ -399,7 +357,6 @@ public class WaterslidePonderScene {
         scene.idle(20);
         scene.overlay().showControls(rightTop, Pointing.DOWN, 50).withItem(planks);
 
-        // [4] right after the second item box shows: add the oak planks sector
         addSector(scene, anchorLeft, anchorRight, SectorMaterial.BLOCK, "minecraft:oak_planks");
         scene.overlay()
             .showText(80)
@@ -409,7 +366,6 @@ public class WaterslidePonderScene {
             .pointAt(midTop);
         scene.idle(80);
 
-        // [5] axe hint: same mechanism and timing as scene 1
         scene.overlay()
             .showText(90)
             .independent(20)
@@ -421,7 +377,6 @@ public class WaterslidePonderScene {
         scene.idle(20);
         scene.overlay().showControls(rightTop, Pointing.DOWN, 50).withItem(axe);
 
-        // [6] right after the second item box shows: add the empty (None) sector
         addSector(scene, anchorLeft, anchorRight, SectorMaterial.OPEN, null);
         scene.overlay()
             .showText(80)
@@ -431,7 +386,6 @@ public class WaterslidePonderScene {
             .pointAt(midTop);
         scene.idle(80);
 
-        // [7] wrench text: sectors can be moved and resized afterwards
         scene.overlay()
             .showText(90)
             .text("You can use a wrench to adjust the position and size of sectors")
@@ -439,14 +393,9 @@ public class WaterslidePonderScene {
             .pointAt(midTop);
         scene.idle(80);
 
-        // end: fade the slide and anchors out like scene 1
         scene.world().hideIndependentSection(anchorLayer, Direction.UP);
         scene.idle(60);
     }
-
-    // ------------------------------------------------------------------
-    // ponder.md scene: slide_ponder_2 (ghost blocks, shares slide_ponder_1 NBT)
-    // ------------------------------------------------------------------
 
     public static void ghostBlocks(SceneBuilder builder, SceneBuildingUtil util) {
         CreateSceneBuilder scene = new CreateSceneBuilder(builder);
@@ -454,7 +403,6 @@ public class WaterslidePonderScene {
         scene.configureBasePlate(0, 0, 15);
         scene.scaleSceneView(0.7f);
         scene.setSceneOffsetY(-1.0f);
-        // same end-on camera as the sector scene so the wall seat reads clearly
         scene.rotateCameraY(90f);
         scene.showBasePlate();
         scene.idle(10);
@@ -464,8 +412,6 @@ public class WaterslidePonderScene {
         BlockPos anchorRight = anchors.length >= 2 ? anchors[1] : ANCHOR_RIGHT;
         int anchorY = Math.min(anchorLeft.getY(), anchorRight.getY());
 
-        // the tube stays visible from the start: ghost blocks sit on an
-        // already-built slide
         ElementLink<WorldSectionElement> anchorLayer = scene.world()
             .showIndependentSection(
                 util.select().fromTo(
@@ -486,7 +432,6 @@ public class WaterslidePonderScene {
         ItemStack planks = new ItemStack(Items.OAK_PLANKS);
         ItemStack axe = new ItemStack(Items.IRON_AXE);
 
-        // [3] wrench + offhand block combo hint, then place the first ghost
         scene.overlay()
             .showText(90)
             .independent(20)
@@ -505,7 +450,6 @@ public class WaterslidePonderScene {
             .pointAt(midTop);
         scene.idle(80);
 
-        // [4] a second ghost further along the curve
         addGhost(scene, anchorLeft, anchorRight, planks, 0.65f, 45f);
         scene.overlay()
             .showText(80)
@@ -514,7 +458,6 @@ public class WaterslidePonderScene {
             .pointAt(midTop);
         scene.idle(80);
 
-        // [5] axe hint, then clear the ghosts
         scene.overlay()
             .showText(90)
             .independent(20)
@@ -531,10 +474,6 @@ public class WaterslidePonderScene {
         scene.idle(60);
     }
 
-    // ------------------------------------------------------------------
-    // ponder.md scene: sa_ponder_0 (mounting a slide attachment)
-    // ------------------------------------------------------------------
-
     public static void placeAttachment(SceneBuilder builder, SceneBuildingUtil util) {
         CreateSceneBuilder scene = new CreateSceneBuilder(builder);
         scene.title(WaterslidePonderScenes.ATTACHMENT_SCENE_ID, "Mounting a Slide Attachment");
@@ -549,9 +488,6 @@ public class WaterslidePonderScene {
         BlockPos anchorRight = anchors.length >= 2 ? anchors[1] : ANCHOR_RIGHT;
         int anchorY = Math.min(anchorLeft.getY(), anchorRight.getY());
 
-        // the slide is on screen from the start: this story mounts an
-        // attachment onto a slide that already exists, like the sector and
-        // ghost block stories
         ElementLink<WorldSectionElement> anchorLayer = scene.world()
             .showIndependentSection(
                 util.select().fromTo(
@@ -562,8 +498,6 @@ public class WaterslidePonderScene {
             );
         WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, anchorY, anchorY, anchorLeft, anchorRight);
 
-        // every attachment type follows the same placement flow, so one story
-        // serves them all and shows the first registered type as the example
         SlideAttachmentType type = attachmentExample();
         ItemStack bindingStack = new ItemStack(type.getItem()
             .get());
@@ -574,8 +508,6 @@ public class WaterslidePonderScene {
             (anchorLeft.getZ() + anchorRight.getZ()) / 2
         );
         scene.idle(30);
-
-        // [1] pick the wall spot on the slide
         scene.overlay()
             .showText(90)
             .independent(20)
@@ -586,8 +518,7 @@ public class WaterslidePonderScene {
         scene.overlay().showControls(siteTop, Pointing.DOWN, 70).withItem(bindingStack).rightClick();
         scene.overlay().showOutline(PonderPalette.GREEN, SITE_OUTLINE, util.select().position(DOOR_POS), 70);
         scene.overlay().showLine(PonderPalette.GREEN, hostTop, siteTop, 70);
-
-        // [2] bind that spot to the item
+        scene.idle(70);
         scene.overlay()
             .showText(80)
             .attachKeyFrame()
@@ -595,13 +526,10 @@ public class WaterslidePonderScene {
             .placeNearTarget()
             .pointAt(siteTop);
         scene.idle(30);
-        scene.overlay().showControls(siteTop, Pointing.DOWN, 60).withItem(bindingStack).rightClick();
-        scene.idle(30);
         scene.world().setBlock(ATTACH_HOST_POS, bindingBlock(type), true);
-        scene.world().showIndependentSection(util.select().position(ATTACH_HOST_POS), Direction.UP);
-
-        // [4] the attachment is built on the slide, not on the block
+        scene.world().showIndependentSection(util.select().position(ATTACH_HOST_POS), Direction.DOWN);
         bindAttachment(scene, util, ATTACH_HOST_POS, type, anchorLeft, anchorRight);
+        scene.idle(60);
         scene.overlay()
             .showText(80)
             .text("The attachment appears on the slide at the bound spot")
@@ -609,19 +537,12 @@ public class WaterslidePonderScene {
             .pointAt(midTop);
     }
 
-    // ------------------------------------------------------------------
-    // ponder.md scene: door_ponder_0 (driving the mechanical door)
-    // ------------------------------------------------------------------
-
     public static void mechanicalDoor(SceneBuilder builder, SceneBuildingUtil util) {
         CreateSceneBuilder scene = new CreateSceneBuilder(builder);
         scene.title(WaterslidePonderScenes.DOOR_SCENE_ID, "Using the Mechanical Door");
         scene.configureBasePlate(0, 0, 15);
         scene.scaleSceneView(0.7f);
         scene.setSceneOffsetY(-1.0f);
-        // the camera axis sits 78 degrees off the door normal from the default
-        // side view; the quarter turn the sector scene uses brings it to 45 and
-        // keeps the drive train on the camera side
         scene.rotateCameraY(90f);
         scene.showBasePlate();
         scene.idle(10);
@@ -631,8 +552,6 @@ public class WaterslidePonderScene {
         BlockPos anchorRight = anchors.length >= 2 ? anchors[1] : ANCHOR_RIGHT;
         int anchorY = Math.min(anchorLeft.getY(), anchorRight.getY());
 
-        // the slide is on screen from the start: this story drives a door that
-        // is mounted on a slide that already exists
         ElementLink<WorldSectionElement> anchorLayer = scene.world()
             .showIndependentSection(
                 util.select().fromTo(
@@ -643,19 +562,14 @@ public class WaterslidePonderScene {
             );
         WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, anchorY, anchorY, anchorLeft, anchorRight);
 
-        // the shipped level's ring half above the curve is already OPEN, so the
-        // glass is not what makes the door visible: it is the roof the author
-        // asked for, and the lower half keeps the level's own gray concrete
         setRingGlass(scene, anchorLeft, anchorRight);
         setRingGlass(scene, anchorRight, anchorLeft);
 
         Vec3 hubTop = util.vector().topOf(DOOR_POS);
         ItemStack shaftStack = new ItemStack(AllBlocks.SHAFT.get());
-
-        // [1] the door hub and the shaft that drives it
         scene.world().setBlock(DOOR_POS, doorBlock(), true);
         ElementLink<WorldSectionElement> doorLayer = scene.world()
-            .showIndependentSection(util.select().position(DOOR_POS), Direction.UP);
+            .showIndependentSection(util.select().position(DOOR_POS), Direction.DOWN);
         bindDoor(scene, util, anchorLeft, anchorRight);
         scene.idle(30);
         scene.overlay()
@@ -668,13 +582,11 @@ public class WaterslidePonderScene {
         scene.overlay().showControls(hubTop, Pointing.DOWN, 60).withItem(shaftStack);
         scene.world().setBlock(DOOR_SHAFT_A, shaftBlock(), true);
         ElementLink<WorldSectionElement> shaftALayer = scene.world()
-            .showIndependentSection(util.select().position(DOOR_SHAFT_A), Direction.UP);
+            .showIndependentSection(util.select().position(DOOR_SHAFT_A), Direction.DOWN);
         scene.world().setBlock(DOOR_SHAFT_B, shaftBlock(), true);
         ElementLink<WorldSectionElement> shaftBLayer = scene.world()
-            .showIndependentSection(util.select().position(DOOR_SHAFT_B), Direction.UP);
-        scene.idle(40);
-
-        // [2] the driving shaft winds the door open
+            .showIndependentSection(util.select().position(DOOR_SHAFT_B), Direction.DOWN);
+        scene.idle(80);
         scene.overlay()
             .showText(80)
             .attachKeyFrame()
@@ -682,48 +594,20 @@ public class WaterslidePonderScene {
             .placeNearTarget()
             .pointAt(hubTop);
         scene.idle(30);
-
-        // 用户要求：这个地方开慢一点
-        setDoor(scene, util, 0.2f, 0);
-        scene.idle(6);
-        setDoor(scene, util, 0.4f, 0);
-        scene.idle(6);
-        setDoor(scene, util, 0.6f, 0);
-        scene.idle(6);
-        setDoor(scene, util, 0.8f, 0);
-        scene.idle(6);
-        setDoor(scene, util, 1f, 0);
+        scene.addInstruction(new PonderDoorSweepInstruction(DOOR_POS, 0f, 1f, 0, 24));
         scene.idle(70);
-
-        // 用户要求：这个地方关慢一点
-        setDoor(scene, util, 0.8f, 0);
-        scene.idle(6);
-        setDoor(scene, util, 0.6f, 0);
-        scene.idle(6);
-        setDoor(scene, util, 0.4f, 0);
-        scene.idle(6);
-        setDoor(scene, util, 0.2f, 0);
-        scene.idle(6);
-        setDoor(scene, util, 0f, 0);
+        scene.addInstruction(new PonderDoorSweepInstruction(DOOR_POS, 1f, 0f, 0, 24));
         scene.idle(70);
-        scene.world().hideIndependentSection(doorLayer, Direction.DOWN);
-        scene.world().hideIndependentSection(shaftALayer, Direction.DOWN);
-        scene.world().hideIndependentSection(shaftBLayer, Direction.DOWN);
-
-        // a section fade lasts 15 ticks: clear the blocks only after it is done,
-        // otherwise the redraw behind the setBlock rebuilds the fading section
-        // empty and the blocks pop out instead of fading
+        scene.world().hideIndependentSection(doorLayer, Direction.UP);
+        scene.world().hideIndependentSection(shaftALayer, Direction.UP);
+        scene.world().hideIndependentSection(shaftBLayer, Direction.UP);
         scene.idle(15);
-
-        // the door is packed away with the slide it was bolted onto
         scene.world().setBlock(DOOR_POS, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), false);
         scene.world().setBlock(DOOR_SHAFT_A, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), false);
         scene.world().setBlock(DOOR_SHAFT_B, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), false);
         scene.world().hideIndependentSection(anchorLayer, Direction.UP);
     }
 
-    // the placement story speaks for every attachment type, so it shows the
-    // first registered one - they only differ in the model on the slide
     private static SlideAttachmentType attachmentExample() {
         return SlideAttachmentTypes.INSTANCE.all()
             .iterator()
@@ -762,8 +646,7 @@ public class WaterslidePonderScene {
         setDoor(scene, util, 0f, 0);
     }
 
-    // without this entry a binding block has no geometry: the keys are the ones
-    // SlideAttachmentEntry.write uses, with the curve this level's slide spans
+    // without this entry a binding block has no geometry: keys must match SlideAttachmentEntry.write
     private static void bindAttachment(
         CreateSceneBuilder scene,
         SceneBuildingUtil util,
@@ -788,9 +671,7 @@ public class WaterslidePonderScene {
         );
     }
 
-    // the door reads both the opening and the mode out of the entry data, and
-    // the server tick that normally mirrors the mode slot into it never runs in
-    // a ponder scene - so the story writes the data and the slot value together
+    // no server tick runs in a ponder scene: write the mode slot and the entry data together
     private static void setDoor(CreateSceneBuilder scene, SceneBuildingUtil util, float open, int mode) {
         scene.world().modifyBlockEntityNBT(
             util.select().position(DOOR_POS),
@@ -809,9 +690,7 @@ public class WaterslidePonderScene {
         return data;
     }
 
-    // glass over the ring half above the curve: the ring angle grows from 0 at
-    // the curve's side through 90 at its top, and the layout hands the first
-    // FIXED sector the first 180 degrees - the level's own roof is untouched
+    // ring angle 0 at the curve side, 90 at the top; the first FIXED sector takes 180 degrees
     private static void setRingGlass(CreateSceneBuilder scene, BlockPos anchor, BlockPos peer) {
         scene.world().modifyBlockEntity(anchor, WaterslideAnchorBlockEntity.class, be -> {
             if (be == null) return;
@@ -837,8 +716,6 @@ public class WaterslidePonderScene {
         });
     }
 
-
-    // ghost blocks are mirrored on both endpoint BEs, like the sector configs
     private static void addGhost(
         CreateSceneBuilder scene,
         BlockPos left,
@@ -868,8 +745,7 @@ public class WaterslidePonderScene {
         });
     }
 
-    // both anchors must receive the same sector so the tube looks right on both
-    // ends: each BE stores the config of the curve towards its peer
+    // both anchors need the same sector: each BE stores the config for its peer curve
     private static void addSector(
         CreateSceneBuilder scene,
         BlockPos left,
