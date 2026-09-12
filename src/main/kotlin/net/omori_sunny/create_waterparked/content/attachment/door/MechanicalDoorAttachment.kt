@@ -1,8 +1,13 @@
 package net.omori_sunny.create_waterparked.content.attachment.door
 
+import net.createmod.catnip.lang.LangBuilder
+import net.minecraft.ChatFormatting
 import net.minecraft.nbt.CompoundTag
+import net.minecraft.network.chat.Component
 import net.minecraft.server.level.ServerLevel
+import net.minecraft.util.Mth
 import net.minecraft.world.entity.Entity
+import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachment
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockEntity
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentEntry
@@ -26,6 +31,10 @@ class MechanicalDoorAttachment(
 
         // riders pass once the opening exceeds this fraction
         private const val PASS_THRESHOLD = 0.7f
+
+        // Create caps its own boiler readout bar at 18 pipes; match that so
+        // the door readout is the same length as the steam engine's
+        private const val BAR_LENGTH = 18
 
         // full swing per 40 ticks at reference speed 16 RPM
         private const val OPEN_PER_TICK_AT_REF = 1.0f / 40f
@@ -81,6 +90,29 @@ class MechanicalDoorAttachment(
         val x = ((distance - stop) / (5.0 - stop)).coerceIn(0.0, 1.0)
         // OutCubic braking: strong deceleration first, gentle settle at the stop
         return x * x * x
+    }
+
+    override fun addToGoggleTooltip(
+        sab: SlideAttachmentBlockEntity,
+        tooltip: MutableList<Component>,
+        isPlayerSneaking: Boolean
+    ) {
+        val filled = Mth.clamp(Math.round(open * BAR_LENGTH), 0, BAR_LENGTH)
+        // Create's boiler bar is a row of pipes: filled portion, then the rest
+        val bar = Component.literal("|".repeat(filled))
+            .withStyle(if (open >= PASS_THRESHOLD) ChatFormatting.GREEN else ChatFormatting.GOLD)
+            .append(
+                Component.literal("|".repeat(BAR_LENGTH - filled))
+                    .withStyle(ChatFormatting.DARK_GRAY)
+            )
+        // forGoggles() adds the same indent Create's own goggle lines use, so
+        // this line starts where Create's "Stress Impact:" line starts
+        LangBuilder(CreateWaterparked.ID)
+            .translate("gui.goggles.door_open_ratio")
+            .style(ChatFormatting.GRAY)
+            .space()
+            .add(bar)
+            .forGoggles(tooltip)
     }
 
     /** per-side stop distance; the manager sets which side the rider is on */

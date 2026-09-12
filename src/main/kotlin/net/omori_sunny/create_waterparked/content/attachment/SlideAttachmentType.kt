@@ -85,7 +85,7 @@ class SlideAttachmentSpec internal constructor(
         return this
     }
 
-    /** stress impact in SU per RPM; Create renders this as "N x RPM" */
+    /** base impact in SU per RPM; the item tooltip shows "N x RPM", goggles show impact x |speed| */
     fun stressImpact(suPerRpm: Double): SlideAttachmentSpec {
         stressImpact = suPerRpm
         return this

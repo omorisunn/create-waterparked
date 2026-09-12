@@ -114,8 +114,8 @@ object CreateWaterparked {
         WaterparkedCommands.register()
     }
 
-    // Create's stress registry is a plain, non-frozen map keyed by Block and
-    // expects the base impact per RPM; it must be filled once the blocks exist.
+    // Create's stress registry is a thread-safe SimpleRegistry keyed by Block;
+    // it wants the base impact at 1 RPM, so fill it once the blocks exist.
     private fun registerStressValues() {
         for (type in SlideAttachmentTypes.all()) {
             if (type.stressImpact <= 0.0) continue

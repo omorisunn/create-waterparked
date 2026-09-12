@@ -1,12 +1,17 @@
 package net.omori_sunny.create_waterparked.content.attachment
 
 import com.simibubi.create.AllBlocks
+import com.simibubi.create.content.kinetics.base.IRotate
+import net.createmod.catnip.lang.LangBuilder
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity
+import net.minecraft.ChatFormatting
 import net.minecraft.core.BlockPos
 import net.minecraft.core.HolderLookup
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.nbt.NbtUtils
+import net.minecraft.network.chat.Component
 import net.minecraft.server.level.ServerLevel
+import net.minecraft.util.Mth
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.level.block.state.BlockState
 import net.omori_sunny.create_waterparked.CreateWaterparked
@@ -134,6 +139,32 @@ class SlideAttachmentBlockEntity(pos: BlockPos, state: BlockState) : KineticBloc
         if (clientPacket && entry != null && level != null && level!!.isClientSide) {
             net.omori_sunny.create_waterparked.client.attachment.SlideAttachmentClientIndex.add(this)
         }
+    }
+
+    // ---- goggles ----
+    // KineticBlockEntity already implements IHaveGoggleInformation, so this is
+    // only ever called while Engineer's Goggles are worn. Layout:
+    //   <block display name>
+    //   <attachment's own lines>
+    //   Stress Impact: <total> SU at current speed   (Create's stock block)
+    override fun addToGoggleTooltip(
+        tooltip: MutableList<Component>,
+        isPlayerSneaking: Boolean
+    ): Boolean {
+        // forGoggles() indents this the same way Create indents its labels
+        LangBuilder(CreateWaterparked.ID)
+            .add(blockState.block.name)
+            .style(ChatFormatting.GOLD)
+            .forGoggles(tooltip)
+        attachment()?.addToGoggleTooltip(this, tooltip, isPlayerSneaking)
+        // deliberately not super.addToGoggleTooltip(): that would prepend Create's
+        // generic Kinetic Stats heading, and this block's own name is the title
+        val stressAtBase = calculateStressApplied()
+        if (IRotate.StressImpact.isEnabled() && !Mth.equal(stressAtBase, 0f)) {
+            // Create's own "Stress Impact / N SU at current speed" block
+            addStressImpactStats(tooltip, stressAtBase)
+        }
+        return true
     }
 
     fun notifyBlockUpdated() {

@@ -1,48 +1,41 @@
 package net.omori_sunny.create_waterparked.content.attachment
 
 import net.minecraft.nbt.CompoundTag
+import net.minecraft.network.chat.Component
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.entity.Entity
 
-// behaviour base of one placed attachment instance. The framework owns the
-// placement, the index, the rendering and the detectors; subclasses implement
-// their own reaction (a door opens, a drain pump runs, ...).
+// framework handles placement and detection; subclasses react
 abstract class SlideAttachment(
     val type: SlideAttachmentType,
     val entry: SlideAttachmentEntry
 ) {
 
-    /** per-server-tick hook while the host block is loaded */
+    // only while the host block is loaded
     open fun serverTick(level: ServerLevel, sab: SlideAttachmentBlockEntity) {}
 
-    /**
-     * trigger callback fired by the framework's detectors:
-     * proximity/path hits pass the candidate entity, custom triggers pass
-     * whatever the subclass's own detector found
-     */
+    // candidate is the triggering entity, or whatever a custom detector found
     open fun onTrigger(level: ServerLevel, sab: SlideAttachmentBlockEntity, candidate: Entity?) {}
 
-    /** custom trigger detector; only called when the type declares CUSTOM */
+    // only called when the type declares CUSTOM
     open fun shouldTrigger(level: ServerLevel, sab: SlideAttachmentBlockEntity, candidate: Entity): Boolean = false
 
-    /**
-     * slide session speed scale this attachment currently demands for the
-     * given rider (e.g. a closing door braking to 0); null = no opinion, the
-     * framework takes the minimum over all attachments
-     */
+    // null = no opinion; the framework keeps the minimum over all attachments
     open fun speedScale(candidate: Entity?): Double? = null
 
-    /**
-     * distance-aware variant for path triggers: distance = remaining arc
-     * length (blocks) between the rider and this attachment; default falls
-     * back to the plain demand
-     */
+    // distance is the remaining arc length in blocks to the attachment
     open fun speedScaleAt(distance: Double): Double? = speedScale(null)
 
-    /** subclass data bag persisted with the entry */
+    // only reached while the player wears Engineer's Goggles
+    open fun addToGoggleTooltip(
+        sab: SlideAttachmentBlockEntity,
+        tooltip: MutableList<Component>,
+        isPlayerSneaking: Boolean
+    ) {}
+
     val data: CompoundTag get() = entry.data
 
-    /** mark the host BE changed so data edits reach clients */
+    // marks the host changed so edits reach clients
     protected fun sync(sab: SlideAttachmentBlockEntity) {
         sab.setChanged()
         sab.notifyBlockUpdated()
