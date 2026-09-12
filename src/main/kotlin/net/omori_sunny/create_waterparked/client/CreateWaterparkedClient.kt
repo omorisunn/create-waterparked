@@ -1,5 +1,4 @@
 package net.omori_sunny.create_waterparked.client
-// Client bootstrap: events, renderers, mixin hooks and payload handlers.
 
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer
 import net.omori_sunny.create_waterparked.CreateWaterparked
@@ -17,6 +16,7 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslidePlacementPrevi
 import net.omori_sunny.create_waterparked.client.editor.WaterslideClipboardPaste
 import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentEdit
 import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentPlacement
+import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentPlacementLine
 import net.omori_sunny.create_waterparked.client.editor.SlideClipboardCopy
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashParticle
@@ -65,8 +65,6 @@ object CreateWaterparkedClient {
         MOD_BUS.addListener(::onRegisterParticleProviders)
         MOD_BUS.addListener(::onItemColors)
         MOD_BUS.addListener(::onRegisterClientExtensions)
-        // receiveCanceled: another mod's HIGHEST listener cancels use-item
-        // events before our default-registered handlers ever see them
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, true, WaterslideGhostPlacement::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickItem)
@@ -85,6 +83,7 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onRightClickItem)
         NeoForge.EVENT_BUS.addListener(SlideAttachmentPlacement::onClientTick)
+        NeoForge.EVENT_BUS.addListener(SlideAttachmentPlacementLine::onClientTick)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, true, SlideAttachmentEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentEdit::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(SlideAttachmentEdit::onClientTick)
@@ -117,7 +116,6 @@ object CreateWaterparkedClient {
         ) {
             event.enqueueWork { PonderIndex.addPlugin(WaterslidePonderPlugin()) }
         }
-        // attachment editor factories (key -> control point editor)
         net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideAttachmentEditorRegistry
             .registerFactory(
                 net.omori_sunny.create_waterparked.content.attachment.door.DoorStopDistanceEditor.EDITOR_KEY
@@ -128,8 +126,6 @@ object CreateWaterparkedClient {
             .factory { ctx, be, pt -> WaterslideTubeVisual(ctx, be, pt) }
             .neverSkipVanillaRender()
             .apply()
-        // SAB hubs spin their shaft like Create shafts; the attachment itself
-        // draws from the level stage renderer
         for (type in net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes.all()) {
             SimpleBlockEntityVisualizer.builder(type.blockEntityType.get())
                 .factory { ctx, be, pt ->
@@ -176,9 +172,7 @@ object CreateWaterparkedClient {
         )
     }
 
-    // custom rendered item, Create-package style: SimpleCustomRenderer also
-    // registers the item with Create's CustomRenderedItems so the baked model
-    // gets wrapped with CustomRenderedItemModel and the BEWLR is used
+    // also registers with Create's CustomRenderedItems so the model wraps
     private fun onRegisterClientExtensions(event: net.neoforged.neoforge.client.extensions.common.RegisterClientExtensionsEvent) {
         val item: net.minecraft.world.item.Item =
             net.omori_sunny.create_waterparked.content.registry.ModItems.INFLATABLE_BOAT_1X2
@@ -232,8 +226,7 @@ object CreateWaterparkedClient {
 
     private var lastDebugState: Boolean? = null
 
-    // SA edit info bar: drawn on the same HUD row CCS uses for the slide
-    // status, so both editors report at the same height
+    // same hud row as the slide status so both editors align
     private fun onRenderGuiLayerPost(event: net.neoforged.neoforge.client.event.RenderGuiLayerEvent.Post) {
         if (event.getName() != net.neoforged.neoforge.client.gui.VanillaGuiLayers.SELECTED_ITEM_NAME) return
         val mc = Minecraft.getInstance()
@@ -248,9 +241,6 @@ object CreateWaterparkedClient {
         net.omori_sunny.create_waterparked.client.editor.SubLevelEditFocus.tick(mc)
         WaterSlideSoundManager.tick()
         WaterslideSplashSpawner.tickStanding(mc)
-        // SA control point editors tick and render on our own hooks - CCS's
-        // overlay method returns early once we release the anchor, so the UI
-        // must not depend on that injection
         net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
             .tickAll(mc)
         val debug = ModClientConfig.waterSimDebug()

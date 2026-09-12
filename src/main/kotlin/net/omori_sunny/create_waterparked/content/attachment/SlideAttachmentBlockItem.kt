@@ -16,10 +16,7 @@ import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 
-// SAB item: two-phase placement. Phase 1 (slide hover right-click, handled by
-// the client placement handler) stores SLIDE_ATTACHMENT_POS on the stack and
-// the glint shows; phase 2 places this block on the ground, the server
-// validates the stored position against the live slide and binds the entry.
+// two-phase placement: the stack stores the slide position, the block binds it
 class SlideAttachmentBlockItem(
     private val blockRef: DeferredBlock<out SlideAttachmentBlock>,
     private val typeRef: () -> SlideAttachmentType,
@@ -47,7 +44,6 @@ class SlideAttachmentBlockItem(
         if (level.isClientSide) return InteractionResult.SUCCESS
 
         val type = type()
-        // validate against the live slide before the block exists
         val error = validatePlacement(level, context.clickedPos, type, pos)
         if (error != null) {
             context.player?.displayClientMessage(
@@ -55,10 +51,10 @@ class SlideAttachmentBlockItem(
             )
             return InteractionResult.FAIL
         }
+        val before = bindingBlocksAround(level, context.clickedPos)
         val result = super.useOn(context)
         if (!result.consumesAction()) return result
-        // locate the freshly placed SAB and bind the attachment position
-        val placed = findPlacedHost(level, context)
+        val placed = findPlacedHost(level, context, before)
         if (placed != null) {
             placed.bind(
                 SlideAttachmentEntry(
@@ -66,7 +62,6 @@ class SlideAttachmentBlockItem(
                     pos.curveA, pos.curveB, pos.site, pos.t, pos.angle
                 )
             )
-            // frogport style success feedback
             (level as? net.minecraft.server.level.ServerLevel)?.sendParticles(
                 net.minecraft.core.particles.ParticleTypes.HAPPY_VILLAGER,
                 placed.blockPos.x + 0.5, placed.blockPos.y + 1.0, placed.blockPos.z + 0.5,
@@ -77,13 +72,13 @@ class SlideAttachmentBlockItem(
             )
             val player = context.player
             if (player == null || !player.isCreative) stack.shrink(1)
-            // strip the selection so the item starts a fresh placement
             stack.remove(ModDataComponents.SLIDE_ATTACHMENT_POS)
         }
         return result
     }
 
-    private fun validatePlacement(
+    // clicked and type are unused: it only checks that the stored slide still exists
+    internal fun validatePlacement(
         level: net.minecraft.world.level.Level,
         clicked: BlockPos,
         type: SlideAttachmentType,
@@ -95,22 +90,32 @@ class SlideAttachmentBlockItem(
         return "create_waterparked.attachment.no_slide"
     }
 
+    private fun bindingBlocksAround(
+        level: net.minecraft.world.level.Level,
+        clicked: BlockPos
+    ): Set<BlockPos> {
+        val found = HashSet<BlockPos>()
+        for (dx in -2..2) for (dy in -2..2) for (dz in -2..2) {
+            val p = clicked.offset(dx, dy, dz)
+            if (level.getBlockEntity(p) is SlideAttachmentBlockEntity) found.add(p.immutable())
+        }
+        return found
+    }
+
     private fun findPlacedHost(
         level: net.minecraft.world.level.Level,
-        context: UseOnContext
+        context: UseOnContext,
+        before: Set<BlockPos>
     ): SlideAttachmentBlockEntity? {
-        val center = context.clickedPos.relative(context.clickedFace)
-        for (dx in -1..1) for (dy in -1..1) for (dz in -1..1) {
-            val p = center.offset(dx, dy, dz)
-            if (level.getBlockEntity(p) is SlideAttachmentBlockEntity) {
-                return level.getBlockEntity(p) as SlideAttachmentBlockEntity
-            }
+        val after = bindingBlocksAround(level, context.clickedPos)
+        for (p in after) {
+            if (p in before) continue
+            (level.getBlockEntity(p) as? SlideAttachmentBlockEntity)?.let { return it }
         }
         return null
     }
 
     companion object {
-        // the selected slide position on a held SAB item
         val POSITION_CODEC: Codec<SlideAttachmentPos> = RecordCodecBuilder.create { i ->
             i.group(
                 BlockPos.CODEC.fieldOf("a").forGetter { it.curveA },
