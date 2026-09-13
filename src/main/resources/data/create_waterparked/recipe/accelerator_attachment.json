@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "building",
+  "ingredients": [
+    {
+      "item": "create:precision_mechanism"
+    },
+    {
+      "item": "minecraft:golden_boots"
+    },
+    {
+      "item": "create_waterparked:waterslide_track"
+    }
+  ],
+  "result": {
+    "count": 1,
+    "id": "create_waterparked:accelerator_attachment"
+  }
+}

@@ -2,6 +2,9 @@ package net.omori_sunny.create_waterparked.content.attachment
 
 import com.simibubi.create.foundation.blockEntity.behaviour.scrollValue.ScrollOptionBehaviour
 import net.minecraft.network.chat.Component
+import net.omori_sunny.create_waterparked.config.ModConfig
+import net.omori_sunny.create_waterparked.content.attachment.accelerator.AcceleratorAttachment
+import net.omori_sunny.create_waterparked.content.attachment.accelerator.AcceleratorProvider
 import net.omori_sunny.create_waterparked.content.attachment.detector.DetectorAttachment
 import net.omori_sunny.create_waterparked.content.attachment.detector.DetectorProvider
 import net.omori_sunny.create_waterparked.content.attachment.door.DoorModeSlot
@@ -48,8 +51,20 @@ object ModSlideAttachments {
         }
     }
 
+    val SLIDE_ACCELERATOR: SlideAttachmentType by lazy {
+        SlideAttachmentRegistry.register(
+            "accelerator", SlideAttachmentSite.INTERIOR
+        ) {
+            attachment(::AcceleratorAttachment)
+            provider(::AcceleratorProvider)
+            trigger(SlideAttachmentTriggerSpec.Custom)
+            stressImpact { ModConfig.acceleratorStressImpact() }
+        }
+    }
+
     fun init() {
         MECHANICAL_DOOR.toString()
         SLIDE_DETECTOR.toString()
+        SLIDE_ACCELERATOR.toString()
     }
 }

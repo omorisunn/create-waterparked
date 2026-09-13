@@ -11,6 +11,7 @@ import net.neoforged.neoforge.network.handling.IPayloadContext
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockEntity
 import net.omori_sunny.create_waterparked.content.attachment.SlideHandleDistance
+import net.omori_sunny.create_waterparked.content.attachment.accelerator.AcceleratorAttachment
 import net.omori_sunny.create_waterparked.content.attachment.detector.DetectorAttachment
 import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorAttachment
 
@@ -42,6 +43,15 @@ class SlideAttachmentEditPayload(
             "distL", "distR" -> entry.data.putFloat(
                 if (kind == "distL") DetectorAttachment.TAG_DIST_L else DetectorAttachment.TAG_DIST_R,
                 value.coerceIn(SlideHandleDistance.MIN_DIST, SlideHandleDistance.MAX_DIST)
+            )
+            "accelL", "accelR" -> entry.data.putFloat(
+                if (kind == "accelL") AcceleratorAttachment.TAG_DIST_L
+                else AcceleratorAttachment.TAG_DIST_R,
+                value.coerceIn(SlideHandleDistance.MIN_DIST, SlideHandleDistance.MAX_DIST)
+            )
+            "accelDir" -> entry.data.putFloat(
+                AcceleratorAttachment.TAG_DIR,
+                ((value % 360f) + 360f) % 360f
             )
             "t" -> {
                 entry.t = value.coerceIn(SlideHandleDistance.MIN_T, SlideHandleDistance.MAX_T)

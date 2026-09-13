@@ -27,7 +27,7 @@ import kotlin.math.abs
 
 // two red distance handles on the tangent plus a free position handle
 abstract class SlideDistanceHandleEditor(
-    private val bePos: BlockPos,
+    protected val bePos: BlockPos,
     key: String
 ) : SlideControlPointEditor("$key#${bePos.asLong()}") {
 
@@ -82,7 +82,7 @@ abstract class SlideDistanceHandleEditor(
             if (it <= 0f) DEFAULT_DIST else it.coerceIn(MIN_DIST, MAX_DIST)
         }
 
-    private fun clientBe(): SlideAttachmentBlockEntity? =
+    protected fun clientBe(): SlideAttachmentBlockEntity? =
         SlideAttachmentEdit.editingBe()?.takeIf { it.blockPos == bePos }
             ?: (Minecraft.getInstance().level?.getBlockEntity(bePos) as? SlideAttachmentBlockEntity)
 
@@ -115,7 +115,7 @@ abstract class SlideDistanceHandleEditor(
 
     private fun currentT(): Float = previewT ?: (clientBe()?.entry?.t ?: 0.5f)
 
-    private fun frame(): Pair<Vec3, Vec3>? {
+    protected fun frame(): Pair<Vec3, Vec3>? {
         val be = clientBe() ?: return null
         return frameFor(be, currentT())
     }
@@ -133,7 +133,7 @@ abstract class SlideDistanceHandleEditor(
         return sum.coerceAtLeast(1.0E-3)
     }
 
-    private fun value(key: String): Double = when (key) {
+    protected fun value(key: String): Double = when (key) {
         "L" -> previewL ?: clientBe()?.entry?.data?.let { handleDistance(it, -1).toDouble() }
             ?: DEFAULT_DIST.toDouble()
         "R" -> previewR ?: clientBe()?.entry?.data?.let { handleDistance(it, 1).toDouble() }
@@ -216,7 +216,7 @@ abstract class SlideDistanceHandleEditor(
 
     override fun readout(point: ControlPoint, value: Double): Component = line()
 
-    private fun line(): Component =
+    protected open fun line(): Component =
         Component.translatable(
             readoutKey,
             CoasterBezierHandleEdit.formatLiftMetersReadout(positionMeters()),
@@ -225,7 +225,7 @@ abstract class SlideDistanceHandleEditor(
         )
 
     // in blocks, despite the function name
-    private fun positionMeters(): Float {
+    protected fun positionMeters(): Float {
         val be = clientBe() ?: return 0f
         val r = resolveFor(be, currentT()) ?: return 0f
         return arcLengthTo(r.curve, currentT())

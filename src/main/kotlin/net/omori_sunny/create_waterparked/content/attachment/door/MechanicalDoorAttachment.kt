@@ -13,6 +13,7 @@ import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachment
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockEntity
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentEntry
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentKinetics
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentType
 import net.omori_sunny.create_waterparked.content.attachment.SlideHandleDistance
 
@@ -65,26 +66,13 @@ class MechanicalDoorAttachment(
         (sab.getBehaviour(ScrollOptionBehaviour.TYPE) as? ScrollOptionBehaviour<*>)
             ?.value?.coerceIn(0, MechanicalDoorMode.entries.size - 1) ?: 0
 
-    // driven when any adjacent kinetic block spins
-    private fun drivenSpeed(level: ServerLevel, sab: SlideAttachmentBlockEntity): Float {
-        val own = sab as? com.simibubi.create.content.kinetics.base.KineticBlockEntity
-        if (own != null && kotlin.math.abs(own.speed) > 1.0E-3f) return own.speed
-        for (dir in net.minecraft.core.Direction.entries) {
-            val n = level.getBlockEntity(sab.blockPos.relative(dir))
-            if (n is com.simibubi.create.content.kinetics.base.KineticBlockEntity &&
-                kotlin.math.abs(n.speed) > 1.0E-3f
-            ) return n.speed
-        }
-        return 0f
-    }
-
     override fun serverTick(level: ServerLevel, sab: SlideAttachmentBlockEntity) {
         val mode = currentMode(sab)
         if (data.getInt(TAG_MODE) != mode) {
             data.putInt(TAG_MODE, mode)
             sync(sab)
         }
-        val speed = drivenSpeed(level, sab)
+        val speed = SlideAttachmentKinetics.drivenSpeed(level, sab)
         if (speed == 0f) return
         val before = open
         val delta = (speed / REF_SPEED) * OPEN_PER_TICK_AT_REF

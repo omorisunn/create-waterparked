@@ -38,6 +38,9 @@ object ModConfig {
     lateinit var SLIDE_CANCEL_COOLDOWN_TICKS: ModConfigSpec.IntValue
     lateinit var SUB_LEVEL_SLIDE: ModConfigSpec.BooleanValue
     lateinit var WALL_THICKNESS: ModConfigSpec.DoubleValue
+    lateinit var ACCELERATOR_STRESS_IMPACT: ModConfigSpec.DoubleValue
+    lateinit var ACCELERATOR_BASE_SPEED: ModConfigSpec.DoubleValue
+    lateinit var ACCELERATOR_REFERENCE_RPM: ModConfigSpec.DoubleValue
 
     lateinit var SERVER_SPEC: ModConfigSpec
 
@@ -134,6 +137,18 @@ object ModConfig {
             )
         SERVER_BUILDER.pop()
 
+        SERVER_BUILDER.push("accelerator")
+        ACCELERATOR_STRESS_IMPACT = SERVER_BUILDER
+            .comment("Stress units per RPM consumed by a slide accelerator.")
+            .defineInRange("acceleratorStressImpact", 8.0, 0.0, 64.0)
+        ACCELERATOR_BASE_SPEED = SERVER_BUILDER
+            .comment("Speed a slide accelerator adds at the reference RPM, in blocks per second.")
+            .defineInRange("acceleratorBaseSpeed", 4.0, 0.5, 32.0)
+        ACCELERATOR_REFERENCE_RPM = SERVER_BUILDER
+            .comment("RPM at which a slide accelerator adds its base speed; faster rotation scales up linearly.")
+            .defineInRange("acceleratorReferenceRpm", 16.0, 1.0, 256.0)
+        SERVER_BUILDER.pop()
+
         SERVER_SPEC = SERVER_BUILDER.build()
     }
 
@@ -172,7 +187,6 @@ object ModConfig {
 
     fun maxGhostBlocksPerCurve(): Int = MAX_GHOST_BLOCKS_PER_CURVE.safeGet(SPEC).coerceIn(1, 512)
 
-
     fun sectorBorderPx(): Int = SECTOR_BORDER_PX.safeGet(SPEC).coerceIn(0, 16)
 
     fun slideMaxEntrySpeed(): Double = SLIDE_MAX_ENTRY_SPEED.safeGet(SPEC).coerceIn(1.0, 100.0)
@@ -202,6 +216,14 @@ object ModConfig {
     fun subLevelSlideRiding(): Boolean = SUB_LEVEL_SLIDE.safeGet(SERVER_SPEC)
 
     fun wallThickness(): Float = WALL_THICKNESS.safeGet(SERVER_SPEC).toFloat().coerceIn(0.1f, 0.5f)
+
+    fun acceleratorStressImpact(): Double =
+        ACCELERATOR_STRESS_IMPACT.safeGet(SERVER_SPEC).coerceIn(0.0, 64.0)
+
+    fun acceleratorBaseSpeed(): Double = ACCELERATOR_BASE_SPEED.safeGet(SERVER_SPEC).coerceIn(0.5, 32.0)
+
+    fun acceleratorReferenceRpm(): Double =
+        ACCELERATOR_REFERENCE_RPM.safeGet(SERVER_SPEC).coerceIn(1.0, 256.0)
 
     @Suppress("DEPRECATION")
     fun register() {
