@@ -4,7 +4,7 @@
 	"parent": "block/block",
 	"textures": {
 		"0": "create_waterparked:block/attachment_face",
-		"4": "create_waterparked:block/mechanical_door_attachment",
+		"4": "create_waterparked:block/detector_attachment",
 		"particle": "create:block/axis",
 		"1_0": "create:block/axis",
 		"1_1": "create:block/axis_top"

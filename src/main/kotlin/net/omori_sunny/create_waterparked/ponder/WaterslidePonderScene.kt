@@ -19,8 +19,10 @@ import net.minecraft.world.item.Items
 import net.minecraft.world.level.block.Blocks
 import net.minecraft.world.level.block.RotatedPillarBlock
 import net.minecraft.world.level.block.state.BlockState
+import net.minecraft.world.level.block.state.properties.BlockStateProperties
 import net.minecraft.world.phys.Vec3
 import net.omori_sunny.create_waterparked.content.attachment.ModSlideAttachments
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlock
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockEntity
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentSite
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentType
@@ -44,6 +46,8 @@ object WaterslidePonderScene {
     private val DOOR_POS = BlockPos(6, 4, 6)
     private val DOOR_SHAFT_A = BlockPos(6, 4, 5)
     private val DOOR_SHAFT_B = BlockPos(6, 4, 4)
+    private val DETECTOR_POS = BlockPos(6, 4, 6)
+    private val DETECTOR_LAMP = BlockPos(6, 4, 7)
     private val ATTACH_HOST_POS = BlockPos(7, DISPLAY_Y, 7)
     private const val SITE_OUTLINE = "create_waterparked:attachment_site"
     private const val ATTACH_T = 0.5f
@@ -542,7 +546,7 @@ object WaterslidePonderScene {
             .placeNearTarget()
             .pointAt(siteTop)
         scene.idle(30)
-        scene.world().setBlock(ATTACH_HOST_POS, bindingBlock(type), true)
+        scene.world().setBlock(ATTACH_HOST_POS, attachmentBlock(type, Direction.Axis.Y), true)
         scene.world().showIndependentSection(util.select().position(ATTACH_HOST_POS), Direction.DOWN)
         bindAttachment(scene, util, ATTACH_HOST_POS, type, anchorLeft, anchorRight)
         scene.idle(60)
@@ -584,7 +588,8 @@ object WaterslidePonderScene {
 
         val hubTop = util.vector().topOf(DOOR_POS)
         val shaftStack = ItemStack(AllBlocks.SHAFT.get())
-        scene.world().setBlock(DOOR_POS, doorBlock(), true)
+        scene.world()
+            .setBlock(DOOR_POS, attachmentBlock(ModSlideAttachments.MECHANICAL_DOOR, Direction.Axis.Z), true)
         val doorLayer = scene.world()
             .showIndependentSection(util.select().position(DOOR_POS), Direction.DOWN)
         bindDoor(scene, util, anchorLeft, anchorRight)
@@ -625,23 +630,97 @@ object WaterslidePonderScene {
         scene.world().hideIndependentSection(anchorLayer, Direction.UP)
     }
 
+    @JvmStatic
+    fun slideDetector(builder: SceneBuilder, util: SceneBuildingUtil) {
+        val scene = CreateSceneBuilder(builder)
+        scene.title(WaterslidePonderScenes.DETECTOR_SCENE_ID, "Using the Slide Detector")
+        scene.configureBasePlate(0, 0, 15)
+        scene.scaleSceneView(0.7f)
+        scene.setSceneOffsetY(-1.0f)
+        scene.rotateCameraY(90f)
+        scene.showBasePlate()
+        scene.idle(10)
+
+        val anchors = WaterslidePonderRestore.schemaAnchors(scene.scene.world)
+        val anchorLeft = if (anchors.size >= 1) anchors[0] else ANCHOR_LEFT
+        val anchorRight = if (anchors.size >= 2) anchors[1] else ANCHOR_RIGHT
+        val anchorY = min(anchorLeft.y, anchorRight.y)
+
+        val anchorLayer = scene.world()
+            .showIndependentSection(
+                util.select().fromTo(
+                    anchorLeft.x, anchorY, anchorLeft.z,
+                    anchorRight.x, anchorY, anchorRight.z
+                ),
+                Direction.DOWN
+            )
+        WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, anchorY, anchorY, anchorLeft, anchorRight)
+        setRingHalfOpen(scene, anchorLeft, anchorRight)
+        setRingHalfOpen(scene, anchorRight, anchorLeft)
+
+        val hubTop = util.vector().topOf(DETECTOR_POS)
+        scene.world()
+            .setBlock(DETECTOR_POS, attachmentBlock(ModSlideAttachments.SLIDE_DETECTOR, Direction.Axis.Z), true)
+        val detectorLayer = scene.world()
+            .showIndependentSection(util.select().position(DETECTOR_POS), Direction.DOWN)
+        bindAttachment(scene, util, DETECTOR_POS, ModSlideAttachments.SLIDE_DETECTOR, anchorLeft, anchorRight)
+        scene.idle(30)
+        scene.overlay()
+            .showText(90)
+            .independent(20)
+            .text("The band hugs the inner wall and ends where a sector is open")
+            .placeNearTarget()
+            .pointAt(hubTop)
+        scene.idle(100)
+
+        scene.world().setBlock(DETECTOR_LAMP, Blocks.REDSTONE_LAMP.defaultBlockState(), true)
+        val lampLayer = scene.world()
+            .showIndependentSection(util.select().position(DETECTOR_LAMP), Direction.DOWN)
+        scene.idle(20)
+        scene.overlay()
+            .showText(90)
+            .attachKeyFrame()
+            .text("A rider crossing it switches the hub on and it emits redstone")
+            .placeNearTarget()
+            .pointAt(hubTop)
+        scene.idle(30)
+        scene.world()
+            .modifyBlock(DETECTOR_POS, { it.setValue(SlideAttachmentBlock.POWERED, true) }, true)
+        scene.world().setBlock(
+            DETECTOR_LAMP,
+            Blocks.REDSTONE_LAMP.defaultBlockState().setValue(BlockStateProperties.LIT, true),
+            true
+        )
+        scene.idle(70)
+        scene.overlay()
+            .showText(80)
+            .text("Put a display link on the hub to read how many riders have passed")
+            .placeNearTarget()
+            .pointAt(hubTop)
+        scene.idle(90)
+
+        scene.world()
+            .modifyBlock(DETECTOR_POS, { it.setValue(SlideAttachmentBlock.POWERED, false) }, true)
+        scene.world().setBlock(DETECTOR_LAMP, Blocks.REDSTONE_LAMP.defaultBlockState(), true)
+        scene.idle(20)
+        scene.world().hideIndependentSection(detectorLayer, Direction.UP)
+        scene.world().hideIndependentSection(lampLayer, Direction.UP)
+        scene.world().hideIndependentSection(anchorLayer, Direction.UP)
+        scene.idle(15)
+        scene.world().setBlock(DETECTOR_POS, Blocks.AIR.defaultBlockState(), false)
+        scene.world().setBlock(DETECTOR_LAMP, Blocks.AIR.defaultBlockState(), false)
+    }
+
     private fun attachmentExample(): SlideAttachmentType =
         SlideAttachmentTypes.all()
             .iterator()
             .next()
 
-    private fun doorBlock(): BlockState =
-        ModSlideAttachments.MECHANICAL_DOOR
-            .block
-            .get()
-            .defaultBlockState()
-            .setValue(RotatedPillarBlock.AXIS, Direction.Axis.Z)
-
-    private fun bindingBlock(type: SlideAttachmentType): BlockState =
+    private fun attachmentBlock(type: SlideAttachmentType, axis: Direction.Axis): BlockState =
         type.block
             .get()
             .defaultBlockState()
-            .setValue(RotatedPillarBlock.AXIS, Direction.Axis.Y)
+            .setValue(RotatedPillarBlock.AXIS, axis)
 
     private fun shaftBlock(): BlockState =
         AllBlocks.SHAFT.get()
@@ -724,6 +803,29 @@ object WaterslidePonderScene {
                     SectorType.FIXED,
                     180f
                 )
+            )
+            be.setSectorConfig(peer, cfg)
+        }
+    }
+
+    // detector scene: half the ring is open, so the band shows where it stops
+    private fun setRingHalfOpen(scene: CreateSceneBuilder, anchor: BlockPos, peer: BlockPos) {
+        scene.world().modifyBlockEntity(anchor, WaterslideAnchorBlockEntity::class.java) { be ->
+            if (be == null) return@modifyBlockEntity
+            val cfg = be.sectorConfigFor(peer).copyOf()
+            cfg.startAngle = 270f
+            cfg.sectors.clear()
+            cfg.sectors.add(
+                WaterslideSector(
+                    cfg.newId(),
+                    SectorMaterial.BLOCK,
+                    ResourceLocation.parse("minecraft:glass"),
+                    SectorType.FIXED,
+                    180f
+                )
+            )
+            cfg.sectors.add(
+                WaterslideSector(cfg.newId(), SectorMaterial.OPEN, null, SectorType.FIXED, 180f)
             )
             be.setSectorConfig(peer, cfg)
         }

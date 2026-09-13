@@ -1,10 +1,12 @@
 package net.omori_sunny.create_waterparked.content.attachment
 
+import com.simibubi.create.content.trains.track.BezierConnection
 import net.minecraft.core.BlockPos
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
+import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 
 // everything a model needs to build itself: the resolved tube frame at the
 // attachment's (t, angle) plus the slide's radius/thickness and the host
@@ -21,7 +23,11 @@ data class SlideAttachmentModelContext(
     val radialOut: Vec3,
     val radius: Float,
     val wallThickness: Float,
-    val data: CompoundTag
+    val data: CompoundTag,
+    val t: Float,
+    val curve: BezierConnection,
+    val sectorConfig: WaterslideSectorConfig? = null,
+    val renderTransform: SlideAttachmentRenderTransform? = null
 ) {
     /** local attachment-space AABB (origin at the wall point, +z = tangent) */
     fun localAABB(sx: Double, sy: Double, sz: Double, ex: Double, ey: Double, ez: Double): AABB =

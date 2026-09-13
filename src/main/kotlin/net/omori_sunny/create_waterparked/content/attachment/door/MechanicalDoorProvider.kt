@@ -1,6 +1,7 @@
 package net.omori_sunny.create_waterparked.content.attachment.door
 
 import net.minecraft.world.phys.AABB
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentGeometry
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentModelContext
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentModelProvider
 
@@ -37,15 +38,9 @@ class MechanicalDoorProvider : SlideAttachmentModelProvider() {
 
     override fun boundingBox(ctx: SlideAttachmentModelContext): AABB {
         val outer = ctx.radius + ctx.wallThickness - 0.1
-        val (ox, oy) = centreOffset(ctx, outer)
+        val (ox, oy) = SlideAttachmentGeometry.axisOffset(ctx, outer.toDouble())
         val r = ctx.radius - 0.1
         return AABB(ox - r - FRAME, oy - r - FRAME, -0.25, ox + r + FRAME, oy + r + FRAME, 0.25)
-    }
-
-    private fun centreOffset(ctx: SlideAttachmentModelContext, r: Double): Pair<Double, Double> {
-        val cosA = ctx.radialOut.dot(ctx.lateral)
-        val sinA = ctx.radialOut.dot(ctx.up)
-        return -cosA * r to -sinA * r
     }
 
     private fun ring(cx: Double, cy: Double, radius: Double, sides: Int): List<Pair<Double, Double>> =
@@ -57,7 +52,7 @@ class MechanicalDoorProvider : SlideAttachmentModelProvider() {
     override fun parts(ctx: SlideAttachmentModelContext): List<Part> {
         val sides = net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh.crossSections()
         val innerR = (ctx.radius - 0.1).toDouble()
-        val (ox, oy) = centreOffset(ctx, ctx.radius + ctx.wallThickness - 0.1)
+        val (ox, oy) = SlideAttachmentGeometry.axisOffset(ctx, (ctx.radius + ctx.wallThickness - 0.1).toDouble())
         val outerRing = ring(ox, oy, innerR, sides)
         val innerRing = ring(ox, oy, innerR - FRAME, sides)
 

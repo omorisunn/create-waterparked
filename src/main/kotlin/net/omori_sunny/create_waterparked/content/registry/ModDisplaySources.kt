@@ -6,6 +6,7 @@ import net.neoforged.neoforge.registries.DeferredHolder
 import net.neoforged.neoforge.registries.DeferredRegister
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.attachment.ModSlideAttachments
+import net.omori_sunny.create_waterparked.content.attachment.detector.DetectorDisplaySource
 import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorDisplaySource
 import java.util.function.Supplier
 
@@ -18,11 +19,18 @@ object ModDisplaySources {
     val MECHANICAL_DOOR: DeferredHolder<DisplaySource, MechanicalDoorDisplaySource> =
         REGISTRY.register("mechanical_door", Supplier { MechanicalDoorDisplaySource() })
 
+    val DETECTOR_RIDERS: DeferredHolder<DisplaySource, DetectorDisplaySource> =
+        REGISTRY.register("detector_riders", Supplier { DetectorDisplaySource() })
+
     // runs from common setup: the binding block must be registered first
     fun bindToBlocks() {
         DisplaySource.BY_BLOCK.add(
             ModSlideAttachments.MECHANICAL_DOOR.block.get(),
             MECHANICAL_DOOR.get()
+        )
+        DisplaySource.BY_BLOCK.add(
+            ModSlideAttachments.SLIDE_DETECTOR.block.get(),
+            DETECTOR_RIDERS.get()
         )
     }
 }
