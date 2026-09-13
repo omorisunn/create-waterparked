@@ -105,6 +105,7 @@ object SlideAttachmentRenderer {
         ) ?: return
         val ctx = resolved.context
         val provider = type.providerFactory()
+        val basis = SlideAttachmentGeometry.basis(ctx)
 
         val sprite = try {
             net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
@@ -123,6 +124,7 @@ object SlideAttachmentRenderer {
         poseStack.translate(-origin.x, -origin.y, -origin.z)
         var polys = ArrayList<net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Polygon>()
         val manualQuads = ArrayList<SlideAttachmentModelProvider.Quad>()
+        val tiledParts = ArrayList<SlideAttachmentModelProvider.TiledPart>()
         for (part in provider.parts(ctx)) {
             when (part) {
                 is SlideAttachmentModelProvider.BoxPart ->
@@ -131,6 +133,7 @@ object SlideAttachmentRenderer {
                     manualQuads.addAll(part.quads)
                 is SlideAttachmentModelProvider.ModelPart ->
                     drawModel(part, ctx, poseStack, buffers, level)
+                is SlideAttachmentModelProvider.TiledPart -> tiledParts.add(part)
             }
         }
         val csg = net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg
@@ -166,7 +169,9 @@ object SlideAttachmentRenderer {
         if (be.isRemoved) clipCaches.remove(cacheKey)
         if (manualQuads.isNotEmpty()) {
             val consumer2 = buffers.getBuffer(if (editing) ATTACH_TRI_TRANSLUCENT else ATTACH_TRI_CUTOUT)
-            for (q in manualQuads) emitManualQuad(q, ctx, sprite, level, poseStack.last(), consumer2)
+            for (q in manualQuads) {
+                emitManualQuad(q, sprite, basis, ctx.position, level, poseStack.last(), consumer2)
+            }
         }
         val consumer = buffers.getBuffer(if (editing) ATTACH_TRI_TRANSLUCENT else ATTACH_TRI_CUTOUT)
         for (poly in clipped) {
@@ -176,12 +181,46 @@ object SlideAttachmentRenderer {
                 emitTri(consumer, poseStack.last(), vs[0], vs[i], vs[i + 1])
             }
         }
-        poseStack.popPose()
         if (buffers is MultiBufferSource.BufferSource) {
             buffers.endBatch(ATTACH_TRI_CUTOUT)
             buffers.endBatch(ATTACH_TRI_TRANSLUCENT)
         }
+        for (part in tiledParts) {
+            val type = tiledRenderType(part.texture)
+            val consumer3 = buffers.getBuffer(type)
+            val scroll = part.scroll * ((level.gameTime + partialTick) / 20.0f)
+            for (q in part.quads) {
+                emitTiledQuad(q, basis, ctx.position, level, poseStack.last(), consumer3, scroll)
+            }
+            if (buffers is MultiBufferSource.BufferSource) buffers.endBatch(type)
+        }
+        poseStack.popPose()
     }
+
+    private val tiledRenderTypes =
+        HashMap<net.minecraft.resources.ResourceLocation, RenderType>()
+
+    // standalone repeating texture, so a uv past 1 tiles instead of clamping to the sprite edge
+    private fun tiledRenderType(texture: net.minecraft.resources.ResourceLocation): RenderType =
+        tiledRenderTypes.getOrPut(texture) {
+            RenderType.create(
+                "create_waterparked:attachment_tiled_" + texture.path.replace('/', '_'),
+                com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK,
+                com.mojang.blaze3d.vertex.VertexFormat.Mode.TRIANGLES,
+                262144,
+                RenderType.CompositeState.builder()
+                    .setShaderState(net.minecraft.client.renderer.RenderStateShard.RENDERTYPE_TRANSLUCENT_SHADER)
+                    .setTextureState(
+                        net.minecraft.client.renderer.RenderStateShard.TextureStateShard(texture, false, false)
+                    )
+                    .setTransparencyState(net.minecraft.client.renderer.RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                    .setOutputState(net.minecraft.client.renderer.RenderStateShard.MAIN_TARGET)
+                    .setWriteMaskState(net.minecraft.client.renderer.RenderStateShard.COLOR_WRITE)
+                    .setLightmapState(net.minecraft.client.renderer.RenderStateShard.LIGHTMAP)
+                    .setCullState(net.minecraft.client.renderer.RenderStateShard.NO_CULL)
+                    .createCompositeState(true)
+            )
+        }
 
     private fun innerPrismAt(
         ctx: SlideAttachmentModelContext
@@ -248,16 +287,13 @@ object SlideAttachmentRenderer {
 
     private fun emitManualQuad(
         q: SlideAttachmentModelProvider.Quad,
-        ctx: SlideAttachmentModelContext,
         sprite: TextureAtlasSprite?,
+        basis: Triple<Vec3, Vec3, Vec3>,
+        origin: Vec3,
         level: net.minecraft.world.level.Level,
         pose: com.mojang.blaze3d.vertex.PoseStack.Pose,
         consumer: VertexConsumer
     ) {
-        val (lat, up, tan) = SlideAttachmentGeometry.basis(ctx)
-        fun w(x: Double, y: Double, z: Double) = ctx.position
-            .add(lat.scale(x)).add(up.scale(y)).add(tan.scale(z))
-        fun uvs(f: Float) = if (sprite != null) f else 0.5f
         val u0 = if (sprite != null) borderU(sprite, q.u0) else 0.5f
         val v0 = if (sprite != null) borderV(sprite, q.v0) else 0.5f
         val u1 = if (sprite != null) borderU(sprite, q.u1) else 0.5f
@@ -266,23 +302,91 @@ object SlideAttachmentRenderer {
         val v2 = if (sprite != null) borderV(sprite, q.v2) else 0.5f
         val u3 = if (sprite != null) borderU(sprite, q.u3) else 0.5f
         val v3 = if (sprite != null) borderV(sprite, q.v3) else 0.5f
-        val corners = arrayOf(
-            Triple(w(q.x0, q.y0, q.z0), u0, v0),
-            Triple(w(q.x1, q.y1, q.z1), u1, v1),
-            Triple(w(q.x2, q.y2, q.z2), u2, v2),
-            Triple(w(q.x3, q.y3, q.z3), u3, v3)
+        emitQuad(q, u0, v0, u1, v1, u2, v2, u3, v3, basis, origin, level, pose, consumer, false)
+    }
+
+    private fun emitTiledQuad(
+        q: SlideAttachmentModelProvider.Quad,
+        basis: Triple<Vec3, Vec3, Vec3>,
+        origin: Vec3,
+        level: net.minecraft.world.level.Level,
+        pose: com.mojang.blaze3d.vertex.PoseStack.Pose,
+        consumer: VertexConsumer,
+        scroll: Float
+    ) {
+        emitQuad(
+            q, q.u0 + scroll, q.v0, q.u1 + scroll, q.v1,
+            q.u2 + scroll, q.v2, q.u3 + scroll, q.v3,
+            basis, origin, level, pose, consumer, true
         )
-        val light = LevelRenderer.getLightColor(level, BlockPos.containing(w(q.x0, q.y0, q.z0)))
-        for (i in intArrayOf(0, 1, 2, 0, 2, 3)) {
-            val (pos, u, v) = corners[i]
-            consumer.addVertex(pose, pos.x.toFloat(), pos.y.toFloat(), pos.z.toFloat())
+    }
+
+    // shared emitter, uv already resolved to whatever space the layer samples
+    private fun emitQuad(
+        q: SlideAttachmentModelProvider.Quad,
+        u0: Float, v0: Float, u1: Float, v1: Float,
+        u2: Float, v2: Float, u3: Float, v3: Float,
+        basis: Triple<Vec3, Vec3, Vec3>,
+        origin: Vec3,
+        level: net.minecraft.world.level.Level,
+        pose: com.mojang.blaze3d.vertex.PoseStack.Pose,
+        consumer: VertexConsumer,
+        fullBright: Boolean
+    ) {
+        val (lat, up, tan) = basis
+        fun vx(i: Int): Double = when (i) {
+            0 -> q.x0
+            1 -> q.x1
+            2 -> q.x2
+            else -> q.x3
+        }
+
+        fun vy(i: Int): Double = when (i) {
+            0 -> q.y0
+            1 -> q.y1
+            2 -> q.y2
+            else -> q.y3
+        }
+
+        fun vz(i: Int): Double = when (i) {
+            0 -> q.z0
+            1 -> q.z1
+            2 -> q.z2
+            else -> q.z3
+        }
+
+        fun uu(i: Int): Float = when (i) {
+            0 -> u0
+            1 -> u1
+            2 -> u2
+            else -> u3
+        }
+
+        fun vv(i: Int): Float = when (i) {
+            0 -> v0
+            1 -> v1
+            2 -> v2
+            else -> v3
+        }
+
+        val anchor = origin.add(lat.scale(vx(0))).add(up.scale(vy(0))).add(tan.scale(vz(0)))
+        val light = if (fullBright) {
+            LightTexture.FULL_BRIGHT
+        } else {
+            LevelRenderer.getLightColor(level, BlockPos.containing(anchor))
+        }
+        for (i in QUAD_INDICES) {
+            val p = origin.add(lat.scale(vx(i))).add(up.scale(vy(i))).add(tan.scale(vz(i)))
+            consumer.addVertex(pose, p.x.toFloat(), p.y.toFloat(), p.z.toFloat())
                 .setColor(255, 255, 255, editAlpha)
-                .setUv(u, v)
+                .setUv(uu(i), vv(i))
                 .setOverlay(OverlayTexture.NO_OVERLAY)
                 .setLight(light)
                 .setNormal(pose, q.nx.toFloat(), q.ny.toFloat(), q.nz.toFloat())
         }
     }
+
+    private val QUAD_INDICES = intArrayOf(0, 1, 2, 0, 2, 3)
 
     private fun emitTri(
         consumer: VertexConsumer,

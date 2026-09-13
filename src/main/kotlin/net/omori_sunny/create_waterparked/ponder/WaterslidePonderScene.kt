@@ -48,6 +48,8 @@ object WaterslidePonderScene {
     private val DOOR_SHAFT_B = BlockPos(6, 4, 4)
     private val DETECTOR_POS = BlockPos(6, 4, 6)
     private val DETECTOR_LAMP = BlockPos(6, 4, 7)
+    private val ACCELERATOR_POS = BlockPos(6, 4, 6)
+    private val ACCELERATOR_SHAFT = BlockPos(6, 4, 5)
     private val ATTACH_HOST_POS = BlockPos(7, DISPLAY_Y, 7)
     private const val SITE_OUTLINE = "create_waterparked:attachment_site"
     private const val ATTACH_T = 0.5f
@@ -709,6 +711,82 @@ object WaterslidePonderScene {
         scene.idle(15)
         scene.world().setBlock(DETECTOR_POS, Blocks.AIR.defaultBlockState(), false)
         scene.world().setBlock(DETECTOR_LAMP, Blocks.AIR.defaultBlockState(), false)
+    }
+
+    @JvmStatic
+    fun slideAccelerator(builder: SceneBuilder, util: SceneBuildingUtil) {
+        val scene = CreateSceneBuilder(builder)
+        scene.title(WaterslidePonderScenes.ACCELERATOR_SCENE_ID, "Using the Slide Accelerator")
+        scene.configureBasePlate(0, 0, 15)
+        scene.scaleSceneView(0.7f)
+        scene.setSceneOffsetY(-1.0f)
+        scene.rotateCameraY(90f)
+        scene.showBasePlate()
+        scene.idle(10)
+
+        val anchors = WaterslidePonderRestore.schemaAnchors(scene.scene.world)
+        val anchorLeft = if (anchors.size >= 1) anchors[0] else ANCHOR_LEFT
+        val anchorRight = if (anchors.size >= 2) anchors[1] else ANCHOR_RIGHT
+        val anchorY = min(anchorLeft.y, anchorRight.y)
+
+        val anchorLayer = scene.world()
+            .showIndependentSection(
+                util.select().fromTo(
+                    anchorLeft.x, anchorY, anchorLeft.z,
+                    anchorRight.x, anchorY, anchorRight.z
+                ),
+                Direction.DOWN
+            )
+        WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, anchorY, anchorY, anchorLeft, anchorRight)
+        setRingHalfOpen(scene, anchorLeft, anchorRight)
+        setRingHalfOpen(scene, anchorRight, anchorLeft)
+
+        val hubTop = util.vector().topOf(ACCELERATOR_POS)
+        scene.world().setBlock(
+            ACCELERATOR_POS,
+            attachmentBlock(ModSlideAttachments.SLIDE_ACCELERATOR, Direction.Axis.Z),
+            true
+        )
+        val padLayer = scene.world()
+            .showIndependentSection(util.select().position(ACCELERATOR_POS), Direction.DOWN)
+        bindAttachment(
+            scene, util, ACCELERATOR_POS,
+            ModSlideAttachments.SLIDE_ACCELERATOR, anchorLeft, anchorRight
+        )
+        scene.idle(30)
+        scene.overlay()
+            .showText(90)
+            .independent(20)
+            .text("The band boosts whoever crosses it, along the direction of the arrows")
+            .placeNearTarget()
+            .pointAt(hubTop)
+        scene.idle(100)
+
+        scene.world().setBlock(ACCELERATOR_SHAFT, shaftBlock(), true)
+        val shaftLayer = scene.world()
+            .showIndependentSection(util.select().position(ACCELERATOR_SHAFT), Direction.DOWN)
+        scene.idle(20)
+        scene.overlay()
+            .showText(90)
+            .attachKeyFrame()
+            .text("A shaft drives it: the faster it turns, the stronger the boost")
+            .placeNearTarget()
+            .pointAt(hubTop)
+        scene.idle(100)
+
+        scene.overlay()
+            .showText(80)
+            .text("Wrench the direction handle to aim the boost, or hold Alt to ignore the grid")
+            .placeNearTarget()
+            .pointAt(hubTop)
+        scene.idle(90)
+
+        scene.world().hideIndependentSection(shaftLayer, Direction.UP)
+        scene.world().hideIndependentSection(padLayer, Direction.UP)
+        scene.world().hideIndependentSection(anchorLayer, Direction.UP)
+        scene.idle(15)
+        scene.world().setBlock(ACCELERATOR_POS, Blocks.AIR.defaultBlockState(), false)
+        scene.world().setBlock(ACCELERATOR_SHAFT, Blocks.AIR.defaultBlockState(), false)
     }
 
     private fun attachmentExample(): SlideAttachmentType =

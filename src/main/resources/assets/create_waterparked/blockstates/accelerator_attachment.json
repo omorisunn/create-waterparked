@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "axis=z,powered=false": { "model": "create_waterparked:block/accelerator_attachment/block", "x": 90 },
+    "axis=x,powered=false": { "model": "create_waterparked:block/accelerator_attachment/block", "x": 90, "y": 90 },
+    "axis=y,powered=false": { "model": "create_waterparked:block/accelerator_attachment/block", "x": 180 },
+    "axis=z,powered=true": { "model": "create_waterparked:block/accelerator_attachment/block", "x": 90 },
+    "axis=x,powered=true": { "model": "create_waterparked:block/accelerator_attachment/block", "x": 90, "y": 90 },
+    "axis=y,powered=true": { "model": "create_waterparked:block/accelerator_attachment/block", "x": 180 }
+  }
+}

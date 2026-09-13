@@ -7,6 +7,10 @@ import dev.ryanhcode.sable.sublevel.ServerSubLevel
 import dev.silvergold.simulatedcoasters.track.anchor.CoasterAnchorpointBlockEntity
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.config.ModConfig
+import net.omori_sunny.create_waterparked.content.attachment.ModSlideAttachments
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentKinetics
+import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentManager
+import net.omori_sunny.create_waterparked.content.attachment.accelerator.AcceleratorAttachment
 import net.omori_sunny.create_waterparked.content.waterslide.PlacedSector
 import net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
@@ -55,9 +59,27 @@ object PhysicsSlideTrajectoryBuilder {
     private class Tube {
         val frames = ArrayList<TubeFrame>()
         val curves = HashSet<BezierConnection>()
+        val spans = ArrayList<CurveSpan>()
         var cursor = 0
 
         fun hit(pos: Vec3): TubeHit = tubeHit(this, pos)
+    }
+
+    private class CurveSpan(
+        val curve: BezierConnection,
+        val first: Int,
+        val last: Int,
+        val reversed: Boolean
+    )
+
+    private class AcceleratorWindow(
+        val first: Int,
+        val last: Int,
+        val angle: Double,
+        val magnitude: Double,
+        val sign: Double
+    ) {
+        var wasInside = false
     }
 
     private data class TubeHit(
@@ -70,7 +92,8 @@ object PhysicsSlideTrajectoryBuilder {
         val watered: Boolean,
         val idx: Int,
         val t: Double,
-        val atEnd: Boolean
+        val atEnd: Boolean,
+        val atStart: Boolean
     )
 
     private data class SegClosest(val t: Double, val distSq: Double)
@@ -107,6 +130,7 @@ object PhysicsSlideTrajectoryBuilder {
         var tube = buildTube(access, entryCurve, towardSecond, startT) ?: return null
         if (tube.frames.size < 2) return null
         tube.cursor = nearestIndex(tube.frames, startPos)
+        var accelerators = acceleratorWindows(access, tube)
 
         var pos = startPos
         var vel = startVel
@@ -164,8 +188,14 @@ object PhysicsSlideTrajectoryBuilder {
                 if (axisDist > wallDist) {
                     val angle = angleDeg(radial, hit.lateral, hit.up)
                     val sector = sectorAt(hit.config, angle)
-                    if (sector == null || sector.sector.material == SectorMaterial.OPEN || hit.atEnd) {
-                        if (hit.atEnd) vel = hit.tangent.scale(vel.length())
+                    val backOut = hit.atStart && vel.dot(hit.tangent) < 0.0
+                    if (sector == null || sector.sector.material == SectorMaterial.OPEN ||
+                        hit.atEnd || backOut
+                    ) {
+                        // only straighten a rider heading in; one going back out keeps its velocity
+                        if (hit.atEnd && vel.dot(hit.tangent) > 0.0) {
+                            vel = hit.tangent.scale(vel.length())
+                        }
                         leftTube = true
                         break
                     }
@@ -190,6 +220,18 @@ object PhysicsSlideTrajectoryBuilder {
                     }
                 } else {
                     pos = newPos
+                }
+
+                if (accelerators.isNotEmpty()) {
+                    for (window in accelerators) {
+                        val inside = window.first <= hit.idx && hit.idx <= window.last
+                        if (inside && !window.wasInside) {
+                            val dir = hit.tangent.scale(Math.cos(window.angle) * window.sign)
+                                .add(hit.lateral.scale(Math.sin(window.angle) * window.sign))
+                            vel = vel.add(dir.scale(window.magnitude))
+                        }
+                        window.wasInside = inside
+                    }
                 }
 
                 // keep the head inside the tube so the camera never leaves the wall
@@ -332,6 +374,7 @@ object PhysicsSlideTrajectoryBuilder {
                                 if (nextTube == null || nextTube.frames.size < 2) break
                                 nextTube.cursor = nearestIndex(nextTube.frames, start.pos)
                                 tube = nextTube
+                                accelerators = acceleratorWindows(access, tube)
                                 pos = start.pos
                                 vel = start.vel
                                 inTubeState = true
@@ -403,7 +446,10 @@ object PhysicsSlideTrajectoryBuilder {
             val config = SlideCurveGeometry.sectorConfig(access.level, a, b)
                 ?: WaterslideSectorConfig.defaultConfig()
             val watered = isCurveWatered(access, a, b)
+            val firstFrame = tube.frames.size
             for (f in walkFrames) pushFrame(tube.frames, f, config, watered)
+            val lastFrame = tube.frames.size - 1
+            if (lastFrame > firstFrame) tube.spans += CurveSpan(bc, firstFrame, lastFrame, !atFirst)
 
             first = false
             midStart = false
@@ -445,6 +491,65 @@ object PhysicsSlideTrajectoryBuilder {
         }
     }
 
+    private val acceleratorTypeId: String by lazy { ModSlideAttachments.SLIDE_ACCELERATOR.id.toString() }
+
+    // one window per powered accelerator sitting on a curve of this tube, in frame index space
+    private fun acceleratorWindows(access: SlideSpaceAccess, tube: Tube): List<AcceleratorWindow> {
+        val typeId = acceleratorTypeId
+        val out = ArrayList<AcceleratorWindow>()
+        for (be in SlideAttachmentManager.allAttachments()) {
+            if (be.isRemoved || be.level !== access.level) continue
+            val entry = be.entry ?: continue
+            if (entry.typeId != typeId) continue
+            val rpm = SlideAttachmentKinetics.drivenSpeed(access.level, be)
+            if (rpm == 0f) continue
+            val anchor = access.getBlockEntity(entry.curveA) as? WaterslideAnchorBlockEntity ?: continue
+            val raw = anchor.anchorPeerCurvesView[entry.curveB.immutable()] ?: continue
+            val curve = if (raw.isPrimary) raw else raw.secondary() ?: continue
+            val span = tube.spans.firstOrNull { sameEdge(it.curve, curve) } ?: continue
+            val ranFrames = span.last - span.first
+            val blocks = spanBlocks(tube.frames, span.first, span.last)
+            val perBlock = ranFrames / blocks
+            val hub = curve.getPosition(entry.t.toDouble())
+            val centre = nearestInSpan(tube.frames, span, hub)
+            // outside the walked part: an upstream pad must not clamp onto the entry frame
+            if (tube.frames[centre].center.distanceTo(hub) > blocks / ranFrames * 2.0) continue
+            val left = AcceleratorAttachment.distL(entry.data).toDouble()
+            val right = AcceleratorAttachment.distR(entry.data).toDouble()
+            // the model works in canonical curve space, the walk may run against it
+            val back = if (span.reversed) left else -left
+            val front = if (span.reversed) -right else right
+            val first = (centre + Math.round(back * perBlock).toInt()).coerceIn(span.first, span.last)
+            val last = (centre + Math.round(front * perBlock).toInt()).coerceIn(span.first, span.last)
+            out += AcceleratorWindow(
+                minOf(first, last), maxOf(first, last),
+                AcceleratorAttachment.directionRadians(entry.data),
+                AcceleratorAttachment.pulseSpeed(rpm),
+                if (span.reversed) -1.0 else 1.0
+            )
+        }
+        return out
+    }
+
+    private fun nearestInSpan(frames: List<TubeFrame>, span: CurveSpan, pos: Vec3): Int {
+        var best = span.first
+        var bestDist = Double.MAX_VALUE
+        for (i in span.first..span.last) {
+            val d = frames[i].center.distanceToSqr(pos)
+            if (d < bestDist) {
+                bestDist = d
+                best = i
+            }
+        }
+        return best
+    }
+
+    private fun spanBlocks(frames: List<TubeFrame>, first: Int, last: Int): Double {
+        var sum = 0.0
+        for (i in first until last) sum += frames[i].center.distanceTo(frames[i + 1].center)
+        return sum.coerceAtLeast(1.0E-3)
+    }
+
     private fun tubeHit(tube: Tube, pos: Vec3): TubeHit {
         val frames = tube.frames
         var idx = tube.cursor.coerceIn(0, frames.size - 2)
@@ -476,7 +581,8 @@ object PhysicsSlideTrajectoryBuilder {
         val radius = fa.radius + (fb.radius - fa.radius) * t.toFloat()
         val cfg = if (t < 0.5) fa.config else fb.config
         val atEnd = idx >= frames.size - 2 && t > 0.5
-        return TubeHit(center, tan, lat, up, radius, cfg, fa.watered, idx, t, atEnd)
+        val atStart = idx <= 0 && t < 0.5
+        return TubeHit(center, tan, lat, up, radius, cfg, fa.watered, idx, t, atEnd, atStart)
     }
 
     private fun closestOnSegment(a: TubeFrame, b: TubeFrame, pos: Vec3): SegClosest {

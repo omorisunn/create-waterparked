@@ -26,6 +26,7 @@ class SlideAttachmentType(
     val trigger: SlideAttachmentTriggerSpec,
     val maxHostDistance: Double,
     val stressImpact: Double,
+    val stressImpactSupplier: (() -> Double)?,
     val goggleInfo: Boolean,
     val extraBehaviours: ((SlideAttachmentBlockEntity) -> List<BlockEntityBehaviour>)?,
     val block: DeferredBlock<out SlideAttachmentBlock>,
@@ -59,6 +60,7 @@ class SlideAttachmentSpec internal constructor(
     internal var trigger: SlideAttachmentTriggerSpec = SlideAttachmentTriggerSpec.Custom
     internal var maxHostDistance: Double = 16.0
     internal var stressImpact: Double = 0.0
+    internal var stressImpactSupplier: (() -> Double)? = null
     internal var goggleInfo: Boolean = true
     internal var extraBehaviours: ((SlideAttachmentBlockEntity) -> List<BlockEntityBehaviour>)? = null
     internal var blockProperties: () -> Properties = {
@@ -89,6 +91,13 @@ class SlideAttachmentSpec internal constructor(
     // stress units per rpm; the shown impact is multiplied by speed
     fun stressImpact(suPerRpm: Double): SlideAttachmentSpec {
         stressImpact = suPerRpm
+        return this
+    }
+
+    // live impact, e.g. a server config entry; also seeds the registration time check
+    fun stressImpact(suPerRpm: () -> Double): SlideAttachmentSpec {
+        stressImpact = suPerRpm()
+        stressImpactSupplier = suPerRpm
         return this
     }
 
@@ -142,6 +151,7 @@ object SlideAttachmentRegistry {
             builder.trigger,
             builder.maxHostDistance,
             builder.stressImpact,
+            builder.stressImpactSupplier,
             builder.goggleInfo,
             builder.extraBehaviours,
             block,

@@ -117,11 +117,13 @@ object CreateWaterparked {
     // impact is per rpm; run once the blocks are registered
     private fun registerStressValues() {
         for (type in SlideAttachmentTypes.all()) {
-            if (type.stressImpact <= 0.0) continue
+            if (type.stressImpact <= 0.0 && type.stressImpactSupplier == null) continue
             val block = type.block.get()
             BlockStressValues.IMPACTS.register(
                 block,
-                java.util.function.DoubleSupplier { type.stressImpact }
+                java.util.function.DoubleSupplier {
+                    type.stressImpactSupplier?.invoke() ?: type.stressImpact
+                }
             )
             LOGGER.debug("Stress impact {} x RPM for {}", type.stressImpact, type.id)
         }

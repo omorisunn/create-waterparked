@@ -44,5 +44,7 @@ class WaterslidePonderPlugin : CreatePonderPlugin() {
         helper.exclude(ModSlideAttachments.MECHANICAL_DOOR.item.get())
         helper.exclude(ModSlideAttachments.SLIDE_DETECTOR.block.get())
         helper.exclude(ModSlideAttachments.SLIDE_DETECTOR.item.get())
+        helper.exclude(ModSlideAttachments.SLIDE_ACCELERATOR.block.get())
+        helper.exclude(ModSlideAttachments.SLIDE_ACCELERATOR.item.get())
     }
 }

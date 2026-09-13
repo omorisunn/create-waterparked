@@ -90,7 +90,22 @@ object SlideAttachmentEdit {
         return AllItems.WRENCH.isIn(player.mainHandItem) || AllItems.WRENCH.isIn(player.offhandItem)
     }
 
+    // any control point belonging to the slide itself owns the click while it is dragged
+    @JvmStatic
+    fun slideDragging(): Boolean =
+        WaterslideRadiusEdit.isDragging() ||
+            WaterslideSectorEdit.isDraggingControlPoint() ||
+            dev.silvergold.simulatedcoasters.client.track.BezierHandleDragManager.isDraggingHandle()
+
+    // the press that starts a slide drag happens before that drag is registered, so hover counts too
+    @JvmStatic
+    fun slideOwnsClick(mc: Minecraft): Boolean =
+        slideDragging() ||
+            WaterslideRadiusEdit.isHoveringOrDragging(mc) ||
+            WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc)
+
     private fun tryEnter(mc: Minecraft) {
+        if (slideOwnsClick(mc)) return
         val be = pickAttachment(mc)
         if (be == null) {
             return
@@ -123,7 +138,7 @@ object SlideAttachmentEdit {
             exit()
             return
         }
-        if (SlideControlPointEditor.anyDragging()) {
+        if (SlideControlPointEditor.anyDragging() || slideDragging()) {
             lastHitTick = level.gameTime
             return
         }
@@ -141,7 +156,7 @@ object SlideAttachmentEdit {
         if (!holdingWrench(mc)) return
         if (mc.player?.isShiftKeyDown == true) return
         if (net.omori_sunny.create_waterparked.client.editor.WaterslideGhostPlacement.ghostPlacementStack(mc.player ?: return) != null) return
-        if (SlideControlPointEditor.anyDragging()) {
+        if (SlideControlPointEditor.anyDragging() || slideOwnsClick(mc)) {
             event.setCanceled(true)
             event.setSwingHand(false)
             return
@@ -168,7 +183,7 @@ object SlideAttachmentEdit {
         val mc = Minecraft.getInstance()
         if (!holdingWrench(mc)) return
         if (mc.player?.isShiftKeyDown == true) return
-        if (SlideControlPointEditor.anyDragging()) {
+        if (SlideControlPointEditor.anyDragging() || slideOwnsClick(mc)) {
             event.isCanceled = true
             return
         }
