@@ -15,6 +15,8 @@ import net.minecraft.world.level.block.Block
 import net.minecraft.world.level.block.RenderShape
 import net.minecraft.world.level.block.entity.BlockEntityType
 import net.minecraft.world.level.block.state.BlockState
+import net.minecraft.world.level.block.state.StateDefinition
+import net.minecraft.world.level.block.state.properties.BlockStateProperties
 import net.minecraft.world.phys.BlockHitResult
 import net.minecraft.world.phys.shapes.CollisionContext
 import net.minecraft.world.phys.shapes.Shapes
@@ -105,6 +107,16 @@ class SlideAttachmentBlock(
 
     override fun getRenderShape(state: BlockState): RenderShape = RenderShape.MODEL
 
+    override fun createBlockStateDefinition(builder: StateDefinition.Builder<Block, BlockState>) {
+        super.createBlockStateDefinition(builder)
+        builder.add(POWERED)
+    }
+
+    override fun isSignalSource(state: BlockState): Boolean = true
+
+    override fun getSignal(state: BlockState, level: BlockGetter, pos: BlockPos, direction: Direction): Int =
+        if (state.getValue(POWERED)) 15 else 0
+
     // pick and outline use the hub shape while collisions stay a full block
     override fun getShape(
         state: BlockState,
@@ -123,6 +135,8 @@ class SlideAttachmentBlock(
     companion object {
         const val HUB_MIN_VOXEL = 3.0
         const val HUB_MAX_VOXEL = 13.0
+
+        val POWERED = BlockStateProperties.POWERED
 
         private val HUB_SHAPE: VoxelShape = Block.box(
             HUB_MIN_VOXEL, HUB_MIN_VOXEL, HUB_MIN_VOXEL,

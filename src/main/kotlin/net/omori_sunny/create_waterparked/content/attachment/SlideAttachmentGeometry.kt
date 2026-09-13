@@ -8,6 +8,7 @@ import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
+import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
 import kotlin.math.cos
 import kotlin.math.sin
@@ -40,7 +41,8 @@ object SlideAttachmentGeometry {
         val anchor = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity ?: return null
         val raw = anchor.anchorPeerCurvesView[peerPos.immutable()] ?: return null
         val curve = if (raw.isPrimary) raw else raw.secondary() ?: return null
-        val ctx = contextAt(level, sabPos, curve, t, angle, data, renderTransform)
+        val sectors = anchor.sectorConfigs[peerPos.immutable()]
+        val ctx = contextAt(level, sabPos, curve, t, angle, data, renderTransform, sectors)
         return Resolved(anchor, curve, ctx)
     }
 
@@ -52,7 +54,8 @@ object SlideAttachmentGeometry {
         t: Float,
         angle: Float,
         data: CompoundTag = CompoundTag(),
-        renderTransform: SlideAttachmentRenderTransform? = null
+        renderTransform: SlideAttachmentRenderTransform? = null,
+        sectorConfig: WaterslideSectorConfig? = null
     ): SlideAttachmentModelContext {
         var center = curve.getPosition(t.toDouble())
         var tangent = dev.silvergold.simulatedcoasters.track.CoasterBezierRailFrames
@@ -77,7 +80,7 @@ object SlideAttachmentGeometry {
         val position = center.add(radialOut.scale((radius + wall).toDouble()))
         return SlideAttachmentModelContext(
             level, sabPos, position, tangent, lateral, up,
-            radialOut, radius, ModConfig.wallThickness(), data
+            radialOut, radius, ModConfig.wallThickness(), data, t, curve, sectorConfig, renderTransform
         )
     }
 
@@ -109,6 +112,13 @@ object SlideAttachmentGeometry {
             if (w.z > maxZ) maxZ = w.z
         }
         return AABB(minX, minY, minZ, maxX, maxY, maxZ)
+    }
+
+    /** tube axis centre in the local lateral/up plane for an outer wall radius */
+    fun axisOffset(ctx: SlideAttachmentModelContext, outerRadius: Double): Pair<Double, Double> {
+        val cosA = ctx.radialOut.dot(ctx.lateral)
+        val sinA = ctx.radialOut.dot(ctx.up)
+        return -cosA * outerRadius to -sinA * outerRadius
     }
 
     /** right-handed basis: cross(lateral, up) aligned with the tangent */

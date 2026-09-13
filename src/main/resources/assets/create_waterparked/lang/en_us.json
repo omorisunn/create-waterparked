@@ -41,6 +41,10 @@
   "create_waterparked.ponder.door_ponder_0.header": "Using the Mechanical Door",
   "create_waterparked.ponder.door_ponder_0.text_1": "Put a shaft into the door hub and it will drive the door",
   "create_waterparked.ponder.door_ponder_0.text_2": "How far the shaft turns decides how far the door opens",
+  "create_waterparked.ponder.detector_ponder_0.header": "Using the Slide Detector",
+  "create_waterparked.ponder.detector_ponder_0.text_1": "The band hugs the inner wall and ends where a sector is open",
+  "create_waterparked.ponder.detector_ponder_0.text_2": "A rider crossing it switches the hub on and it emits redstone",
+  "create_waterparked.ponder.detector_ponder_0.text_3": "Put a display link on the hub to read how many riders have passed",
   "create_waterparked.ponder.sa_ponder_0.header": "Mounting a Slide Attachment",
   "create_waterparked.ponder.sa_ponder_0.text_1": "Right-click the slide with a slide attachment to pick a spot",
   "create_waterparked.ponder.sa_ponder_0.text_2": "Then place the block on the ground",
@@ -69,10 +73,12 @@
   "create_waterparked.attachment.need_position": "Select a position on the slide first",
   "create_waterparked.attachment.no_slide": "The bound slide is gone",
   "block.create_waterparked.mechanical_door_attachment": "Mechanical Slide Door",
+  "block.create_waterparked.detector_attachment": "Slide Detector",
   "create_waterparked.attachment.wrong_site": "This attachment cannot mount there",
   "create_waterparked.attachment.placed": "Slide attachment placed",
   "create_waterparked.attachment.selected": "Position selected - place the binding block near the slide",
   "create_waterparked.track.attachment_edit_readout": "Position: %s | Stop distance: %s-%s",
+  "create_waterparked.track.detector_edit_readout": "Position: %s | Detection: %s-%s",
   "create_waterparked.gui.goggles.door_open_ratio": "Open ratio:",
   "create_waterparked.door.mode_slot": "Opening mode",
   "create_waterparked.door.mode.slide": "Split sideways",
@@ -81,5 +87,6 @@
   "create_waterparked.display_source.mechanical_door": "Mechanical Door Open Ratio",
   "create_waterparked.display_source.mechanical_door.display": "Display Format",
   "create_waterparked.display_source.mechanical_door.percent": "Percent",
-  "create_waterparked.display_source.mechanical_door.progress_bar": "Progress Bar"
+  "create_waterparked.display_source.mechanical_door.progress_bar": "Progress Bar",
+  "create_waterparked.display_source.detector_riders": "Detected Riders"
 }

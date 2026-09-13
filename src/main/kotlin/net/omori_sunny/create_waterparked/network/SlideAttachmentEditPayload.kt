@@ -10,8 +10,11 @@ import net.minecraft.server.level.ServerPlayer
 import net.neoforged.neoforge.network.handling.IPayloadContext
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockEntity
+import net.omori_sunny.create_waterparked.content.attachment.SlideHandleDistance
+import net.omori_sunny.create_waterparked.content.attachment.detector.DetectorAttachment
+import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorAttachment
 
-// client to server: a stop-distance endpoint drag was committed
+// client to server: a wrench handle drag was committed
 class SlideAttachmentEditPayload(
     val bePos: BlockPos,
     val kind: String,
@@ -31,12 +34,17 @@ class SlideAttachmentEditPayload(
         val be = level.getBlockEntity(bePos) as? SlideAttachmentBlockEntity ?: return
         val entry = be.entry ?: return
         when (kind) {
-            "stopL", "stopR" -> {
-                val key = if (kind == "stopL") "DoorStopL" else "DoorStopR"
-                entry.data.putFloat(key, value.coerceIn(0.5f, 5.0f))
-            }
+            "stopL", "stopR" -> entry.data.putFloat(
+                if (kind == "stopL") MechanicalDoorAttachment.TAG_STOP_L
+                else MechanicalDoorAttachment.TAG_STOP_R,
+                value.coerceIn(SlideHandleDistance.MIN_DIST, SlideHandleDistance.MAX_DIST)
+            )
+            "distL", "distR" -> entry.data.putFloat(
+                if (kind == "distL") DetectorAttachment.TAG_DIST_L else DetectorAttachment.TAG_DIST_R,
+                value.coerceIn(SlideHandleDistance.MIN_DIST, SlideHandleDistance.MAX_DIST)
+            )
             "t" -> {
-                entry.t = value.coerceIn(0.02f, 0.98f)
+                entry.t = value.coerceIn(SlideHandleDistance.MIN_T, SlideHandleDistance.MAX_T)
             }
             else -> return
         }

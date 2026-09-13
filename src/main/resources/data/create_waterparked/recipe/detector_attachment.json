@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "building",
+  "ingredients": [
+    {
+      "item": "create:redstone_contact"
+    },
+    {
+      "item": "create_waterparked:waterslide_track"
+    }
+  ],
+  "result": {
+    "count": 1,
+    "id": "create_waterparked:detector_attachment"
+  }
+}

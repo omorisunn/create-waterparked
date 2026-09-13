@@ -26,6 +26,7 @@ class SlideAttachmentType(
     val trigger: SlideAttachmentTriggerSpec,
     val maxHostDistance: Double,
     val stressImpact: Double,
+    val goggleInfo: Boolean,
     val extraBehaviours: ((SlideAttachmentBlockEntity) -> List<BlockEntityBehaviour>)?,
     val block: DeferredBlock<out SlideAttachmentBlock>,
     val blockEntityType: DeferredHolder<BlockEntityType<*>, BlockEntityType<SlideAttachmentBlockEntity>>,
@@ -58,6 +59,7 @@ class SlideAttachmentSpec internal constructor(
     internal var trigger: SlideAttachmentTriggerSpec = SlideAttachmentTriggerSpec.Custom
     internal var maxHostDistance: Double = 16.0
     internal var stressImpact: Double = 0.0
+    internal var goggleInfo: Boolean = true
     internal var extraBehaviours: ((SlideAttachmentBlockEntity) -> List<BlockEntityBehaviour>)? = null
     internal var blockProperties: () -> Properties = {
         Properties.of().mapColor(MapColor.METAL).strength(1.2f).sound(SoundType.METAL).noOcclusion()
@@ -87,6 +89,12 @@ class SlideAttachmentSpec internal constructor(
     // stress units per rpm; the shown impact is multiplied by speed
     fun stressImpact(suPerRpm: Double): SlideAttachmentSpec {
         stressImpact = suPerRpm
+        return this
+    }
+
+    // false hides the whole goggle tooltip for this attachment
+    fun goggleInfo(show: Boolean): SlideAttachmentSpec {
+        goggleInfo = show
         return this
     }
 
@@ -134,6 +142,7 @@ object SlideAttachmentRegistry {
             builder.trigger,
             builder.maxHostDistance,
             builder.stressImpact,
+            builder.goggleInfo,
             builder.extraBehaviours,
             block,
             blockEntityType,

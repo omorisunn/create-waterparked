@@ -79,7 +79,7 @@ object SlideAttachmentManager {
         for (entity in level.getEntitiesOfClass(LivingEntity::class.java, box)) {
             if (entity.isSpectator || entity.isRemoved) continue
             if (entity.distanceToSqr(pos) > trigger.range * trigger.range) continue
-            be.attachment()?.onTrigger(level, be, entity)
+            be.attachment()?.onTrigger(level, be, entity, 0.0)
         }
     }
 
@@ -115,7 +115,8 @@ object SlideAttachmentManager {
         val arc = arcLengthBetween(curve, bestT, entry.t.toDouble())
         if (arc > trigger.distanceBlocks) return
 
-        be.attachment()?.onTrigger(level, be, rider)
+        val signedArc = if (bestT < entry.t) -arc else arc
+        be.attachment()?.onTrigger(level, be, rider, signedArc)
         be.attachment()?.let { att ->
             if (att is net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorAttachment) {
                 att.riderSide = if (bestT < entry.t) -1 else 1

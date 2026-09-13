@@ -14,6 +14,7 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideAttachment
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockEntity
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentEntry
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentType
+import net.omori_sunny.create_waterparked.content.attachment.SlideHandleDistance
 
 // shaft rotation drives it: positive speed opens, negative closes
 class MechanicalDoorAttachment(
@@ -29,12 +30,20 @@ class MechanicalDoorAttachment(
 
         const val TAG_MODE = "DoorMode"
 
+        const val TAG_STOP_L = "DoorStopL"
+
+        const val TAG_STOP_R = "DoorStopR"
+
         private const val PASS_THRESHOLD = 0.7f
 
         private const val BAR_LENGTH = 18
 
         private const val OPEN_PER_TICK_AT_REF = 1.0f / 37.5f
         private const val REF_SPEED = 16f
+
+        fun stopL(data: CompoundTag): Float = SlideHandleDistance.read(data, TAG_STOP_L)
+
+        fun stopR(data: CompoundTag): Float = SlideHandleDistance.read(data, TAG_STOP_R)
     }
 
     private var open = 0f
@@ -90,7 +99,12 @@ class MechanicalDoorAttachment(
         }
     }
 
-    override fun onTrigger(level: ServerLevel, sab: SlideAttachmentBlockEntity, candidate: Entity?) {
+    override fun onTrigger(
+        level: ServerLevel,
+        sab: SlideAttachmentBlockEntity,
+        candidate: Entity?,
+        arc: Double
+    ) {
         lastRiderSeen = level.gameTime
     }
 
@@ -125,6 +139,5 @@ class MechanicalDoorAttachment(
     var riderSide: Int = 0
 
     private fun currentStopDistance(): Float =
-        if (riderSide < 0) DoorStopDistanceEditor.stopL(data)
-        else DoorStopDistanceEditor.stopR(data)
+        if (riderSide < 0) stopL(data) else stopR(data)
 }

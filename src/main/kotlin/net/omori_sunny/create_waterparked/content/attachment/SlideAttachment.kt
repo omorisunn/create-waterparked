@@ -14,8 +14,13 @@ abstract class SlideAttachment(
     // only while the host block is loaded
     open fun serverTick(level: ServerLevel, sab: SlideAttachmentBlockEntity) {}
 
-    // candidate is the triggering entity, or whatever a custom detector found
-    open fun onTrigger(level: ServerLevel, sab: SlideAttachmentBlockEntity, candidate: Entity?) {}
+    // candidate is the triggering entity; arc is signed along the slide, negative upstream
+    open fun onTrigger(
+        level: ServerLevel,
+        sab: SlideAttachmentBlockEntity,
+        candidate: Entity?,
+        arc: Double
+    ) {}
 
     // only called when the type declares CUSTOM
     open fun shouldTrigger(level: ServerLevel, sab: SlideAttachmentBlockEntity, candidate: Entity): Boolean = false

@@ -14,6 +14,7 @@ import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockItem
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentPos
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentSite
+import net.omori_sunny.create_waterparked.content.attachment.SlideHandleDistance
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes
 import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
@@ -50,7 +51,8 @@ class SlideAttachmentSelectPayload(
 
         val tFinal = when (type.site) {
             SlideAttachmentSite.ENDPOINT -> if (t < 0.5f) 0f else 1f
-            SlideAttachmentSite.INTERIOR -> t.coerceIn(0.02f, 0.98f)
+            SlideAttachmentSite.INTERIOR ->
+                t.coerceIn(SlideHandleDistance.MIN_T, SlideHandleDistance.MAX_T)
         }
         stack.set(
             ModDataComponents.SLIDE_ATTACHMENT_POS,

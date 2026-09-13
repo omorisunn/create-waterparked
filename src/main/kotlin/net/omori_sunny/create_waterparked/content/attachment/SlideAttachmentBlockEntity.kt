@@ -140,6 +140,7 @@ class SlideAttachmentBlockEntity(pos: BlockPos, state: BlockState) : KineticBloc
         tooltip: MutableList<Component>,
         isPlayerSneaking: Boolean
     ): Boolean {
+        if (type()?.goggleInfo == false) return false
         LangBuilder(CreateWaterparked.ID)
             .add(blockState.block.name)
             .style(ChatFormatting.GOLD)

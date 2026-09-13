@@ -122,6 +122,12 @@ object CreateWaterparkedClient {
             ) { pos ->
                 net.omori_sunny.create_waterparked.content.attachment.door.DoorStopDistanceEditor(pos)
             }
+        net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideAttachmentEditorRegistry
+            .registerFactory(
+                net.omori_sunny.create_waterparked.content.attachment.detector.DetectorDistanceEditor.EDITOR_KEY
+            ) { pos ->
+                net.omori_sunny.create_waterparked.content.attachment.detector.DetectorDistanceEditor(pos)
+            }
         SimpleBlockEntityVisualizer.builder(ModBlockEntities.WATERSLIDE_ANCHOR_BE)
             .factory { ctx, be, pt -> WaterslideTubeVisual(ctx, be, pt) }
             .neverSkipVanillaRender()

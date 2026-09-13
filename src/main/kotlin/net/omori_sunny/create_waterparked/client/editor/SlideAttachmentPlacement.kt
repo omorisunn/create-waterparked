@@ -19,6 +19,7 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentGeom
 import net.omori_sunny.create_waterparked.client.attachment.SlideAttachmentRenderer
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentSite
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes
+import net.omori_sunny.create_waterparked.content.attachment.SlideHandleDistance
 import net.omori_sunny.create_waterparked.network.SlideAttachmentSelectPayload
 
 // phase 1 of SAB placement: holding the binding-block item and hovering the
@@ -74,7 +75,8 @@ object SlideAttachmentPlacement {
         val curveB = wall.curve.bePositions.getSecond()
         val t = when (type.site) {
             SlideAttachmentSite.ENDPOINT -> if (wall.t < 0.5f) 0f else 1f
-            SlideAttachmentSite.INTERIOR -> wall.t.coerceIn(0.02f, 0.98f)
+            SlideAttachmentSite.INTERIOR ->
+                wall.t.coerceIn(SlideHandleDistance.MIN_T, SlideHandleDistance.MAX_T)
         }
         PacketDistributor.sendToServer(
             SlideAttachmentSelectPayload(
@@ -128,7 +130,8 @@ object SlideAttachmentPlacement {
         type: net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentType,
         wall: WaterslideSectorEdit.WallHit
     ): Boolean = when (type.site) {
-        SlideAttachmentSite.INTERIOR -> wall.t in 0.02f..0.98f
+        SlideAttachmentSite.INTERIOR ->
+            wall.t in SlideHandleDistance.MIN_T..SlideHandleDistance.MAX_T
         SlideAttachmentSite.ENDPOINT -> wall.t < 0.2f || wall.t > 0.8f
     }
 
