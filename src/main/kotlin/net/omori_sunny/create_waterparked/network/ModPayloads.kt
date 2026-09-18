@@ -40,6 +40,8 @@ object ModPayloads {
         registrar.client(BoatSyncPayload.TYPE, BoatSyncPayload.STREAM_CODEC, BoatSyncPayload::handleOnClient)
         registrar.server(SlideAttachmentSelectPayload.TYPE, SlideAttachmentSelectPayload.STREAM_CODEC, SlideAttachmentSelectPayload::handleOnServer)
         registrar.server(SlideAttachmentEditPayload.TYPE, SlideAttachmentEditPayload.STREAM_CODEC, SlideAttachmentEditPayload::handleOnServer)
+        registrar.client(GrabBarHoldPayload.TYPE, GrabBarHoldPayload.STREAM_CODEC, GrabBarHoldPayload::handleOnClient)
+        registrar.server(GrabBarInputPayload.TYPE, GrabBarInputPayload.STREAM_CODEC, GrabBarInputPayload::handleOnServer)
     }
 
     private fun <P : CustomPacketPayload> PayloadRegistrar.server(

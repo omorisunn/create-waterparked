@@ -11,6 +11,8 @@ import net.omori_sunny.create_waterparked.content.attachment.door.DoorModeSlot
 import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorAttachment
 import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorMode
 import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorProvider
+import net.omori_sunny.create_waterparked.content.attachment.grab_bar.GrabBarAttachment
+import net.omori_sunny.create_waterparked.content.attachment.grab_bar.GrabBarProvider
 
 object ModSlideAttachments {
 
@@ -62,9 +64,22 @@ object ModSlideAttachments {
         }
     }
 
+    val GRAB_BAR: SlideAttachmentType by lazy {
+        SlideAttachmentRegistry.register(
+            "grab_bar", SlideAttachmentSite.ENDPOINT
+        ) {
+            attachment(::GrabBarAttachment)
+            provider(::GrabBarProvider)
+            trigger(SlideAttachmentTriggerSpec.Custom)
+            maxHostDistance(8.0)
+            goggleInfo(false)
+        }
+    }
+
     fun init() {
         MECHANICAL_DOOR.toString()
         SLIDE_DETECTOR.toString()
         SLIDE_ACCELERATOR.toString()
+        GRAB_BAR.toString()
     }
 }

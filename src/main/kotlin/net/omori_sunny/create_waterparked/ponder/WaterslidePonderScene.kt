@@ -50,6 +50,7 @@ object WaterslidePonderScene {
     private val DETECTOR_LAMP = BlockPos(6, 4, 7)
     private val ACCELERATOR_POS = BlockPos(6, 4, 6)
     private val ACCELERATOR_SHAFT = BlockPos(6, 4, 5)
+    private val GRAB_BAR_POS = BlockPos(6, 4, 6)
     private val ATTACH_HOST_POS = BlockPos(7, DISPLAY_Y, 7)
     private const val SITE_OUTLINE = "create_waterparked:attachment_site"
     private const val ATTACH_T = 0.5f
@@ -789,6 +790,88 @@ object WaterslidePonderScene {
         scene.world().setBlock(ACCELERATOR_SHAFT, Blocks.AIR.defaultBlockState(), false)
     }
 
+    @JvmStatic
+    fun grabBar(builder: SceneBuilder, util: SceneBuildingUtil) {
+        val scene = CreateSceneBuilder(builder)
+        scene.title(WaterslidePonderScenes.GRAB_BAR_SCENE_ID, "Using the Slide Grab Bar")
+        scene.configureBasePlate(0, 0, 15)
+        scene.scaleSceneView(0.7f)
+        scene.setSceneOffsetY(-1.0f)
+        scene.rotateCameraY(90f)
+        scene.showBasePlate()
+        scene.idle(10)
+
+        val anchors = WaterslidePonderRestore.schemaAnchors(scene.scene.world)
+        val anchorLeft = if (anchors.size >= 1) anchors[0] else ANCHOR_LEFT
+        val anchorRight = if (anchors.size >= 2) anchors[1] else ANCHOR_RIGHT
+        val anchorY = min(anchorLeft.y, anchorRight.y)
+
+        val anchorLayer = scene.world()
+            .showIndependentSection(
+                util.select().fromTo(
+                    anchorLeft.x, anchorY, anchorLeft.z,
+                    anchorRight.x, anchorY, anchorRight.z
+                ),
+                Direction.DOWN
+            )
+        WaterslidePonderRestore.applyDisplayedAnchorLayer(scene, anchorY, anchorY, anchorLeft, anchorRight)
+        setRingHalfOpen(scene, anchorLeft, anchorRight)
+        setRingHalfOpen(scene, anchorRight, anchorLeft)
+
+        val hubTop = util.vector().topOf(GRAB_BAR_POS)
+        scene.world().setBlock(
+            GRAB_BAR_POS,
+            attachmentBlock(ModSlideAttachments.GRAB_BAR, Direction.Axis.Z),
+            true
+        )
+        val barLayer = scene.world()
+            .showIndependentSection(util.select().position(GRAB_BAR_POS), Direction.DOWN)
+        bindAttachment(
+            scene, util, GRAB_BAR_POS, ModSlideAttachments.GRAB_BAR, anchorLeft, anchorRight,
+            SlideAttachmentSite.ENDPOINT, 0f
+        )
+        scene.idle(30)
+        scene.overlay()
+            .showText(90)
+            .independent(20)
+            .text("Mounted on a slide mouth, the bar spans the opening and blocks automatic entry")
+            .placeNearTarget()
+            .pointAt(hubTop)
+        scene.idle(100)
+
+        scene.overlay()
+            .showText(90)
+            .attachKeyFrame()
+            .text("Walk up to the bar and it takes hold: hold forward to charge the launch")
+            .placeNearTarget()
+            .pointAt(hubTop)
+        scene.idle(60)
+        scene.world()
+            .modifyBlock(GRAB_BAR_POS, { it.setValue(SlideAttachmentBlock.POWERED, true) }, true)
+        scene.idle(20)
+        scene.overlay()
+            .showText(90)
+            .text("While someone holds it the hub emits redstone")
+            .placeNearTarget()
+            .pointAt(hubTop)
+        scene.idle(90)
+
+        scene.overlay()
+            .showText(80)
+            .text("A display link on the hub counts every grab")
+            .placeNearTarget()
+            .pointAt(hubTop)
+        scene.idle(90)
+
+        scene.world()
+            .modifyBlock(GRAB_BAR_POS, { it.setValue(SlideAttachmentBlock.POWERED, false) }, true)
+        scene.idle(20)
+        scene.world().hideIndependentSection(barLayer, Direction.UP)
+        scene.world().hideIndependentSection(anchorLayer, Direction.UP)
+        scene.idle(15)
+        scene.world().setBlock(GRAB_BAR_POS, Blocks.AIR.defaultBlockState(), false)
+    }
+
     private fun attachmentExample(): SlideAttachmentType =
         SlideAttachmentTypes.all()
             .iterator()
@@ -823,7 +906,9 @@ object WaterslidePonderScene {
         block: BlockPos,
         type: SlideAttachmentType,
         curveA: BlockPos,
-        curveB: BlockPos
+        curveB: BlockPos,
+        site: SlideAttachmentSite = SlideAttachmentSite.INTERIOR,
+        t: Float = ATTACH_T
     ) {
         scene.world().modifyBlockEntityNBT(
             util.select().position(block),
@@ -832,8 +917,8 @@ object WaterslidePonderScene {
             tag.putString("Type", type.id.toString())
             tag.putLong("CurveA", curveA.asLong())
             tag.putLong("CurveB", curveB.asLong())
-            tag.putString("Site", SlideAttachmentSite.INTERIOR.name)
-            tag.putFloat("CurveT", ATTACH_T)
+            tag.putString("Site", site.name)
+            tag.putFloat("CurveT", t)
             tag.putFloat("WallAngle", 0f)
             tag.put("Data", CompoundTag())
         }

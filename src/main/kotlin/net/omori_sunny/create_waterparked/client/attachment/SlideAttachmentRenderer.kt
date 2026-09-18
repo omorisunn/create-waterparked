@@ -144,6 +144,10 @@ object SlideAttachmentRenderer {
                 .append(net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorProvider
                     .smoothedOpen(be.blockPos, entry.data.getFloat(MechanicalDoorAttachment.TAG_OPEN))).append('|')
                 .append(entry.data.getInt(MechanicalDoorAttachment.TAG_MODE)).append('|')
+                .append(entry.data.getFloat(
+                    net.omori_sunny.create_waterparked.content.attachment.grab_bar
+                        .GrabBarAttachment.TAG_HEIGHT
+                )).append('|')
                 .append(ctx.radius).append('|').append(ctx.wallThickness).append('|')
                 .append(be.attachmentMaterial).append('|').append(polys.size)
                 .append('|').append(editing)

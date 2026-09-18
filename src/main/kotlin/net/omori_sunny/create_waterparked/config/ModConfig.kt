@@ -41,6 +41,8 @@ object ModConfig {
     lateinit var ACCELERATOR_STRESS_IMPACT: ModConfigSpec.DoubleValue
     lateinit var ACCELERATOR_BASE_SPEED: ModConfigSpec.DoubleValue
     lateinit var ACCELERATOR_REFERENCE_RPM: ModConfigSpec.DoubleValue
+    lateinit var GRAB_DISTANCE: ModConfigSpec.DoubleValue
+    lateinit var GRAB_CHARGE_TICKS: ModConfigSpec.IntValue
 
     lateinit var SERVER_SPEC: ModConfigSpec
 
@@ -149,6 +151,15 @@ object ModConfig {
             .defineInRange("acceleratorReferenceRpm", 16.0, 1.0, 256.0)
         SERVER_BUILDER.pop()
 
+        SERVER_BUILDER.push("grab_bar")
+        GRAB_DISTANCE = SERVER_BUILDER
+            .comment("Distance in blocks in front of a slide grab bar at which an entity takes hold.")
+            .defineInRange("grabDistance", 1.5, 0.5, 8.0)
+        GRAB_CHARGE_TICKS = SERVER_BUILDER
+            .comment("Ticks of holding forward needed to fill the grab bar charge and start the slide.")
+            .defineInRange("grabChargeTicks", 20, 5, 200)
+        SERVER_BUILDER.pop()
+
         SERVER_SPEC = SERVER_BUILDER.build()
     }
 
@@ -224,6 +235,10 @@ object ModConfig {
 
     fun acceleratorReferenceRpm(): Double =
         ACCELERATOR_REFERENCE_RPM.safeGet(SERVER_SPEC).coerceIn(1.0, 256.0)
+
+    fun grabDistance(): Double = GRAB_DISTANCE.safeGet(SERVER_SPEC).coerceIn(0.5, 8.0)
+
+    fun grabChargeTicks(): Int = GRAB_CHARGE_TICKS.safeGet(SERVER_SPEC).coerceIn(5, 200)
 
     @Suppress("DEPRECATION")
     fun register() {

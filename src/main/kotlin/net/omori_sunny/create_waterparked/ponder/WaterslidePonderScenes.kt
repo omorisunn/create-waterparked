@@ -19,6 +19,7 @@ object WaterslidePonderScenes {
     const val DOOR_SCENE_ID = "door_ponder_0"
     const val DETECTOR_SCENE_ID = "detector_ponder_0"
     const val ACCELERATOR_SCENE_ID = "accelerator_ponder_0"
+    const val GRAB_BAR_SCENE_ID = "grab_bar_ponder_0"
 
     private val SCHEMATIC_PATHS: Map<ResourceLocation, ResourceLocation> = mapOf(
         path("ponder_connect") to path(CONNECT_SCHEMATIC),
@@ -28,7 +29,8 @@ object WaterslidePonderScenes {
         path(ATTACHMENT_SCENE_ID) to path(ATTACHMENT_SCHEMATIC),
         path(DOOR_SCENE_ID) to path(ATTACHMENT_SCHEMATIC),
         path(DETECTOR_SCENE_ID) to path(ATTACHMENT_SCHEMATIC),
-        path(ACCELERATOR_SCENE_ID) to path(ATTACHMENT_SCHEMATIC)
+        path(ACCELERATOR_SCENE_ID) to path(ATTACHMENT_SCHEMATIC),
+        path(GRAB_BAR_SCENE_ID) to path(ATTACHMENT_SCHEMATIC)
     )
 
     private fun path(id: String): ResourceLocation =
@@ -57,5 +59,7 @@ object WaterslidePonderScenes {
         registry.addStoryBoard(detector, ATTACHMENT_SCHEMATIC, WaterslidePonderScene::slideDetector)
         val accelerator = BuiltInRegistries.ITEM.getKey(ModSlideAttachments.SLIDE_ACCELERATOR.item.get())
         registry.addStoryBoard(accelerator, ATTACHMENT_SCHEMATIC, WaterslidePonderScene::slideAccelerator)
+        val grabBar = BuiltInRegistries.ITEM.getKey(ModSlideAttachments.GRAB_BAR.item.get())
+        registry.addStoryBoard(grabBar, ATTACHMENT_SCHEMATIC, WaterslidePonderScene::grabBar)
     }
 }

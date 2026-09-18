@@ -8,6 +8,7 @@ import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.attachment.ModSlideAttachments
 import net.omori_sunny.create_waterparked.content.attachment.detector.DetectorDisplaySource
 import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorDisplaySource
+import net.omori_sunny.create_waterparked.content.attachment.grab_bar.GrabBarDisplaySource
 import java.util.function.Supplier
 
 // binding goes through Create's BY_BLOCK map, which is what the Display Link GUI lists
@@ -22,6 +23,9 @@ object ModDisplaySources {
     val DETECTOR_RIDERS: DeferredHolder<DisplaySource, DetectorDisplaySource> =
         REGISTRY.register("detector_riders", Supplier { DetectorDisplaySource() })
 
+    val GRAB_BAR_GRABS: DeferredHolder<DisplaySource, GrabBarDisplaySource> =
+        REGISTRY.register("grab_bar_grabs", Supplier { GrabBarDisplaySource() })
+
     // runs from common setup: the binding block must be registered first
     fun bindToBlocks() {
         DisplaySource.BY_BLOCK.add(
@@ -31,6 +35,10 @@ object ModDisplaySources {
         DisplaySource.BY_BLOCK.add(
             ModSlideAttachments.SLIDE_DETECTOR.block.get(),
             DETECTOR_RIDERS.get()
+        )
+        DisplaySource.BY_BLOCK.add(
+            ModSlideAttachments.GRAB_BAR.block.get(),
+            GRAB_BAR_GRABS.get()
         )
     }
 }

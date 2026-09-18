@@ -17,6 +17,7 @@ import net.omori_sunny.create_waterparked.client.editor.WaterslideClipboardPaste
 import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentEdit
 import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentPlacement
 import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentPlacementLine
+import net.omori_sunny.create_waterparked.client.attachment.GrabBarHoldClient
 import net.omori_sunny.create_waterparked.client.editor.SlideClipboardCopy
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashParticle
@@ -99,6 +100,7 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(SlideCameraHandler::onComputeFov)
         NeoForge.EVENT_BUS.addListener(::onRenderLevelStage)
         NeoForge.EVENT_BUS.addListener(::onRenderGuiLayerPost)
+        NeoForge.EVENT_BUS.addListener(GrabBarHoldClient::onClientTickPost)
         NeoForge.EVENT_BUS.addListener(::onClientLevelUnload)
 
         @Suppress("DEPRECATION")
@@ -135,6 +137,14 @@ object CreateWaterparkedClient {
             ) { pos ->
                 net.omori_sunny.create_waterparked.content.attachment.accelerator
                     .AcceleratorDistanceEditor(pos)
+            }
+        net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideAttachmentEditorRegistry
+            .registerFactory(
+                net.omori_sunny.create_waterparked.content.attachment.grab_bar
+                    .GrabBarHeightEditor.EDITOR_KEY
+            ) { pos ->
+                net.omori_sunny.create_waterparked.content.attachment.grab_bar
+                    .GrabBarHeightEditor(pos)
             }
         SimpleBlockEntityVisualizer.builder(ModBlockEntities.WATERSLIDE_ANCHOR_BE)
             .factory { ctx, be, pt -> WaterslideTubeVisual(ctx, be, pt) }
@@ -246,6 +256,7 @@ object CreateWaterparkedClient {
         val mc = Minecraft.getInstance()
         net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
             .renderStatusHud(mc, event.getGuiGraphics())
+        GrabBarHoldClient.renderHud(event.getGuiGraphics(), mc.timer.getGameTimeDeltaPartialTick(false))
     }
 
     private fun onClientTick(event: ClientTickEvent.Post) {
@@ -257,6 +268,7 @@ object CreateWaterparkedClient {
         WaterslideSplashSpawner.tickStanding(mc)
         net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
             .tickAll(mc)
+        GrabBarHoldClient.onClientTick()
         val debug = ModClientConfig.waterSimDebug()
         if (mc.connection != null && lastDebugState != debug) {
             lastDebugState = debug
@@ -272,6 +284,7 @@ object CreateWaterparkedClient {
             WaterslideGhostPlacement.clear()
             WaterslideGhostRenderer.clear()
             SlideSableOrientation.clearAll()
+            GrabBarHoldClient.clear()
             SlideClientSession.resetActive()
             net.omori_sunny.create_waterparked.client.attachment.SlideAttachmentRenderer.clear()
             EntitySlideClientSessions.clear()

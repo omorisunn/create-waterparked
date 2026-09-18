@@ -49,6 +49,7 @@
     "client.DepotBehaviourAccessor",
     "client.DepotRendererBoatAngleMixin",
     "client.EntityRenderDispatcherSlideMixin",
+    "client.HumanoidModelGrabBarMixin",
     "client.RivetPlacementOutlineAccessor",
     "client.RivetPlacementTubeMixin",
     "client.VanillaSingleBlockSubLevelRenderDataRivetAnimMixin",

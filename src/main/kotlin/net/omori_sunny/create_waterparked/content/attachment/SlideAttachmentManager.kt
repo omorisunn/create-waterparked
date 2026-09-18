@@ -6,6 +6,7 @@ import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
+import net.omori_sunny.create_waterparked.content.attachment.grab_bar.GrabBarAttachment
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
 import java.util.concurrent.ConcurrentHashMap
 
@@ -155,6 +156,7 @@ object SlideAttachmentManager {
     }
 
     fun serverTick(level: ServerLevel) {
+        GrabBarAttachment.releaseStale(level)
         for (be in all.toList()) {
             if (be.isRemoved || be.level !== level) continue
             val entry = be.entry ?: continue
