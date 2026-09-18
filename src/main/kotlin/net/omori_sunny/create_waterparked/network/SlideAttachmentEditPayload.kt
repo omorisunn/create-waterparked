@@ -14,6 +14,7 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideHandleDistance
 import net.omori_sunny.create_waterparked.content.attachment.accelerator.AcceleratorAttachment
 import net.omori_sunny.create_waterparked.content.attachment.detector.DetectorAttachment
 import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorAttachment
+import net.omori_sunny.create_waterparked.content.attachment.grab_bar.GrabBarAttachment
 
 // client to server: a wrench handle drag was committed
 class SlideAttachmentEditPayload(
@@ -52,6 +53,10 @@ class SlideAttachmentEditPayload(
             "accelDir" -> entry.data.putFloat(
                 AcceleratorAttachment.TAG_DIR,
                 ((value % 360f) + 360f) % 360f
+            )
+            "grabHeight" -> entry.data.putFloat(
+                GrabBarAttachment.TAG_HEIGHT,
+                value.coerceIn(GrabBarAttachment.MIN_HEIGHT, GrabBarAttachment.MAX_HEIGHT)
             )
             "t" -> {
                 entry.t = value.coerceIn(SlideHandleDistance.MIN_T, SlideHandleDistance.MAX_T)

@@ -4,6 +4,7 @@ import com.simibubi.create.content.contraptions.AbstractContraptionEntity
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
 import dev.ryanhcode.sable.companion.math.JOMLConversion
 import net.omori_sunny.create_waterparked.CreateWaterparked
+import net.omori_sunny.create_waterparked.client.attachment.GrabBarHoldClient
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.game.physics.SlideEndReason
@@ -574,7 +575,8 @@ object SlideClientSession {
         player.fallDistance = 0f
         player.setSprinting(false)
 
-        if (ModClientConfig.showSlideExitHint() && level.gameTime - session.hintTick >= 100) {
+        val holdingGrabBar = GrabBarHoldClient.isHolding(player.id)
+        if (!holdingGrabBar && ModClientConfig.showSlideExitHint() && level.gameTime - session.hintTick >= 100) {
             session.hintTick = level.gameTime
             player.displayClientMessage(
                 Component.translatable(

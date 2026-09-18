@@ -10,6 +10,7 @@ import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.phys.Vec3
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.config.ModConfig
+import net.omori_sunny.create_waterparked.content.attachment.grab_bar.GrabBarAttachment
 import org.joml.Quaterniond
 import org.joml.Vector3d
 import java.util.UUID
@@ -159,6 +160,7 @@ object SubLevelSlideController {
     ) {
         if (isRivetSub(sub)) return
         val access = mouth.access
+        if (GrabBarAttachment.blocksEntry(level, access, mouth.curve, mouth.towardSecond, null)) return
         val startLocal = access.worldToLocal(centerWorld)
         val startVel = access.worldNormalToLocal(velWorld)
         val trajectory = PhysicsSlideTrajectoryBuilder.build(

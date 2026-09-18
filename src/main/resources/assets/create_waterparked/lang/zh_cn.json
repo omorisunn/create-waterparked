@@ -19,6 +19,7 @@
   "create_waterparked.sector.delete_last": "无法删除最后一个扇区",
   "create_waterparked.track.sector_boundary_snap_hint": "按住 %s 取消对齐",
   "create_waterparked.slide.exit_hint": "按 %s 退出滑梯",
+  "create_waterparked.grab_bar.hold_hint": "按住 %s 蓄力出发，按 %s 松手",
   "create_waterparked.ponder.ponder_connect.header": "连接水滑梯锚点",
   "create_waterparked.ponder.ponder_connect.text_1": "用水滑梯轨道右键两个水滑梯锚点进行连接",
   "create_waterparked.ponder.ponder_connect.text_2": "两个锚点之间创建了一条水滑梯曲线",
@@ -78,6 +79,7 @@
   "block.create_waterparked.mechanical_door_attachment": "滑梯机械门",
   "block.create_waterparked.detector_attachment": "滑梯检测器",
   "block.create_waterparked.accelerator_attachment": "滑梯加速器",
+  "block.create_waterparked.grab_bar_attachment": "滑梯抓杆",
   "create_waterparked.attachment.wrong_site": "该附件无法安装在此处",
   "create_waterparked.attachment.placed": "滑梯附件已放置",
   "create_waterparked.attachment.selected": "位置已选择——在滑梯附近放置绑定方块",
@@ -85,6 +87,7 @@
   "create_waterparked.track.detector_edit_readout": "位置：%s | 检测距离：%s-%s",
   "create_waterparked.track.accelerator_edit_readout": "位置：%s | 加速范围：%s-%s | 方向：%s",
   "create_waterparked.track.accelerator_direction": "方向：%s",
+  "create_waterparked.track.grab_bar_height": "抓杆高度：%s",
   "create_waterparked.gui.goggles.door_open_ratio": "开启比例：",
   "create_waterparked.door.mode_slot": "开启方式",
   "create_waterparked.door.mode.slide": "左右分开",
@@ -95,6 +98,12 @@
   "create_waterparked.display_source.mechanical_door.percent": "百分比",
   "create_waterparked.display_source.mechanical_door.progress_bar": "进度条",
   "create_waterparked.display_source.detector_riders": "累计检测人数",
+  "create_waterparked.display_source.grab_bar_grabs": "抓杆累计抓握次数",
   "create_waterparked.gui.goggles.accelerator_forward": "正向加速：",
-  "create_waterparked.gui.goggles.accelerator_reverse": "反向加速："
+  "create_waterparked.gui.goggles.accelerator_reverse": "反向加速：",
+  "create_waterparked.ponder.grab_bar_ponder_0.header": "使用滑梯抓杆",
+  "create_waterparked.ponder.grab_bar_ponder_0.text_1": "安装在滑梯入口处的抓杆横跨管口，并阻止自动进入",
+  "create_waterparked.ponder.grab_bar_ponder_0.text_2": "走近抓杆即可抓住它：按住前进键蓄力即可出发",
+  "create_waterparked.ponder.grab_bar_ponder_0.text_3": "有人抓住它时，底座会输出红石信号",
+  "create_waterparked.ponder.grab_bar_ponder_0.text_4": "在底座上放置显示链接即可统计累计抓握次数"
 }

@@ -28,6 +28,7 @@ class WaterslidePonderPlugin : CreatePonderPlugin() {
         itemHelper.addToTag(AllCreatePonderTags.DISPLAY_SOURCES)
             .add(ModSlideAttachments.MECHANICAL_DOOR.item.get())
             .add(ModSlideAttachments.SLIDE_DETECTOR.item.get())
+            .add(ModSlideAttachments.GRAB_BAR.item.get())
     }
 
     override fun registerSharedText(helper: SharedTextRegistrationHelper) {
@@ -46,5 +47,7 @@ class WaterslidePonderPlugin : CreatePonderPlugin() {
         helper.exclude(ModSlideAttachments.SLIDE_DETECTOR.item.get())
         helper.exclude(ModSlideAttachments.SLIDE_ACCELERATOR.block.get())
         helper.exclude(ModSlideAttachments.SLIDE_ACCELERATOR.item.get())
+        helper.exclude(ModSlideAttachments.GRAB_BAR.block.get())
+        helper.exclude(ModSlideAttachments.GRAB_BAR.item.get())
     }
 }

@@ -7,6 +7,7 @@ import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.entity.item.ItemEntity
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.Vec3
+import net.omori_sunny.create_waterparked.content.attachment.grab_bar.GrabBarAttachment
 import kotlin.math.abs
 
 // belt ends near a slide mouth feed end-segment items into the tube (Core BeltInterception pattern)
@@ -36,13 +37,17 @@ object BeltSlideFeeder {
         val list: MutableList<FeederMouth> = when {
             cached != null && time - cached.first < MOUTH_REFRESH_TICKS -> cached.second
             else -> {
-                val rebuilt = PlayerSlideController.allSlideMouths(level).map { m ->
-                    FeederMouth(
-                        m.access,
-                        // sub-level belts live at plot coords
-                        BlockPos.containing(m.localPos), m.worldPos, m.worldTangent
-                    )
-                }.toMutableList()
+                val rebuilt = PlayerSlideController.allSlideMouths(level)
+                    .filter {
+                        !GrabBarAttachment.blocksEntry(level, it.access, it.curve, it.towardSecond, null)
+                    }
+                    .map { m ->
+                        FeederMouth(
+                            m.access,
+                            // sub-level belts live at plot coords
+                            BlockPos.containing(m.localPos), m.worldPos, m.worldTangent
+                        )
+                    }.toMutableList()
                 mouths[level.dimension()] = time to rebuilt
                 rebuilt
             }

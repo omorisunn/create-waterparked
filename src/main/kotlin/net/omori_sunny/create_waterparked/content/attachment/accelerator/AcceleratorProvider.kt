@@ -93,7 +93,7 @@ class AcceleratorProvider : SlideBandProvider() {
                 }
             }
         }
-        return listOf(TiledPart(quads, ARROW_TEXTURE, scrollSpeed(ctx)))
+        return listOf(TiledPart(quads, ARROW_TEXTURE, -scrollSpeed(ctx)))
     }
 
     private fun uvU(along: Double, around: Double, dx: Double, dy: Double): Float =

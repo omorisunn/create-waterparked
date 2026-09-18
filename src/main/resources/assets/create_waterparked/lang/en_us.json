@@ -20,6 +20,7 @@
   "create_waterparked.sector.delete_last": "Cannot delete the last sector",
   "create_waterparked.track.sector_boundary_snap_hint": "Hold %s to disable snapping",
   "create_waterparked.slide.exit_hint": "Press %s to exit the slide",
+  "create_waterparked.grab_bar.hold_hint": "Hold %s to charge the launch, press %s to let go",
   "create_waterparked.clipboard.copy_ok": "Slide config copied to the clipboard",
   "create_waterparked.clipboard.copy_miss": "Aim at a waterslide track",
   "create_waterparked.clipboard.copy_fail": "This anchor has no waterslide track to copy",
@@ -79,6 +80,7 @@
   "block.create_waterparked.mechanical_door_attachment": "Mechanical Slide Door",
   "block.create_waterparked.detector_attachment": "Slide Detector",
   "block.create_waterparked.accelerator_attachment": "Slide Accelerator",
+  "block.create_waterparked.grab_bar_attachment": "Slide Grab Bar",
   "create_waterparked.attachment.wrong_site": "This attachment cannot mount there",
   "create_waterparked.attachment.placed": "Slide attachment placed",
   "create_waterparked.attachment.selected": "Position selected - place the binding block near the slide",
@@ -86,6 +88,7 @@
   "create_waterparked.track.detector_edit_readout": "Position: %s | Detection: %s-%s",
   "create_waterparked.track.accelerator_edit_readout": "Position: %s | Boost range: %s-%s | Direction: %s",
   "create_waterparked.track.accelerator_direction": "Direction: %s",
+  "create_waterparked.track.grab_bar_height": "Bar height: %s",
   "create_waterparked.gui.goggles.door_open_ratio": "Open ratio:",
   "create_waterparked.door.mode_slot": "Opening mode",
   "create_waterparked.door.mode.slide": "Split sideways",
@@ -96,6 +99,12 @@
   "create_waterparked.display_source.mechanical_door.percent": "Percent",
   "create_waterparked.display_source.mechanical_door.progress_bar": "Progress Bar",
   "create_waterparked.display_source.detector_riders": "Detected Riders",
+  "create_waterparked.display_source.grab_bar_grabs": "Grab Bar Grabs",
   "create_waterparked.gui.goggles.accelerator_forward": "Boosting forward:",
-  "create_waterparked.gui.goggles.accelerator_reverse": "Boosting reverse:"
+  "create_waterparked.gui.goggles.accelerator_reverse": "Boosting reverse:",
+  "create_waterparked.ponder.grab_bar_ponder_0.header": "Using the Slide Grab Bar",
+  "create_waterparked.ponder.grab_bar_ponder_0.text_1": "Mounted on a slide mouth, the bar spans the opening and blocks automatic entry",
+  "create_waterparked.ponder.grab_bar_ponder_0.text_2": "Walk up to the bar and it takes hold: hold forward to charge the launch",
+  "create_waterparked.ponder.grab_bar_ponder_0.text_3": "While someone holds it the hub emits redstone",
+  "create_waterparked.ponder.grab_bar_ponder_0.text_4": "A display link on the hub counts every grab"
 }

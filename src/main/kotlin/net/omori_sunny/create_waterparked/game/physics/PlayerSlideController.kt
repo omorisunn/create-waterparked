@@ -20,6 +20,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlo
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
+import net.omori_sunny.create_waterparked.content.attachment.grab_bar.GrabBarAttachment
 import net.omori_sunny.create_waterparked.game.SlideAnchorIndex
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
 import net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation
@@ -59,6 +60,7 @@ object PlayerSlideController {
     private const val SIT_HEIGHT = 0.7
     private const val RIDER_SIG_CACHE_TICKS = 5L
     private const val POST_RIDE_STICK_TICKS = 10L
+    private const val ENTRY_LOOK_TICKS = 5L
     private const val VIEWER_RANGE_SQ = 48.0 * 48.0
     private val CREATIVE_PHYSICS_STAFF =
         ResourceLocation.fromNamespaceAndPath("simulated", "creative_physics_staff")
@@ -74,7 +76,8 @@ object PlayerSlideController {
         val sit: SlideSitEntity?,
         var startTick: Long,
         val centreOffset: Double,
-        val boxRad: Double?
+        val boxRad: Double?,
+        val keepEntryLook: Boolean
     ) {
         var elapsed = 0.0
         var timeScale = 1.0
@@ -266,6 +269,12 @@ object PlayerSlideController {
         val found = findSlideEntry(level, entity) ?: return
         val entry = found.second
         val entryAccess = found.first
+        if (GrabBarAttachment.blocksEntry(
+                level, entryAccess, entry.curve, entry.towardSecond, entry.startT
+            )
+        ) {
+            return
+        }
 
         if (entity is ServerPlayer && isHoldingCreativePhysicsStaff(entity) &&
             entryAccess is SubSlideSpaceAccess
@@ -303,7 +312,6 @@ object PlayerSlideController {
         val rawVelWorld = playerVelPerTick.scale(20.0)
         val entryTanWorld = entryTangentWorld(level, entryAccess, entry)
         val subLevel = (entryAccess as? SubSlideSpaceAccess)?.sub
-        val contraptionEntity = (entryAccess as? ContraptionSlideSpaceAccess)?.entity
         val access = entryAccess
         val startPos = if (player == null) entity.localIn(access).add(anchorOffset)
         else access.worldToLocal(entity.position())
@@ -351,21 +359,71 @@ object PlayerSlideController {
             return
         }
 
+        beginSession(
+            level, entity, access, player, swimming, startPos,
+            if (player == null) startPos.subtract(anchorOffset) else startPos,
+            startVel, trajectory, boxRad, entry.towardSecond, false
+        )
+    }
+
+    // slide start requested by an attachment that already built the trajectory
+    @JvmStatic
+    fun startSlideAt(
+        level: ServerLevel,
+        player: ServerPlayer,
+        access: SlideSpaceAccess,
+        startPos: Vec3,
+        trajectory: SlideTrajectory
+    ): Boolean {
+        if (player.isRemoved || sessions.containsKey(player.uuid)) return false
+        val swimming = player.getPose() == Pose.SWIMMING
+        player.setPose(if (swimming) Pose.SWIMMING else Pose.SITTING)
+        player.refreshDimensions()
+        beginSession(
+            level, player, access, player, swimming, startPos, startPos, Vec3.ZERO,
+            trajectory, null, null, true
+        )
+        return true
+    }
+
+    @JvmStatic
+    fun isSliding(entity: Entity): Boolean = sessions.containsKey(entity.uuid)
+
+    private fun beginSession(
+        level: ServerLevel,
+        entity: Entity,
+        access: SlideSpaceAccess,
+        player: ServerPlayer?,
+        swimming: Boolean,
+        startPos: Vec3,
+        startFeetLocal: Vec3,
+        startVel: Vec3,
+        trajectory: SlideTrajectory,
+        boxRad: Double?,
+        towardSecond: Boolean?,
+        keepEntryLook: Boolean
+    ) {
+        val subLevel = (access as? SubSlideSpaceAccess)?.sub
+        val contraptionEntity = (access as? ContraptionSlideSpaceAccess)?.entity
         val sit = if (player != null && !swimming) spawnSit(level, player) else null
-        if (sit != null && player != null) player.startRiding(sit, true)
+        if (sit != null && player != null && !player.startRiding(sit, true)) {
+            CreateWaterparked.LOGGER.warn(
+                "[Slide] seat mount failed for {} at {} vehicle={}",
+                player.uuid, startPos, player.vehicle
+            )
+        }
         postRideRelease.remove(entity.uuid)
         bindToSpace(entity, sit, subLevel, startPos)
-        val startFeetLocal = if (player == null) startPos.subtract(anchorOffset) else startPos
         entity.setPos(access.toWorld(startFeetLocal))
         sit?.setPos(access.toWorld(startFeetLocal))
         val session = Session(
             nextSessionId++, entity, player, trajectory,
             subLevel?.uniqueId, contraptionEntity, swimming, sit, level.gameTime,
-            centreOffsetY(entity), boxRad
+            centreOffsetY(entity), boxRad, keepEntryLook
         )
         CreateWaterparked.LOGGER.debug(
             "Slide start {} entity {} dir {} pos {} vel {} samples={} last={} reason={}",
-            session.id, entity.uuid, entry.towardSecond, startPos, startVel,
+            session.id, entity.uuid, towardSecond, startPos, startVel,
             trajectory.samples.size, trajectory.exitPosition, trajectory.endReason
         )
         sessions[entity.uuid] = session
@@ -661,7 +719,7 @@ object PlayerSlideController {
         entity.setPos(sitPos)
         entity.setDeltaMovement(worldVel.scale(session.timeScale))
         sit?.setPos(sitPos)
-        applyRotation(entity, worldTan)
+        if (!holdsEntryLook(level, session)) applyRotation(entity, worldTan)
         if (entity is LivingEntity) {
             entity.setPose(if (session.swimmingPose) Pose.SWIMMING else Pose.SITTING)
             entity.setNoGravity(true)
@@ -704,7 +762,7 @@ object PlayerSlideController {
         entity.setPos(newSitPos)
         entity.setDeltaMovement(newWorldVel.scale(session.timeScale))
         sit?.setPos(newSitPos)
-        applyRotation(entity, toWorldNormal(level, session, first.tangent))
+        if (!holdsEntryLook(level, session)) applyRotation(entity, toWorldNormal(level, session, first.tangent))
         if (player != null) {
             SlidePackets.sendTo(player, SlideSegmentPayload(
                 session.id, level.gameTime, session.subLevelId, session.contraption?.id,
@@ -718,7 +776,6 @@ object PlayerSlideController {
             session.sentToClients = false
         }
     }
-
 
     private fun trySwitchSpace(
         level: ServerLevel,
@@ -773,6 +830,16 @@ object PlayerSlideController {
 
     private fun endSession(level: ServerLevel, session: Session, reason: SlideEndReason) {
         val entity = session.entity
+        // a session this short always means something went wrong, so name it in the log
+        if (level.gameTime - session.startTick <= 5L) {
+            val first = session.trajectory.samples.first()
+            val last = session.trajectory.samples.last()
+            CreateWaterparked.LOGGER.warn(
+                "[Slide] short session {} ended after {} ticks reason={} duration={} samples={} first={} last={} riding={}",
+                session.id, level.gameTime - session.startTick, reason, session.trajectory.duration,
+                session.trajectory.samples.size, first.position, last.position, entity.vehicle
+            )
+        }
         val player = session.player
         val at = session.trajectory.sampleAt(session.trajectory.duration)
         val localPos = at.sample.position
@@ -1182,6 +1249,10 @@ object PlayerSlideController {
         }
         return false
     }
+
+    // the grab bar launch keeps the look the player had while hanging
+    private fun holdsEntryLook(level: ServerLevel, session: Session): Boolean =
+        session.keepEntryLook && level.gameTime - session.startTick < ENTRY_LOOK_TICKS
 
     private fun applyRotation(entity: Entity, tangent: Vec3) {
         val horiz = sqrt(tangent.x * tangent.x + tangent.z * tangent.z)
