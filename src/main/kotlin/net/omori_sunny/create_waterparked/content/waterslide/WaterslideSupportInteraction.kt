@@ -1,8 +1,6 @@
 package net.omori_sunny.create_waterparked.content.waterslide
 
 import com.simibubi.create.AllItems
-import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
-import dev.ryanhcode.sable.sublevel.ServerSubLevel
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
 import net.minecraft.server.level.ServerLevel
@@ -21,6 +19,7 @@ import net.minecraft.world.level.block.LevelEvent
 import net.neoforged.neoforge.event.entity.player.PlayerEvent
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent
 import net.omori_sunny.create_waterparked.CreateWaterparked
+import net.omori_sunny.create_waterparked.network.findSubLevelAnchor
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -106,18 +105,11 @@ object WaterslideSupportInteraction {
         return ok
     }
 
-    // main world first (sub=null), then the plot-center offset mapping used by
-    // every other sublevel-aware interaction in this mod
+    // main world first, then the loaded plot-center candidates from the shared helper
     private fun resolveAnchorBe(level: ServerLevel, pos: BlockPos): WaterslideAnchorBlockEntity? {
         (level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity)?.let { return it }
-        val container = SubLevelContainer.getContainer(level) ?: return null
-        var found: WaterslideAnchorBlockEntity? = null
-        for (raw in container.allSubLevels) {
-            val sub = raw as? ServerSubLevel ?: continue
-            val candidate = pos.offset(sub.getPlot().getCenterBlock())
-            (level.getBlockEntity(candidate) as? WaterslideAnchorBlockEntity)?.let { found = it }
-        }
-        return found
+        val anchorPos = findSubLevelAnchor(level, pos) ?: return null
+        return level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity
     }
 
     private fun canInteract(stack: ItemStack): Boolean =

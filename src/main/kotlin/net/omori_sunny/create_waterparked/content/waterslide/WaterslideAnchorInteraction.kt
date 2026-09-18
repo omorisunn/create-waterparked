@@ -1,16 +1,13 @@
 package net.omori_sunny.create_waterparked.content.waterslide
 
-import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
-import dev.ryanhcode.sable.sublevel.ServerSubLevel
-import net.minecraft.core.BlockPos
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.InteractionHand
 import net.minecraft.world.InteractionResult
 import net.minecraft.world.entity.player.Player
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.item.Items
-import net.neoforged.bus.api.EventPriority
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent
+import net.omori_sunny.create_waterparked.network.findSubLevelAnchor
 
 // water bucket interaction for anchors inside Sable sub levels
 object WaterslideAnchorInteraction {
@@ -23,21 +20,8 @@ object WaterslideAnchorInteraction {
         val held = player.getItemInHand(event.hand)
         if (held.item !== Items.WATER_BUCKET && held.item !== Items.BUCKET) return
 
-        var be = level.getBlockEntity(event.pos) as? WaterslideAnchorBlockEntity
-        var globalPos = event.pos
-        if (be == null) {
-            val container = SubLevelContainer.getContainer(level) ?: return
-            for (raw in container.allSubLevels) {
-                val sub = raw as? ServerSubLevel ?: continue
-                val candidate = event.pos.offset(sub.getPlot().getCenterBlock())
-                val found = level.getBlockEntity(candidate) as? WaterslideAnchorBlockEntity
-                if (found != null) {
-                    be = found
-                    globalPos = candidate
-                }
-            }
-        }
-        if (be == null) return
+        val anchorPos = findSubLevelAnchor(level, event.pos) ?: event.pos
+        val be = level.getBlockEntity(anchorPos) as? WaterslideAnchorBlockEntity ?: return
 
         if (held.item === Items.WATER_BUCKET) {
             be.refillWater()
