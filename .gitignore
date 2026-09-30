@@ -33,28 +33,12 @@ run/
 # Local dependencies
 libs/
 
-MODELING.md
-/TODO.md
-/.dsh-skin/
-/.dsh/
-/.dshcraft-staging/
 /.gradle-home/
 docs/
 /scripts/
-/.dsh-tmp-glass/
-/.dsh-highres-vision/
-/.dsh-backup-src/
-
-# AgentTeams runtime state
-/.agent-teams/
-/.dsh-backup-src-uncommitted/
 
 # Eclipse workspace metadata
 .eclipse/
-
-# AI / scan tooling local state
-.zcode/
-.mimosa/
 
 # Local dedicated server run directory
 run-server/

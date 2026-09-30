@@ -71,7 +71,6 @@ class GrabBarAttachment(
         private const val SCAN_INTERVAL_TICKS = 5L
         private const val HOLD_COOLDOWN_TICKS = 10L
         private const val INPUT_TIMEOUT_TICKS = 5L
-        private const val INPUT_DIAG_TICKS = 10L
         private const val FRONT_TOLERANCE = 0.5
         private const val SEAT_HEIGHT_RATIO = 0.5f
         private const val PROGRESS_NONE = -1f
@@ -215,7 +214,6 @@ class GrabBarAttachment(
         var backwardFlag = false
         var flagTick = 0L
         var flagSeen = false
-        var diagTick = 0L
         var releaseDirection: Vec3? = null
 
         fun valid(level: ServerLevel): Boolean =
@@ -456,14 +454,6 @@ class GrabBarAttachment(
         val live = hold.flagSeen && level.gameTime - hold.flagTick <= INPUT_TIMEOUT_TICKS
         val forward = if (live) hold.forwardFlag else player.zza > 0f
         val backward = if (live) hold.backwardFlag else player.zza < 0f
-        if (level.gameTime - hold.diagTick >= INPUT_DIAG_TICKS) {
-            hold.diagTick = level.gameTime
-            CreateWaterparked.LOGGER.info(
-                "[GrabBarInput] zza={} xxa={} progress={} passenger={} forward={} backward={} live={}",
-                player.zza, player.xxa, hold.progress, player.isPassenger,
-                hold.forwardFlag, hold.backwardFlag, live
-            )
-        }
         if (backward) {
             CreateWaterparked.LOGGER.info(
                 "[GrabBar] {} released by backward input, live flags {} at progress {}",
