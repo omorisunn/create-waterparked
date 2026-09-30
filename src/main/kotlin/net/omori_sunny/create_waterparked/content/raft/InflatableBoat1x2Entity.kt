@@ -1,7 +1,9 @@
 package net.omori_sunny.create_waterparked.content.raft
 
 import net.omori_sunny.create_waterparked.content.registry.ModItems
+import net.omori_sunny.create_waterparked.content.roller.RollerConveyorBlockEntity
 import net.minecraft.core.BlockPos
+import net.minecraft.core.Direction
 import net.minecraft.core.component.DataComponents
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.network.syncher.EntityDataAccessor
@@ -128,12 +130,33 @@ class InflatableBoat1x2Entity(type: EntityType<out LivingEntity>, level: Level) 
                 ).toFloat()
             }
         }
+        val deck = level().getBlockEntity(blockPosition()) as? RollerConveyorBlockEntity
+        if (deck != null) {
+            val facing = deckTravelFacing(deck)
+            val ahead = level().getBlockEntity(blockPosition().relative(facing))
+                as? RollerConveyorBlockEntity
+            val aheadFacing = if (ahead != null) deckTravelFacing(ahead) else null
+            val steer = if (aheadFacing != null && aheadFacing.axis != facing.axis)
+                aheadFacing
+            else facing
+            return Math.toDegrees(
+                kotlin.math.atan2(-steer.stepX.toDouble(), steer.stepZ.toDouble())
+            ).toFloat()
+        }
         val dx = x - lastTickX
         val dz = z - lastTickZ
         if (dx * dx + dz * dz > 1.0E-7) {
             return Math.toDegrees(kotlin.math.atan2(-dx, dz)).toFloat()
         }
         return null
+    }
+
+    // a deck steers by its controller, which carries the run's travel sense
+    private fun deckTravelFacing(deck: RollerConveyorBlockEntity): Direction {
+        val controllerPos = deck.controllerPosition() ?: return deck.movementFacing
+        val controller = level().getBlockEntity(controllerPos) as? RollerConveyorBlockEntity
+            ?: return deck.movementFacing
+        return controller.movementFacing
     }
 
     // package-style insertion countdown, see PackageEntity: while an absorbing

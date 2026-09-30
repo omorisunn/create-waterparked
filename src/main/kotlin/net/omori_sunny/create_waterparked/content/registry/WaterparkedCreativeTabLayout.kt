@@ -17,7 +17,9 @@ object WaterparkedCreativeTabLayout {
         val item = stack.item
         return item === ModItems.WATERSLIDE_TRACK ||
             item === ModItems.WATERSLIDE_ANCHOR ||
+            item === ModItems.ROLLER_CONVEYOR ||
             item === ModItems.INFLATABLE_BOAT_1X2 ||
+            item === ModItems.COKE_TUBE_DRINK ||
             item is SlideAttachmentBlockItem
     }
 

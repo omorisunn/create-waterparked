@@ -25,6 +25,8 @@ object ContraptionWaterSimulation {
     private const val MIN_SEGMENT_LENGTH = 1.0E-6
     private const val MIN_SPEED = 1.0E-6
 
+    private val DEBUG = CreateWaterparked.LOGGER.isDebugEnabled
+
     private data class Cached(
         val sig: Int,
         val fields: Map<Pair<Long, Long>, ServerWaterSimulation.CurveField>
@@ -64,7 +66,7 @@ object ContraptionWaterSimulation {
         }
         val payload = WaterslideWaterSyncPayload(entries, null, entity.id)
         PacketDistributor.sendToPlayersInDimension(level, payload)
-        CreateWaterparked.LOGGER.debug("[ContraptionWater] synced {} field(s) for contraption {}", entries.size, entity.id)
+        if (DEBUG) CreateWaterparked.LOGGER.debug("[ContraptionWater] synced {} field(s) for contraption {}", entries.size, entity.id)
     }
 
     fun fieldsFor(level: ServerLevel, entity: AbstractContraptionEntity): Map<Pair<Long, Long>, ServerWaterSimulation.CurveField> {
@@ -78,12 +80,12 @@ object ContraptionWaterSimulation {
         cache[entity.id] = Cached(sig, fields)
         if (fields.isEmpty()) {
             val watered = ContraptionSlideSpaces.decode(entity).values.count { it.hasWater() }
-            CreateWaterparked.LOGGER.debug(
+            if (DEBUG) CreateWaterparked.LOGGER.debug(
                 "[ContraptionWater] entity={} computed EMPTY field (wateredAnchors={}) - no water to flow",
                 entity.id, watered
             )
         } else {
-            CreateWaterparked.LOGGER.debug(
+            if (DEBUG) CreateWaterparked.LOGGER.debug(
                 "[ContraptionWater] entity={} computed {} field(s)",
                 entity.id, fields.size
             )

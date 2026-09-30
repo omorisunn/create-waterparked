@@ -4,6 +4,7 @@ package net.omori_sunny.create_waterparked.config
 import net.neoforged.fml.ModLoadingContext
 import net.neoforged.fml.config.ModConfig
 import net.neoforged.neoforge.common.ModConfigSpec
+import java.util.function.Predicate
 
 object ModConfig {
 
@@ -41,6 +42,16 @@ object ModConfig {
     lateinit var ACCELERATOR_STRESS_IMPACT: ModConfigSpec.DoubleValue
     lateinit var ACCELERATOR_BASE_SPEED: ModConfigSpec.DoubleValue
     lateinit var ACCELERATOR_REFERENCE_RPM: ModConfigSpec.DoubleValue
+    lateinit var ROLLER_CONVEYOR_STRESS_IMPACT: ModConfigSpec.DoubleValue
+    lateinit var ROLLER_DECK_MAX_LENGTH: ModConfigSpec.IntValue
+    lateinit var ROLLER_DECK_SPEED_LIMIT: ModConfigSpec.DoubleValue
+    lateinit var ROLLER_HINGE_MAX_LENGTH: ModConfigSpec.IntValue
+    lateinit var ROLLER_HINGE_MAX_ANGLE: ModConfigSpec.DoubleValue
+    lateinit var ROLLER_HINGE_SLIDE_SCALE: ModConfigSpec.DoubleValue
+    lateinit var ROLLER_DECK_CARRY_EXEMPT_ENTITIES: ModConfigSpec.ConfigValue<List<String>>
+    lateinit var ROLLER_DECK_SYNC_INTERVAL: ModConfigSpec.IntValue
+    lateinit var ROLLER_DECK_CORRECTION_THRESHOLD: ModConfigSpec.DoubleValue
+    lateinit var ROLLER_DECK_CORRECTION_SPEED: ModConfigSpec.DoubleValue
     lateinit var GRAB_DISTANCE: ModConfigSpec.DoubleValue
     lateinit var GRAB_CHARGE_TICKS: ModConfigSpec.IntValue
 
@@ -90,6 +101,16 @@ object ModConfig {
         DISABLE_SLIDE_ANGLE_LIMIT = BUILDER
             .comment("Remove bezier curve angle limits for water slides.")
             .define("disableSlideCurveAngleLimit", true)
+        BUILDER.pop()
+
+        // a client walks its own copy of a load to the place a keyframe gave it; that walk is a slide, and this is
+        // how fast it goes. It is a client side knob, so it lives in the common spec and never syncs.
+        BUILDER.push("roller_conveyor")
+        ROLLER_DECK_CORRECTION_SPEED = BUILDER
+            .comment(
+                "How fast a client walks a load to the position a keyframe gave it, in blocks per tick. A correction is a slide, never a jump, and it never exceeds the run's own speed limit."
+            )
+            .defineInRange("deckCorrectionSpeed", 0.25, 0.05, 1.0)
         BUILDER.pop()
 
         SPEC = BUILDER.build()
@@ -149,6 +170,42 @@ object ModConfig {
         ACCELERATOR_REFERENCE_RPM = SERVER_BUILDER
             .comment("RPM at which a slide accelerator adds its base speed; faster rotation scales up linearly.")
             .defineInRange("acceleratorReferenceRpm", 16.0, 1.0, 256.0)
+        SERVER_BUILDER.pop()
+
+        SERVER_BUILDER.push("roller_conveyor")
+        ROLLER_CONVEYOR_STRESS_IMPACT = SERVER_BUILDER
+            .comment("Stress units per RPM consumed by one roller conveyor block of a deck.")
+            .defineInRange("rollerConveyorStressImpact", 1.0, 0.0, 64.0)
+        ROLLER_HINGE_MAX_LENGTH = SERVER_BUILDER
+            .comment("Longest roller conveyor run that a shaft may turn into a tilting sub-level.")
+            .defineInRange("hingeMaxLength", 16, 1, 64)
+        ROLLER_DECK_MAX_LENGTH = SERVER_BUILDER
+            .comment("Longest roller conveyor run a deck walks and carries loads along, apart from the hinge limit.")
+            .defineInRange("deckMaxLength", 64, 1, 256)
+        ROLLER_DECK_SPEED_LIMIT = SERVER_BUILDER
+            .comment("Fastest a load may ride along a deck, in blocks per tick; 0.5 is about ten blocks a second.")
+            .defineInRange("deckSpeedLimit", 0.5, 0.1, 1.0)
+        ROLLER_HINGE_MAX_ANGLE = SERVER_BUILDER
+            .comment("Degrees a hinged run may tilt before it stops following its shaft; 0 keeps it free.")
+            .defineInRange("hingeMaxAngleDegrees", 0.0, 0.0, 360.0)
+        ROLLER_HINGE_SLIDE_SCALE = SERVER_BUILDER
+            .comment("How strongly main world gravity pulls a load down a tilted deck.")
+            .defineInRange("hingeSlideScale", 1.0, 0.0, 8.0)
+        ROLLER_DECK_CARRY_EXEMPT_ENTITIES = SERVER_BUILDER
+            .comment(
+                "Entity ids the deck never carries. The deck only takes over entity passengers; a floating contraption or sub-level runs on its own physics next to the deck. Add an entity id here when one of them has to be exempt."
+            )
+            .defineListAllowEmpty("carryExemptEntities", emptyList<String>(), null, Predicate { it is String })
+        ROLLER_DECK_SYNC_INTERVAL = SERVER_BUILDER
+            .comment(
+                "Ticks between two authoritative keyframes of a deck's loads. Every real event still syncs at once; the path a client plays back covers two intervals of samples, so this is capped at 40 ticks and every supported setting keeps the whole window covered. A client plays half a window behind the anchor (about a second of phase at the default); a quarter window is snappier."
+            )
+            .defineInRange("deckSyncIntervalTicks", 20, 5, 40)
+        ROLLER_DECK_CORRECTION_THRESHOLD = SERVER_BUILDER
+            .comment(
+                "How far a client's own load may sit from the keyframe before it is put where the keyframe says instead of being smoothed there, in blocks."
+            )
+            .defineInRange("deckCorrectionThreshold", 0.5, 0.05, 4.0)
         SERVER_BUILDER.pop()
 
         SERVER_BUILDER.push("grab_bar")
@@ -230,6 +287,40 @@ object ModConfig {
 
     fun acceleratorStressImpact(): Double =
         ACCELERATOR_STRESS_IMPACT.safeGet(SERVER_SPEC).coerceIn(0.0, 64.0)
+
+    fun rollerConveyorStressImpact(): Double =
+        ROLLER_CONVEYOR_STRESS_IMPACT.safeGet(SERVER_SPEC).coerceIn(0.0, 64.0)
+
+    fun rollerHingeMaxLength(): Int = ROLLER_HINGE_MAX_LENGTH.safeGet(SERVER_SPEC).coerceIn(1, 64)
+
+    // a deck walks its own chain up to this many segments, whatever the hinge limit says
+    fun rollerDeckMaxLength(): Int = ROLLER_DECK_MAX_LENGTH.safeGet(SERVER_SPEC).coerceIn(1, 256)
+
+    // the one speed a landing seed, a carried load and the rollers all read
+    fun rollerDeckSpeedLimit(): Float = ROLLER_DECK_SPEED_LIMIT.safeGet(SERVER_SPEC).coerceIn(0.1, 1.0).toFloat()
+
+    // how fast a client walks a load to the position a keyframe gave it: never below a slow slide, never above
+    // the run's own speed limit, so a correction can only ever be gentler than the belt itself
+    fun rollerDeckCorrectionSpeed(): Float =
+        ROLLER_DECK_CORRECTION_SPEED.safeGet(SPEC).coerceIn(0.05, rollerDeckSpeedLimit().toDouble()).toFloat()
+
+    fun rollerHingeMaxAngleDegrees(): Double = ROLLER_HINGE_MAX_ANGLE.safeGet(SERVER_SPEC).coerceIn(0.0, 360.0)
+
+    fun rollerHingeSlideScale(): Double = ROLLER_HINGE_SLIDE_SCALE.safeGet(SERVER_SPEC).coerceIn(0.0, 8.0)
+
+    // how often a run hands its clients an authoritative keyframe of the loads it carries
+    fun rollerDeckSyncIntervalTicks(): Int = ROLLER_DECK_SYNC_INTERVAL.safeGet(SERVER_SPEC).coerceIn(5, 40)
+
+    // the gap at which a client's own load is put where the keyframe says, instead of being smoothed there
+    fun rollerDeckCorrectionThreshold(): Double =
+        ROLLER_DECK_CORRECTION_THRESHOLD.safeGet(SERVER_SPEC).coerceIn(0.05, 4.0)
+
+    // the entity ids the deck never carries, trimmed and lowercased so a hand written entry still matches
+    fun rollerDeckCarryExemptEntities(): List<String> {
+        val raw = ROLLER_DECK_CARRY_EXEMPT_ENTITIES.safeGet(SERVER_SPEC)
+        if (raw.isEmpty()) return emptyList()
+        return raw.mapNotNull { it?.trim()?.lowercase() }.filter { it.isNotEmpty() }
+    }
 
     fun acceleratorBaseSpeed(): Double = ACCELERATOR_BASE_SPEED.safeGet(SERVER_SPEC).coerceIn(0.5, 32.0)
 

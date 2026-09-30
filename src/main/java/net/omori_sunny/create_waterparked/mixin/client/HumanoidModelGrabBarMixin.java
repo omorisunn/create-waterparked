@@ -6,7 +6,6 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
-import net.omori_sunny.create_waterparked.CreateWaterparked;
 import net.omori_sunny.create_waterparked.client.attachment.GrabBarHoldClient;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -34,11 +33,6 @@ public abstract class HumanoidModelGrabBarMixin {
     private static final double MODEL_SCALE = 0.9375;
     private static final double MODEL_Y_OFFSET = 1.501;
     private static final double SHOULDER_PX_Y = 2.0;
-    private static final double ARM_PX = 10.0;
-    private static final int DIAG_TICKS = 20;
-
-    @Unique
-    private int waterparked$diagTick;
 
     @Unique
     private float waterparked$bodyZBase;
@@ -48,16 +42,6 @@ public abstract class HumanoidModelGrabBarMixin {
 
     @Unique
     private boolean waterparked$hinged;
-
-    @Unique
-    private Vec3 waterparked$modelToWorld(Vec3 playerPos, float bodyYaw, double mx, double my, double mz) {
-        Vec3 local = new Vec3(
-            -mx / 16.0 * MODEL_SCALE,
-            (MODEL_Y_OFFSET - my / 16.0) * MODEL_SCALE,
-            mz / 16.0 * MODEL_SCALE
-        );
-        return playerPos.add(local.yRot((float) Math.toRadians(180f - bodyYaw)));
-    }
 
     @Unique
     private void waterparked$restoreBaseZ(HumanoidModel<?> model) {
@@ -111,16 +95,6 @@ public abstract class HumanoidModelGrabBarMixin {
             double armY = gy - SHOULDER_PX_Y;
             double armZ = gz;
             reach = (float) Math.atan2(armZ, armY);
-            if (entity.tickCount - this.waterparked$diagTick >= DIAG_TICKS) {
-                this.waterparked$diagTick = entity.tickCount;
-                double handY = SHOULDER_PX_Y + ARM_PX * Math.cos(reach);
-                double handZ = ARM_PX * Math.sin(reach);
-                Vec3 hand = waterparked$modelToWorld(playerPos, bodyYaw, 0.0, handY, handZ);
-                CreateWaterparked.INSTANCE.getLOGGER().info(
-                    "[GrabBarDiag] armLenPx={} anchorDist={}",
-                    Math.sqrt(armY * armY + armZ * armZ), hand.distanceTo(grip)
-                );
-            }
         }
 
         ModelPart rightArm = model.rightArm;

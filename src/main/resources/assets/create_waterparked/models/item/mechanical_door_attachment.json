@@ -1,3 +1,6 @@
 {
-  "parent": "create_waterparked:block/mechanical_door_attachment/item"
+  "parent": "item/generated",
+  "textures": {
+    "layer0": "create_waterparked:item/mechanical_door_attachment"
+  }
 }

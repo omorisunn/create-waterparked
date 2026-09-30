@@ -1,0 +1,100 @@
+{
+  "variants": {
+    "facing=east,waterlogged=false,hinge=none": {
+      "model": "create_waterparked:block/roller_conveyor/block",
+      "y": 90
+    },
+    "facing=east,waterlogged=false,hinge=left": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 90
+    },
+    "facing=east,waterlogged=false,hinge=right": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 90
+    },
+    "facing=east,waterlogged=true,hinge=none": {
+      "model": "create_waterparked:block/roller_conveyor/block",
+      "y": 90
+    },
+    "facing=east,waterlogged=true,hinge=left": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 90
+    },
+    "facing=east,waterlogged=true,hinge=right": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 90
+    },
+    "facing=north,waterlogged=false,hinge=none": {
+      "model": "create_waterparked:block/roller_conveyor/block",
+      "y": 0
+    },
+    "facing=north,waterlogged=false,hinge=left": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 0
+    },
+    "facing=north,waterlogged=false,hinge=right": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 0
+    },
+    "facing=north,waterlogged=true,hinge=none": {
+      "model": "create_waterparked:block/roller_conveyor/block",
+      "y": 0
+    },
+    "facing=north,waterlogged=true,hinge=left": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 0
+    },
+    "facing=north,waterlogged=true,hinge=right": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 0
+    },
+    "facing=south,waterlogged=false,hinge=none": {
+      "model": "create_waterparked:block/roller_conveyor/block",
+      "y": 180
+    },
+    "facing=south,waterlogged=false,hinge=left": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 180
+    },
+    "facing=south,waterlogged=false,hinge=right": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 180
+    },
+    "facing=south,waterlogged=true,hinge=none": {
+      "model": "create_waterparked:block/roller_conveyor/block",
+      "y": 180
+    },
+    "facing=south,waterlogged=true,hinge=left": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 180
+    },
+    "facing=south,waterlogged=true,hinge=right": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 180
+    },
+    "facing=west,waterlogged=false,hinge=none": {
+      "model": "create_waterparked:block/roller_conveyor/block",
+      "y": 270
+    },
+    "facing=west,waterlogged=false,hinge=left": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 270
+    },
+    "facing=west,waterlogged=false,hinge=right": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 270
+    },
+    "facing=west,waterlogged=true,hinge=none": {
+      "model": "create_waterparked:block/roller_conveyor/block",
+      "y": 270
+    },
+    "facing=west,waterlogged=true,hinge=left": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 270
+    },
+    "facing=west,waterlogged=true,hinge=right": {
+      "model": "create_waterparked:block/roller_conveyor/inserted",
+      "y": 270
+    }
+  }
+}

@@ -4,6 +4,8 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlo
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackBlock
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
+import net.omori_sunny.create_waterparked.content.roller.RollerConveyorBlock
+import net.omori_sunny.create_waterparked.content.roller.RollerWorldShaftBlock
 import net.minecraft.world.level.block.SoundType
 import net.minecraft.world.level.block.state.BlockBehaviour
 import net.minecraft.world.level.material.MapColor
@@ -41,5 +43,15 @@ object ModBlocks {
         net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetBlock(
             dev.silvergold.simulatedcoasters.rivet.RivetBlock.defaultProperties()
         )
+    }
+
+    // spike route A: subclass of Create's belt block
+    val ROLLER_CONVEYOR: RollerConveyorBlock by REGISTRY.register("roller_conveyor") { ->
+        RollerConveyorBlock(RollerConveyorBlock.defaultProperties())
+    }
+
+    // the drive a hinged run leaves in the world at its pivot
+    val ROLLER_HINGE_SHAFT: RollerWorldShaftBlock by REGISTRY.register("roller_hinge_shaft") { ->
+        RollerWorldShaftBlock(RollerWorldShaftBlock.defaultProperties())
     }
 }

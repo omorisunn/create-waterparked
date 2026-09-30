@@ -22,13 +22,16 @@
     "CoasterPeerCurveHandleLengthsMixin",
     "CoasterTrackPlacementMixin",
     "CreativeModeTabWaterparkedLayoutMixin",
+    "EntityRollerDeckFrictionMixin",
     "ItemHelperBoatMixin",
     "PackageEntityCenterBoatMixin",
     "RivetDisassemblyExemptMixin",
     "RivetPlacePayloadTubeMixin",
+    "ServerSubLevelContainerRollerMixin",
     "ServerSubLevelRivetHoldMixin",
     "SubLevelBoundsAccessor",
-    "TransportedItemStackBoatMixin"
+    "TransportedItemStackBoatMixin",
+    "TransportedItemStackRollerSpeedMixin"
   ],
   "client": [
     "client.AbstractContainerScreenAccessor",
