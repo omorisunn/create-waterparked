@@ -8,6 +8,7 @@ import net.minecraft.world.entity.item.ItemEntity
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.Vec3
 import net.omori_sunny.create_waterparked.content.attachment.grab_bar.GrabBarAttachment
+import net.omori_sunny.create_waterparked.content.roller.RollerConveyorBlockEntity
 import kotlin.math.abs
 
 // belt ends near a slide mouth feed end-segment items into the tube (Core BeltInterception pattern)
@@ -25,6 +26,7 @@ object BeltSlideFeeder {
         val worldTangent: Vec3
     ) {
         var belts: List<BlockPos> = emptyList()
+        var decks: List<BlockPos> = emptyList()
         var nextBeltScan: Long = 0L
     }
 
@@ -53,10 +55,11 @@ object BeltSlideFeeder {
             }
         }
         for (mouth in list) {
-            if (mouth.belts.isEmpty() && time < mouth.nextBeltScan) continue
+            if (mouth.belts.isEmpty() && mouth.decks.isEmpty() && time < mouth.nextBeltScan) continue
             if (time >= mouth.nextBeltScan) {
                 mouth.nextBeltScan = time + BELT_RESCAN_TICKS
                 mouth.belts = scanBelts(level, mouth)
+                mouth.decks = scanDecks(mouth)
             }
             feed(level, mouth)
         }
@@ -72,30 +75,46 @@ object BeltSlideFeeder {
         return out
     }
 
+    // one entry per deck run, keyed by the controller that owns its loads
+    private fun scanDecks(mouth: FeederMouth): List<BlockPos> {
+        val out = ArrayList<BlockPos>()
+        val r = BELT_SCAN_RADIUS
+        for (dx in -r..r) for (dy in -r..r) for (dz in -r..r) {
+            val pos = mouth.scanCenter.offset(dx, dy, dz)
+            val segment = mouth.access.getBlockEntity(pos) as? RollerConveyorBlockEntity ?: continue
+            val controller = segment.controllerPosition() ?: pos
+            if (out.contains(controller)) continue
+            if (mouth.access.getBlockEntity(controller) is RollerConveyorBlockEntity) {
+                out += controller.immutable()
+            }
+        }
+        return out
+    }
+
     private fun feed(level: ServerLevel, mouth: FeederMouth) {
         for (pos in mouth.belts) {
             val belt = mouth.access.getBlockEntity(pos) as? BeltBlockEntity ?: continue
-            val speed = belt.speed
-            if (abs(speed) < 1.0f / 512.0f) continue
+            val speed = abs(belt.beltMovementSpeed)
+            if (speed < 1.0f / 512.0f) continue
             val inv = belt.inventory ?: continue
             val length = belt.beltLength
             val items = inv.transportedItems
             val iter = items.iterator()
+            var removed = false
             while (iter.hasNext()) {
                 val tis = iter.next()
                 if (tis.beltPosition < length - END_SEGMENT) continue
                 val stack = tis.stack
                 if (stack.isEmpty) continue
                 iter.remove()
+                removed = true
                 val dirVec = Vec3.atLowerCornerOf(belt.movementFacing.normal)
                 val endLocal = Vec3.atCenterOf(pos)
                     .add(dirVec.scale((tis.beltPosition - length + 0.5).toDouble()))
                 val spawn = mouth.access.toWorld(endLocal)
                 // exact 3D transport vector, slopes included
                 val chainDir = Vec3.atLowerCornerOf(belt.beltChainDirection).normalize()
-                val velWorld = mouth.access.toWorldNormal(
-                    chainDir.scale(belt.beltMovementSpeed.toDouble())
-                )
+                val velWorld = mouth.access.toWorldNormal(chainDir.scale(speed.toDouble()))
                 val entity = ItemEntity(level, spawn.x, spawn.y, spawn.z, stack.copy())
                 entity.deltaMovement = velWorld
                 // yaw + pitch exactly on the belt direction
@@ -110,6 +129,47 @@ object BeltSlideFeeder {
                 entity.hurtMarked = true
                 level.addFreshEntity(entity)
             }
+            if (removed) {
+                belt.setChanged()
+                belt.notifyUpdate()
+            }
+        }
+        for (pos in mouth.decks) feedDeck(level, mouth, pos)
+    }
+
+    // a deck run hands its end-segment loads to the mouth the way a belt end does
+    private fun feedDeck(level: ServerLevel, mouth: FeederMouth, pos: BlockPos) {
+        val deck = mouth.access.getBlockEntity(pos) as? RollerConveyorBlockEntity ?: return
+        val speed = abs(deck.deckMovementSpeed)
+        if (speed < 1.0f / 512.0f) return
+        val length = deck.deckLength
+        if (length <= 0) return
+        val inv = deck.inventory ?: return
+        val items = inv.transportedItems
+        val iter = items.iterator()
+        val dirVec = Vec3.atLowerCornerOf(deck.movementFacing.normal)
+        var removed = false
+        while (iter.hasNext()) {
+            val tis = iter.next()
+            if (tis.beltPosition < length - END_SEGMENT) continue
+            val stack = tis.stack
+            if (stack.isEmpty) continue
+            iter.remove()
+            removed = true
+            val spawn = mouth.access.toWorld(deck.vectorForOffset(tis.beltPosition))
+            val velWorld = mouth.access.toWorldNormal(dirVec.scale(speed.toDouble()))
+            val entity = ItemEntity(level, spawn.x, spawn.y, spawn.z, stack.copy())
+            entity.deltaMovement = velWorld
+            val horiz = kotlin.math.sqrt(velWorld.x * velWorld.x + velWorld.z * velWorld.z)
+            entity.setYRot(Math.toDegrees(kotlin.math.atan2(-velWorld.x, velWorld.z)).toFloat())
+            entity.setXRot(Math.toDegrees(kotlin.math.atan2(-velWorld.y, horiz)).toFloat())
+            entity.setDefaultPickUpDelay()
+            entity.hurtMarked = true
+            level.addFreshEntity(entity)
+        }
+        if (removed) {
+            deck.setChanged()
+            deck.notifyUpdate()
         }
     }
 }

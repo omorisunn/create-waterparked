@@ -11,10 +11,12 @@ object SlideWaterManager {
     private const val REPORT_INTERVAL = 200L
     private const val TICKS_PER_SECOND = 20.0
 
+    private val DEBUG = CreateWaterparked.LOGGER.isDebugEnabled
+
     @JvmStatic
     fun tickServer(level: ServerLevel, be: WaterslideAnchorBlockEntity) {
         if (level.gameTime % REPORT_INTERVAL == 0L && be.hasWater()) {
-            CreateWaterparked.LOGGER.debug(
+            if (DEBUG) CreateWaterparked.LOGGER.debug(
                 "Water anchor {} amount={} mb", be.blockPos, be.waterAmount()
             )
         }

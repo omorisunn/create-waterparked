@@ -46,6 +46,12 @@ object ServerWaterSimulation {
     private const val VEL_EPS = 1.0E-9
     private const val MIN_SEGMENT_LENGTH = 1.0E-6
 
+    private const val SIG_SEED = -7046029254386353131L
+    private const val SIG_MIX_A = -49064778989728563L
+    private const val SIG_MIX_B = -4265267296055464877L
+
+    private val DEBUG = CreateWaterparked.LOGGER.isDebugEnabled
+
     // one watered sub-segment of a curve
     data class WaterSegment(
         val arc: Float,
@@ -176,9 +182,9 @@ object ServerWaterSimulation {
     private val lastCrossLinkSig = mutableMapOf<ResourceKey<Level>, String>()
     private val lastCrossScanTick = mutableMapOf<ResourceKey<Level>, Long>()
     private val pendingCrossSigWhileMoving = mutableMapOf<ResourceKey<Level>, String>()
-    private val segCache = HashMap<String, Pair<String, List<TubeSeg>>>()
-    private val lastSig = HashMap<String, String>()
-    private val lastStableSig = HashMap<String, String>()
+    private val segCache = HashMap<String, Pair<Long, List<TubeSeg>>>()
+    private val lastSig = HashMap<String, Long>()
+    private val lastStableSig = HashMap<String, Long>()
     private val lastStableCheckTick = HashMap<String, Long>()
     private val lastSigCheckTick = HashMap<String, Long>()
     private val debugPlayers = mutableSetOf<UUID>()
@@ -347,17 +353,17 @@ object ServerWaterSimulation {
             if (pending != null && pending != lastCrossLinkSig[dim]) {
                 lastCrossLinkSig[dim] = pending
                 for (a in accesses) dirty += spaceKey(a)
-                CreateWaterparked.LOGGER.debug("[WaterCross] settled after movement -> recalc")
+                if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterCross] settled after movement -> recalc")
             }
         }
         if (crossSig != null && crossSig != lastCrossLinkSig[dim]) {
             if (movingFast) {
                 pendingCrossSigWhileMoving[dim] = crossSig
-                CreateWaterparked.LOGGER.debug("[WaterCross] deferred while sub-level is moving")
+                if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterCross] deferred while sub-level is moving")
             } else {
                 lastCrossLinkSig[dim] = crossSig
                 for (a in accesses) dirty += spaceKey(a)
-                CreateWaterparked.LOGGER.debug("[WaterCross] link signature changed -> recalc")
+                if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterCross] link signature changed -> recalc")
             }
         }
 
@@ -379,7 +385,7 @@ object ServerWaterSimulation {
             val old = lastStableSig[key]
             if (old != null && old != sig) {
                 dirty += key
-                CreateWaterparked.LOGGER.debug("[WaterCross] slide structure changed -> recalc")
+                if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterCross] slide structure changed -> recalc")
             }
             lastStableSig[key] = sig
         }
@@ -421,7 +427,7 @@ object ServerWaterSimulation {
                         CreateWaterparked.LOGGER.error("Water apply failed", e)
                     } finally {
                         waterCalcRunning.remove(dim)
-                        CreateWaterparked.LOGGER.debug("[WaterPerf] calcAllMs={}", calcMs)
+                        if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterPerf] calcAllMs={}", calcMs)
                     }
                 }
             } catch (e: Exception) {
@@ -434,7 +440,7 @@ object ServerWaterSimulation {
     // server thread prepares immutable grids for the water worker
     private fun prepareCalc(level: ServerLevel, accesses: List<SlideSpaceAccess>): PreparedCalc? {
         val spaces = accesses.map { CalcSpace(it) }
-        val sigByAccess = HashMap<String, String>()
+        val sigByAccess = HashMap<String, Long>()
         for ((access, calc) in accesses.zip(spaces)) {
             val key = calc.key
             val sig = try {
@@ -486,7 +492,7 @@ object ServerWaterSimulation {
                     level, WaterslideWaterSyncPayload(emptyList(), calc.subId)
                 )
             }
-            CreateWaterparked.LOGGER.debug("Water sim: no water sources")
+            if (DEBUG) CreateWaterparked.LOGGER.debug("Water sim: no water sources")
             return null
         }
 
@@ -566,7 +572,7 @@ object ServerWaterSimulation {
                     filled++
                 }
                 if (filled > 0) {
-                    CreateWaterparked.LOGGER.debug(
+                    if (DEBUG) CreateWaterparked.LOGGER.debug(
                         "[WaterFallback] curve={},{} filled={} launchSpeed={}",
                         src.curveKey.first, src.curveKey.second, filled, src.launchSpeed
                     )
@@ -574,7 +580,7 @@ object ServerWaterSimulation {
             }
         }
 
-        CreateWaterparked.LOGGER.debug("[WaterCross] trajectory handoffs={}", handoffs)
+        if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterCross] trajectory handoffs={}", handoffs)
         return CalcResult(prepared.accByAccess, prepared.exitsByAccess, debugOut, handoffs)
     }
 
@@ -599,7 +605,7 @@ object ServerWaterSimulation {
             fields[key] = out
             for ((edge, field) in out) {
                 if (field.exit != null) {
-                    CreateWaterparked.LOGGER.debug(
+                    if (DEBUG) CreateWaterparked.LOGGER.debug(
                         "[WaterExit] space={} edge=({},{}) pos={} vel={}",
                         key, edge.first, edge.second, field.exit.pos, field.exit.vel
                     )
@@ -612,7 +618,7 @@ object ServerWaterSimulation {
                     }, field.exit?.pos, field.exit?.vel
                 )
             }
-            CreateWaterparked.LOGGER.debug(
+            if (DEBUG) CreateWaterparked.LOGGER.debug(
                 "Water sim done space={} curves={} segments={}", key, entries.size,
                 entries.sumOf { it.segments.size }
             )
@@ -945,7 +951,7 @@ object ServerWaterSimulation {
         return handoffs
     }
 
-    private fun allSegments(access: SlideSpaceAccess, sig: String): List<TubeSeg> {
+    private fun allSegments(access: SlideSpaceAccess, sig: Long): List<TubeSeg> {
         val key = spaceKey(access)
         segCache[key]?.let { if (it.first == sig) return it.second }
         val out = ArrayList<TubeSeg>()
@@ -987,7 +993,7 @@ object ServerWaterSimulation {
     }
 
     // cached signature for the per tick standing player query
-    private fun structureSignatureCached(access: SlideSpaceAccess): String {
+    private fun structureSignatureCached(access: SlideSpaceAccess): Long {
         val key = spaceKey(access)
         val old = lastSig[key]
         val last = lastSigCheckTick[key] ?: Long.MIN_VALUE
@@ -998,46 +1004,70 @@ object ServerWaterSimulation {
         return sig
     }
 
-    private fun structureSignature(access: SlideSpaceAccess, includePose: Boolean = true, includeCrossFields: Boolean = true): String {
-        val sb = StringBuilder()
+    private fun structureSignature(access: SlideSpaceAccess, includePose: Boolean = true, includeCrossFields: Boolean = true): Long {
+        var h = SIG_SEED
         if (includePose && access is SubSlideSpaceAccess) {
             val pose = access.sub.logicalPose()
-            sb.append("pose=").append(pose.position().x).append(',').append(pose.position().y).append(',').append(pose.position().z)
-                .append('|').append(pose.orientation().x).append(',').append(pose.orientation().y).append(',')
-                .append(pose.orientation().z).append(',').append(pose.orientation().w)
-                .append('|').append(pose.scale().x).append(',').append(pose.scale().y).append(',').append(pose.scale().z)
-                .append(';')
+            h = mixSig(h, pose.position().x.toRawBits())
+            h = mixSig(h, pose.position().y.toRawBits())
+            h = mixSig(h, pose.position().z.toRawBits())
+            h = mixSig(h, pose.orientation().x.toRawBits())
+            h = mixSig(h, pose.orientation().y.toRawBits())
+            h = mixSig(h, pose.orientation().z.toRawBits())
+            h = mixSig(h, pose.orientation().w.toRawBits())
+            h = mixSig(h, pose.scale().x.toRawBits())
+            h = mixSig(h, pose.scale().y.toRawBits())
+            h = mixSig(h, pose.scale().z.toRawBits())
         }
-        for (pos in SlideAnchorIndex.all(access.level, access.space).sortedBy { it.asLong() }) {
+        var anchors = 0L
+        for (pos in SlideAnchorIndex.all(access.level, access.space)) {
             val be = access.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: continue
-            sb.append(pos.asLong()).append(if (be.hasWater()) 'w' else '.').append('|')
-            for (e in be.anchorPeerCurvesView.entries.sortedBy { it.key.asLong() }) {
-                val raw = e.value
+            var a = mixSig(SIG_SEED, pos.asLong())
+            a = mixSig(a, if (be.hasWater()) 1L else 0L)
+            var curves = 0L
+            for (raw in be.anchorPeerCurvesView.values) {
                 val bc = if (raw.isPrimary) raw else raw.secondary()
                 if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
-                val a = bc.bePositions.getFirst()
-                val b = bc.bePositions.getSecond()
-                sb.append(a.asLong()).append(',').append(b.asLong()).append(',')
-                    .append(bc.getSegmentCount()).append(',')
-                    .append(bc.starts.getFirst().x).append(',')
-                    .append(bc.starts.getFirst().y).append(',')
-                    .append(bc.starts.getFirst().z).append(',')
-                    .append(bc.starts.getSecond().x).append(',')
-                    .append(bc.starts.getSecond().y).append(',')
-                    .append(bc.starts.getSecond().z).append(',')
-                    .append(SlideCurveGeometry.radiusAt(access, a)).append(',')
-                    .append(SlideCurveGeometry.radiusAt(access, b)).append(';')
+                val p = bc.bePositions.getFirst()
+                val q = bc.bePositions.getSecond()
+                var c = mixSig(SIG_SEED, p.asLong())
+                c = mixSig(c, q.asLong())
+                c = mixSig(c, bc.getSegmentCount().toLong())
+                c = mixSig(c, bc.starts.getFirst().x.toRawBits())
+                c = mixSig(c, bc.starts.getFirst().y.toRawBits())
+                c = mixSig(c, bc.starts.getFirst().z.toRawBits())
+                c = mixSig(c, bc.starts.getSecond().x.toRawBits())
+                c = mixSig(c, bc.starts.getSecond().y.toRawBits())
+                c = mixSig(c, bc.starts.getSecond().z.toRawBits())
+                c = mixSig(c, SlideCurveGeometry.radiusAt(access, p).toRawBits().toLong())
+                c = mixSig(c, SlideCurveGeometry.radiusAt(access, q).toRawBits().toLong())
+                curves += c
             }
+            anchors += mixSig(a, curves)
         }
-        if (includeCrossFields) appendCrossSpaceExitSignature(sb, access)
-        return sb.toString()
+        h = mixSig(h, anchors)
+        if (includeCrossFields) h = appendCrossSpaceExitSignature(h, access)
+        return h
     }
 
     // pose independent signature, unaffected by sub level movement
-    private fun stableStructureSignature(access: SlideSpaceAccess): String =
+    private fun stableStructureSignature(access: SlideSpaceAccess): Long =
         structureSignature(access, includePose = false, includeCrossFields = false)
 
-    private fun appendCrossSpaceExitSignature(sb: StringBuilder, access: SlideSpaceAccess) {
+    private fun mixSig(h: Long, v: Long): Long {
+        var x = h xor (v * SIG_MIX_A)
+        x = x xor (x ushr 31)
+        x *= SIG_MIX_B
+        return x xor (x ushr 29)
+    }
+
+    private fun mixStr(h: Long, s: String): Long {
+        var acc = h
+        for (ch in s) acc = mixSig(acc, ch.code.toLong())
+        return acc
+    }
+
+    private fun appendCrossSpaceExitSignature(h: Long, access: SlideSpaceAccess): Long {
         val level = access.level
         val others = ArrayList<SlideSpaceAccess>()
         if (access.space != SlideSpace.Main) others += MainSlideSpaceAccess(level)
@@ -1047,16 +1077,26 @@ object ServerWaterSimulation {
             if (access.space == SlideSpace.SubLevel(sub.uniqueId)) return@forEach
             others += SubSlideSpaceAccess(level, sub)
         }
-        for (other in others.sortedBy { it.space.cacheKey(level) }) {
-            sb.append("cross:").append(other.space.cacheKey(level)).append('=')
+        var cross = 0L
+        for (other in others) {
+            var o = mixStr(SIG_SEED, other.space.cacheKey(level))
+            var entries = 0L
             for ((edge, field) in fields[spaceKey(other)].orEmpty()) {
                 val exit = field.exit ?: continue
                 if (!isOpenEndThrow(other, edge)) continue
-                sb.append(edge.first).append(',').append(edge.second).append(',')
-                    .append(exit.pos.x).append(',').append(exit.pos.y).append(',').append(exit.pos.z).append(',')
-                    .append(exit.vel.x).append(',').append(exit.vel.y).append(',').append(exit.vel.z).append(';')
+                var e = mixSig(SIG_SEED, edge.first)
+                e = mixSig(e, edge.second)
+                e = mixSig(e, exit.pos.x.toRawBits())
+                e = mixSig(e, exit.pos.y.toRawBits())
+                e = mixSig(e, exit.pos.z.toRawBits())
+                e = mixSig(e, exit.vel.x.toRawBits())
+                e = mixSig(e, exit.vel.y.toRawBits())
+                e = mixSig(e, exit.vel.z.toRawBits())
+                entries += e
             }
+            cross += mixSig(o, entries)
         }
+        return mixSig(h, cross)
     }
 
     private fun edgeKey(a: BlockPos, b: BlockPos): Pair<Long, Long> =

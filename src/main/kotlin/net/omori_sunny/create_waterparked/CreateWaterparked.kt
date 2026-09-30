@@ -69,6 +69,8 @@ object CreateWaterparked {
         NeoForge.EVENT_BUS.addListener(
             net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentManager::onServerTick
         )
+        NeoForge.EVENT_BUS.addListener(net.omori_sunny.create_waterparked.content.roller.RollerDeckGuard::onBreak)
+        net.omori_sunny.create_waterparked.content.roller.RollerLegacyAdoption.register()
         NeoForge.EVENT_BUS.addListener(WaterslideSupportInteraction::onPlayerLoggedOut)
         NeoForge.EVENT_BUS.addListener(
             EventPriority.HIGHEST,
@@ -83,6 +85,9 @@ object CreateWaterparked {
             WaterslideAnchorInteraction::onRightClickBlock
         )
         MOD_BUS.addListener(WaterslideAnchorBlockEntity::registerCapabilities)
+        MOD_BUS.addListener(
+            net.omori_sunny.create_waterparked.content.roller.RollerConveyorBlockEntity::registerItemCapability
+        )
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onPlayerLoggedOut)
         NeoForge.EVENT_BUS.addListener(PlayerSlideController::onPlayerLoggedIn)
 
@@ -127,6 +132,10 @@ object CreateWaterparked {
             )
             LOGGER.debug("Stress impact {} x RPM for {}", type.stressImpact, type.id)
         }
+        BlockStressValues.IMPACTS.register(
+            ModBlocks.ROLLER_CONVEYOR,
+            java.util.function.DoubleSupplier { ModConfig.rollerConveyorStressImpact() }
+        )
     }
 
     @SubscribeEvent

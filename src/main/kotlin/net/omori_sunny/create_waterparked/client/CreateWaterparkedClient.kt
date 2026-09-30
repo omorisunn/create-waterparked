@@ -3,6 +3,7 @@ package net.omori_sunny.create_waterparked.client
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer
 import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.client.compat.itrp.IterationRPPatcher
+import net.omori_sunny.create_waterparked.client.flywheel.RollerConveyorVisual
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.editor.WaterslideRadiusEdit
 import net.omori_sunny.create_waterparked.client.editor.WaterslideDyeOutline
@@ -22,6 +23,7 @@ import net.omori_sunny.create_waterparked.client.editor.SlideClipboardCopy
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashParticle
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashSpawner
+import net.omori_sunny.create_waterparked.client.placement.RollerConveyorPlacementHelper
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.client.render.WaterslideGhostRenderer
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
@@ -102,6 +104,7 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(::onRenderGuiLayerPost)
         NeoForge.EVENT_BUS.addListener(GrabBarHoldClient::onClientTickPost)
         NeoForge.EVENT_BUS.addListener(::onClientLevelUnload)
+        NeoForge.EVENT_BUS.addListener(::onLeftClickBlock)
 
         @Suppress("DEPRECATION")
         ModLoadingContext.get().getActiveContainer().registerExtensionPoint(
@@ -111,8 +114,12 @@ object CreateWaterparkedClient {
     }
 
     private fun onClientSetup(event: FMLClientSetupEvent) {
+        // touching the holder now registers the partial models before flywheel bakes them
+        net.omori_sunny.create_waterparked.client.flywheel.ModPartialModels.ROLLER
+        net.omori_sunny.create_waterparked.client.flywheel.ModPartialModels.ROLLER_SHAFT
         IterationRPPatcher.runIfNeeded()
         net.omori_sunny.create_waterparked.client.item.WaterslideItemTooltips.register()
+        RollerConveyorPlacementHelper.register()
         if (net.neoforged.fml.ModList.get().isLoaded("ponder") ||
             Thread.currentThread().contextClassLoader.getResource("net/createmod/ponder/foundation/PonderIndex.class") != null
         ) {
@@ -146,6 +153,10 @@ object CreateWaterparkedClient {
                 net.omori_sunny.create_waterparked.content.attachment.grab_bar
                     .GrabBarHeightEditor(pos)
             }
+        SimpleBlockEntityVisualizer.builder(ModBlockEntities.ROLLER_CONVEYOR_BE)
+            .factory { ctx, be, pt -> RollerConveyorVisual(ctx, be, pt) }
+            .neverSkipVanillaRender()
+            .apply()
         SimpleBlockEntityVisualizer.builder(ModBlockEntities.WATERSLIDE_ANCHOR_BE)
             .factory { ctx, be, pt -> WaterslideTubeVisual(ctx, be, pt) }
             .neverSkipVanillaRender()
@@ -157,6 +168,11 @@ object CreateWaterparkedClient {
                 }
                 .apply()
         }
+        SimpleBlockEntityVisualizer.builder(ModBlockEntities.ROLLER_HINGE_SHAFT_BE)
+            .factory { ctx, be, pt ->
+                com.simibubi.create.content.kinetics.base.ShaftVisual(ctx, be, pt)
+            }
+            .apply()
     }
 
     private fun onRegisterRenderers(event: EntityRenderersEvent.RegisterRenderers) {
@@ -166,8 +182,14 @@ object CreateWaterparkedClient {
                     ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "textures/entity/slide_sit.png")
             }
         }
+        event.registerBlockEntityRenderer(ModBlockEntities.ROLLER_CONVEYOR_BE) { ctx ->
+            net.omori_sunny.create_waterparked.client.renderer.RollerConveyorBlockEntityRenderer(ctx)
+        }
         event.registerBlockEntityRenderer(ModBlockEntities.WATERSLIDE_ANCHOR_BE) { ctx ->
             net.omori_sunny.create_waterparked.client.renderer.WaterslideTubeBlockEntityRenderer(ctx)
+        }
+        event.registerBlockEntityRenderer(ModBlockEntities.ROLLER_HINGE_SHAFT_BE) { ctx ->
+            com.simibubi.create.content.kinetics.base.ShaftRenderer(ctx)
         }
         for (type in net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes.all()) {
             event.registerBlockEntityRenderer(type.blockEntityType.get()) { ctx ->
@@ -261,6 +283,8 @@ object CreateWaterparkedClient {
 
     private fun onClientTick(event: ClientTickEvent.Post) {
         val mc = Minecraft.getInstance()
+        // every deck the client holds steps its own loads once per tick, whether or not it is being drawn
+        net.omori_sunny.create_waterparked.content.roller.RollerConveyorBlockEntity.tickClientDecks()
         WaterslideTubeVisual.tickVisibility()
         WaterslideSupportEdit.onClientTick()
         net.omori_sunny.create_waterparked.client.editor.SubLevelEditFocus.tick(mc)
@@ -277,8 +301,17 @@ object CreateWaterparkedClient {
         }
     }
 
+    // a deck inside a sub-level is not ours to mine: no prediction, no cracking and no dust on the client
+    private fun onLeftClickBlock(event: net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.LeftClickBlock) {
+        if (!net.omori_sunny.create_waterparked.content.roller.RollerConveyorBlock.isProtected(event.level, event.pos)) return
+        event.useBlock = net.neoforged.neoforge.common.util.TriState.FALSE
+        event.useItem = net.neoforged.neoforge.common.util.TriState.FALSE
+        event.isCanceled = true
+    }
+
     private fun onClientLevelUnload(event: LevelEvent.Unload) {
         if (event.level.isClientSide) {
+            net.omori_sunny.create_waterparked.content.roller.RollerConveyorBlockEntity.forgetClientDecks()
             WaterslideCurveRenderer.clearClientAnchors()
             WaterslideSupportEdit.clear()
             WaterslideGhostPlacement.clear()
