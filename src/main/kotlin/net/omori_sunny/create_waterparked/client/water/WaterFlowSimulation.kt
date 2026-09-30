@@ -4,6 +4,7 @@ import com.simibubi.create.content.trains.track.BezierConnection
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer
 import dev.ryanhcode.sable.companion.math.JOMLConversion
 import dev.ryanhcode.sable.sublevel.ClientSubLevel
+import net.omori_sunny.create_waterparked.CreateWaterparked
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
@@ -36,6 +37,8 @@ import kotlin.math.sin
 object WaterFlowSimulation {
 
     const val WATER_V_CYCLES_PER_BLOCK = 1.0f
+
+    private val DEBUG = CreateWaterparked.LOGGER.isDebugEnabled
 
     data class CurveWater(
         val exists: Boolean,
@@ -126,7 +129,7 @@ object WaterFlowSimulation {
             else -> SlideSpace.Main
         }
         val key = space.cacheKey(level)
-        net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.debug(
+        if (DEBUG) CreateWaterparked.LOGGER.debug(
             "Water sync received space={} entries={}", key, payload.entries.size
         )
         val target = HashMap<Pair<Long, Long>, CurveWater>()
