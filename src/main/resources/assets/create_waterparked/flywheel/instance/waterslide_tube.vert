@@ -142,29 +142,43 @@ void flw_instanceVertex(in FlwInstance i) {
         worldPos = worldBase + radial * radialOff + tangential * tangOff;
     } else {
         float radial;
+        // the side-wall inner edge shares the exact inner-surface expression, so the fin always
+        // covers the wall band exactly regardless of radius or section multiplier
         if (isCap < 0.5 && abs(ln.z) > 0.2) {
-            radial = max(radius, 0.001);
+            radial = max(radius - BASE_WALL, 0.001);
         } else if (dot(lp.xy, ln.xy) < 0.0) {
             radial = max(radius - BASE_WALL, 0.001);
         } else {
             radial = max(radius + (i.wallThickness - BASE_WALL), 0.001);
         }
         worldPos = spine + lp.x * lateral * radial + lp.y * faceUp * radial;
-        if (i.waterTileSpan > 1.5) {
-            float arc = i.arcBase + arcLenTo(t, c0, c1, c2, c3);
-            float total = max(i.downstreamMix, 0.1);
-            float gTexH = clamp(round((spriteV1 - spriteV0) * 1024.0), 1.0, 64.0);
-            float vPx = -1.0;
-            if (arc < borderPx / 16.0) {
-                vPx = max(arc * 16.0, 0.05);
-            } else if (arc > total - borderPx / 16.0) {
-                vPx = min(gTexH - borderPx + (arc - (total - borderPx / 16.0)) * 16.0, gTexH - 0.05);
+        if (flw_vertexTexCoord.x < 0.0) {
+            // wall shells pass RAW world-arc block coordinates (arc x bake radius, one constant
+            // per curve, so no per-frame radius steps can spiral the seams). v encodes the
+            // element: shells carry the frame parameter, fins carry -z, caps carry -(ringArc+2).
+            // The fragment shader folds into exact one-block tiles - folding here would shear
+            // every quad that crosses a tile boundary
+            float vRaw = flw_vertexTexCoord.y;
+            float vBlocks;
+            if (vRaw < -1.5) {
+                // cap ring: v is the arc along the ring, u spans the wall thickness
+                vBlocks = -vRaw - 2.0;
+                flw_tubeFlags.y = 2.0;
+            } else {
+                vBlocks = i.arcBase + arcLenTo(t, c0, c1, c2, c3);
+                if (vRaw < 0.0) flw_tubeFlags.y = 2.0;
             }
-            if (vPx >= 0.0) {
+            float uBlocks = -flw_vertexTexCoord.x - 1.0;
+            if (i.waterAtlasUV > 0.5) {
+                // shaderpacks sample the vertex uv directly, bypassing our fragment fold:
+                // fold here for them - sheared tiles under packs beat sampling garbage
                 flw_vertexTexCoord = vec2(
-                    flw_vertexTexCoord.x,
-                    spriteV0 + (vPx / gTexH) * (spriteV1 - spriteV0)
+                    spriteU0 + fract(uBlocks) * (spriteU1 - spriteU0),
+                    spriteV0 + fract(vBlocks) * (spriteV1 - spriteV0)
                 );
+            } else {
+                flw_vertexTexCoord = vec2(-uBlocks, vBlocks);
+                flw_tubeExtra = vec2(0.0, i.downstreamMix);
             }
         }
     }
