@@ -19,6 +19,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLay
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.game.SlideAnchorIndex
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.SlideProfile
 import net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
@@ -33,19 +34,16 @@ import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.sin
 
-// Free-flight 3D physics inside the slide tube.
+// free-flight 3d physics inside the slide tube
 object PhysicsSlideTrajectoryBuilder {
 
     private const val GRAVITY = 32.0
     private const val DT = 1.0 / 100.0
     private const val SAMPLE_INTERVAL = 1.0 / 20.0
-    // in tube time cap, free fall continues past it
     private const val TUBE_MAX_TIME = 120.0
     private const val MAX_TIME = 300.0
     private const val MIN_WALL_DIST = 0.05
-    // world free fall checks are unavailable off thread, so the run is cut short there
     private const val WORKER_FALL_TIME = 2.0
-    // cooldown against re entering the pipe just left
     private const val SELF_REENTRY_COOLDOWN = 0.25
 
     private data class TubeFrame(
@@ -55,7 +53,8 @@ object PhysicsSlideTrajectoryBuilder {
         val up: Vec3,
         val radius: Float,
         val config: WaterslideSectorConfig,
-        val watered: Boolean
+        val watered: Boolean,
+        val profile: FloatArray? = null
     )
 
     private class Tube {
@@ -95,8 +94,15 @@ object PhysicsSlideTrajectoryBuilder {
         val idx: Int,
         val t: Double,
         val atEnd: Boolean,
-        val atStart: Boolean
-    )
+        val atStart: Boolean,
+        val profile: FloatArray? = null
+    ) {
+        fun innerWallAt(angleDeg: Float): Double {
+            val inner = max(0.1, radius - SLIDE_WALL_THICKNESS)
+            return if (profile == null) inner.toDouble()
+            else (inner * SlideProfile.multiplierAt(profile, angleDeg)).coerceAtLeast(0.05)
+        }
+    }
 
     private data class SegClosest(val t: Double, val distSq: Double)
 
@@ -124,7 +130,6 @@ object PhysicsSlideTrajectoryBuilder {
         startVel: Vec3,
         poseWidth: Double,
         poseHeight: Double,
-        // wall margin: player half width, entity box circumscribed radius
         poseRad: Double = poseWidth / 2.0
     ): SlideTrajectory? =
         prepareBuild(
@@ -150,7 +155,6 @@ object PhysicsSlideTrajectoryBuilder {
         val worldChecks: Boolean
     )
 
-    // everything the run needs is captured here, so the returned step touches no level
     fun prepareBuild(
         access: SlideSpaceAccess,
         entryCurve: BezierConnection,
@@ -160,7 +164,6 @@ object PhysicsSlideTrajectoryBuilder {
         startVel: Vec3,
         poseWidth: Double,
         poseHeight: Double,
-        // wall margin: player half width, entity box circumscribed radius
         poseRad: Double = poseWidth / 2.0,
         worldChecks: Boolean = true
     ): (() -> SlideTrajectory?)? {
@@ -212,11 +215,11 @@ object PhysicsSlideTrajectoryBuilder {
         var tubeRadius = tube.frames.first().radius
         var hit = tube.hit(pos)
         fun clampBody(p: Vec3, h: TubeHit): Vec3 {
-            val inner = max(0.1, h.radius - SLIDE_WALL_THICKNESS)
             val head = p.add(h.up.scale(poseHeight))
             val headRadial = head.subtract(h.center)
             val headDist = headRadial.length()
-            val headLimit = max(MIN_WALL_DIST, inner - poseRad - 0.02)
+            val headAngle = angleDeg(headRadial, h.lateral, h.up)
+            val headLimit = max(MIN_WALL_DIST, h.innerWallAt(headAngle) - poseRad - 0.02)
             if (headDist > headLimit) {
                 return p.subtract(headRadial.normalize().scale(headDist - headLimit))
             }
@@ -229,11 +232,9 @@ object PhysicsSlideTrajectoryBuilder {
         )
 
         outer@ while (true) {
-            // in tube segment
             val segStart = time
             var leftTube = false
             var lastProgress = 0.0
-            // stall clock starts here so the first step is never judged stalled
             var lastProgressTime = segStart
             var endApproachTime = Double.MAX_VALUE
             var prevPos = pos
@@ -245,17 +246,15 @@ object PhysicsSlideTrajectoryBuilder {
 
                 val radial = newPos.subtract(hit.center)
                 val axisDist = radial.length()
-                val inner = max(0.1, hit.radius - SLIDE_WALL_THICKNESS)
-                val wallDist = max(MIN_WALL_DIST, inner - poseRad)
+                val angle = angleDeg(radial, hit.lateral, hit.up)
+                val wallDist = max(MIN_WALL_DIST, hit.innerWallAt(angle) - poseRad)
 
                 if (axisDist > wallDist) {
-                    val angle = angleDeg(radial, hit.lateral, hit.up)
                     val sector = sectorAt(hit.config, angle)
                     val backOut = hit.atStart && vel.dot(hit.tangent) < 0.0
                     if (sector == null || sector.sector.material == SectorMaterial.OPEN ||
                         hit.atEnd || backOut
                     ) {
-                        // only straighten a rider heading in; one going back out keeps its velocity
                         if (hit.atEnd && vel.dot(hit.tangent) > 0.0) {
                             vel = hit.tangent.scale(vel.length())
                         }
@@ -265,19 +264,16 @@ object PhysicsSlideTrajectoryBuilder {
                     val dir = radial.normalize()
                     val radialVel = vel.dot(dir)
                     if (radialVel > 0.0) {
-                        // reflect the outward velocity off the wall, keep the full speed
                         val speed = vel.length()
                         vel = vel.subtract(dir.scale(radialVel))
                         val after = vel.length()
                         if (after > 1.0E-9) {
                             vel = vel.scale(speed / after)
                         } else {
-                            // fully radial hit: slide along the tube tangent
                             vel = hit.tangent.scale(speed)
                         }
                     }
                     pos = hit.center.add(dir.scale(wallDist))
-                    // watered tubes apply water friction on every wall contact
                     if (hit.watered) {
                         vel = vel.scale((1.0 - waterFriction).coerceAtLeast(0.0))
                     }
@@ -297,7 +293,6 @@ object PhysicsSlideTrajectoryBuilder {
                     }
                 }
 
-                // keep the head inside the tube so the camera never leaves the wall
                 pos = clampBody(pos, hit)
                 totalLength += pos.distanceTo(prevPos)
                 prevPos = pos
@@ -306,7 +301,6 @@ object PhysicsSlideTrajectoryBuilder {
                     break
                 }
 
-                // block overlap is an instant hard stop, check every 5 steps
                 if (worldChecks) {
                     step++
                     if (step % 5 == 0 &&
@@ -364,20 +358,17 @@ object PhysicsSlideTrajectoryBuilder {
             inTubeState = false
 
             if (!leftTube) {
-                // stalled or length cut: push out through the wall and fall
                 val radial = pos.subtract(hit.center)
                 val dir = if (radial.lengthSqr() < 1.0E-9) hit.lateral else radial.normalize()
                 pos = hit.center.add(dir.scale(hit.radius + 0.5))
                 vel = hit.tangent.scale(max(vel.length(), 1.0))
             }
 
-            // cooldown against re entering the mouth we just left
             val exitAtMouth = leftTube && hit.atEnd
             val selfCurves = if (exitAtMouth) tube.curves.toSet() else null
             val noSelfUntil = if (selfCurves != null) time + SELF_REENTRY_COOLDOWN
             else Double.NEGATIVE_INFINITY
 
-            // free fall segment
             val fallStart = time
             val grid = if (worldChecks) ReentryGrid() else null
             if (grid != null) {
@@ -385,7 +376,6 @@ object PhysicsSlideTrajectoryBuilder {
             }
             val fallSampleInterval = SAMPLE_INTERVAL * 4
             var check = 0
-            // own pipe reentry only after leaving every grid, other slides catch first
             var wasClear = false
             var prevLocal = pos
             while (time - fallStart < fallCap && samples.size < maxSamples) {
@@ -399,7 +389,6 @@ object PhysicsSlideTrajectoryBuilder {
                 }
                 time += DT
                 if (worldChecks) {
-                    // world coords for blocks and slides from other spaces
                     val worldPos = access.toWorld(pos)
                     val collided = worldBlocksCollide(access.level, worldPos, poseWidth, poseHeight)
                     if (collided) {
@@ -412,7 +401,6 @@ object PhysicsSlideTrajectoryBuilder {
                         hardStop = true
                         break
                     }
-                    // landing wins over reentry at a mouth on the ground
                     if (hitsGround(access, pos, poseHeight)) {
                         val surfaceY = groundSurfaceY(access, pos, poseHeight)
                         if (surfaceY != null) pos = Vec3(pos.x, surfaceY, pos.z)
@@ -477,7 +465,6 @@ object PhysicsSlideTrajectoryBuilder {
         return SlideTrajectory(samples, SlideEndReason.EXITED, false, vel, false)
     }
 
-    // walked tube digest and the curve endpoints it follows, for cache invalidation
     class TubeDigest(val digest: String, val endpoints: Set<Long>)
 
     fun tubeDigest(
@@ -542,7 +529,6 @@ object PhysicsSlideTrajectoryBuilder {
         var midStart = startT != null
         var first = true
         var guard = 0
-        // the sector list is live on the server thread, an off thread run needs its own copy
         val configCopies =
             if (copyConfigs) java.util.IdentityHashMap<WaterslideSectorConfig, WaterslideSectorConfig>() else null
 
@@ -612,16 +598,15 @@ object PhysicsSlideTrajectoryBuilder {
             val upN = if (up.lengthSqr() < 1.0E-9) last.up else up.normalize()
             val lat = upN.cross(tanN).normalize()
             frames[frames.size - 1] = TubeFrame(
-                last.center, tanN, lat, upN, max(last.radius, f.radius), config, watered
+                last.center, tanN, lat, upN, max(last.radius, f.radius), config, watered, f.profile
             )
         } else {
-            frames += TubeFrame(f.center, f.tangent, f.lateral, f.up, f.radius, config, watered)
+            frames += TubeFrame(f.center, f.tangent, f.lateral, f.up, f.radius, config, watered, f.profile)
         }
     }
 
     private val acceleratorTypeId: String by lazy { ModSlideAttachments.SLIDE_ACCELERATOR.id.toString() }
 
-    // one window per powered accelerator sitting on a curve of this tube, in frame index space
     private fun acceleratorWindows(access: SlideSpaceAccess, tube: Tube): List<AcceleratorWindow> {
         val typeId = acceleratorTypeId
         val out = ArrayList<AcceleratorWindow>()
@@ -640,11 +625,9 @@ object PhysicsSlideTrajectoryBuilder {
             val perBlock = ranFrames / blocks
             val hub = curve.getPosition(entry.t.toDouble())
             val centre = nearestInSpan(tube.frames, span, hub)
-            // outside the walked part: an upstream pad must not clamp onto the entry frame
             if (tube.frames[centre].center.distanceTo(hub) > blocks / ranFrames * 2.0) continue
             val left = AcceleratorAttachment.distL(entry.data).toDouble()
             val right = AcceleratorAttachment.distR(entry.data).toDouble()
-            // the model works in canonical curve space, the walk may run against it
             val back = if (span.reversed) left else -left
             val front = if (span.reversed) -right else right
             val first = (centre + Math.round(back * perBlock).toInt()).coerceIn(span.first, span.last)
@@ -710,7 +693,8 @@ object PhysicsSlideTrajectoryBuilder {
         val cfg = if (t < 0.5) fa.config else fb.config
         val atEnd = idx >= frames.size - 2 && t > 0.5
         val atStart = idx <= 0 && t < 0.5
-        return TubeHit(center, tan, lat, up, radius, cfg, fa.watered, idx, t, atEnd, atStart)
+        val section = SlideProfile.blend(fa.profile, fb.profile, t.toFloat())
+        return TubeHit(center, tan, lat, up, radius, cfg, fa.watered, idx, t, atEnd, atStart, section)
     }
 
     private fun closestOnSegment(a: TubeFrame, b: TubeFrame, pos: Vec3): SegClosest {
@@ -797,7 +781,6 @@ object PhysicsSlideTrajectoryBuilder {
         return null
     }
 
-    // AABB collision against real block shapes at a world position, body center based
     fun worldBlocksCollide(level: ServerLevel, pos: Vec3, width: Double, height: Double): Boolean {
         val halfH = height / 2.0
         val box = AABB(
@@ -810,7 +793,6 @@ object PhysicsSlideTrajectoryBuilder {
         val maxX = Mth.floor(box.maxX)
         val maxY = Mth.floor(box.maxY)
         val maxZ = Mth.floor(box.maxZ)
-        // force load every chunk along the world path before reading states
         for (cx in (minX shr 4)..(maxX shr 4)) {
             for (cz in (minZ shr 4)..(maxZ shr 4)) {
                 level.getChunk(cx, cz)
@@ -824,7 +806,6 @@ object PhysicsSlideTrajectoryBuilder {
                     if (state.isAir) continue
                     val shape = state.getCollisionShape(level, bp)
                     if (shape.isEmpty) continue
-                    // move local shape boxes to the block position first
                     for (aabb in shape.toAabbs()) {
                         if (aabb.move(bp).intersects(box)) return true
                     }
@@ -834,7 +815,6 @@ object PhysicsSlideTrajectoryBuilder {
         return false
     }
 
-    // world space tube segments of every other slide space
     private data class WorldTubeSeg(val a: Vec3, val b: Vec3, val radius: Double)
 
     private fun buildWorldSlideGrid(access: SlideSpaceAccess): WorldSlideGrid? {
@@ -857,7 +837,7 @@ object PhysicsSlideTrajectoryBuilder {
                         val fb = frames[i + 1]
                         out += WorldTubeSeg(
                             toWorld(fa.center), toWorld(fb.center),
-                            (max(fa.radius, fb.radius).toDouble() + 0.25) * radiusScale
+                            (max(fa.radius * fa.maxMultiplier, fb.radius * fb.maxMultiplier).toDouble() + 0.25) * radiusScale
                         )
                     }
                 }
@@ -941,7 +921,6 @@ object PhysicsSlideTrajectoryBuilder {
         }
     }
 
-    // keyed per coordinate space, dimensions and spaces must not share lists
     private val reentryCache =
         HashMap<Pair<ResourceKey<Level>, SlideSpace>, Pair<String, List<ReentrySegment>>>()
 
@@ -965,7 +944,7 @@ object PhysicsSlideTrajectoryBuilder {
                     val fb = frames[i + 1]
                     out += ReentrySegment(
                         fa.center, fb.center,
-                        max(fa.radius, fb.radius).toDouble() + 0.25,
+                        max(fa.radius * fa.maxMultiplier, fb.radius * fb.maxMultiplier).toDouble() + 0.25,
                         bc
                     )
                 }
@@ -996,7 +975,17 @@ object PhysicsSlideTrajectoryBuilder {
                     .append(bc.starts.getSecond().y).append(',')
                     .append(bc.starts.getSecond().z).append(',')
                     .append(SlideCurveGeometry.radiusAt(access.level, a)).append(',')
-                    .append(SlideCurveGeometry.radiusAt(access.level, b)).append(';')
+                    .append(SlideCurveGeometry.radiusAt(access.level, b))
+                for (pro in listOf(
+                    be.curveProfileFor(b), be.curveProfileFor(a)
+                )) {
+                    if (pro != null) sb.append(',').append(pro.signature())
+                }
+                for (n in be.anchorPeerCurvesView.keys.sortedBy { it.asLong() }) {
+                    val np = be.curveProfileFor(n) ?: continue
+                    sb.append(',').append(np.signature())
+                }
+                sb.append(';')
             }
         }
         return sb.toString()
@@ -1016,7 +1005,14 @@ object PhysicsSlideTrajectoryBuilder {
         else b.asLong() to a.asLong()
         val h0 = bc.starts.getFirst()
         val h1 = bc.starts.getSecond()
-        val sig = "${access.space.cacheKey(access.level)}|$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()}"
+        val anchorBe = access.getBlockEntity(a) as? WaterslideAnchorBlockEntity
+        val ownSig = anchorBe?.curveProfileFor(b)?.signature()
+        val ownSig2 = anchorBe?.curveProfileFor(a)?.signature()
+        var neighborSigs = ""
+        anchorBe?.anchorPeerCurvesView?.keys?.sortedBy { it.asLong() }?.forEach { n ->
+            anchorBe.curveProfileFor(n)?.let { neighborSigs += it.signature() }
+        }
+        val sig = "${access.space.cacheKey(access.level)}|$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()},$ownSig,$ownSig2,$neighborSigs"
         frameCache[key]?.let { if (it.first == sig) return it.second }
         val frames = SlideCurveGeometry.sampleFrames(access.level, bc, r0, r1)
         if (frameCache.size > 1024) frameCache.clear()
@@ -1024,7 +1020,6 @@ object PhysicsSlideTrajectoryBuilder {
         return frames
     }
 
-    // turn a free fall contact with another tube into an entry state
     private fun reentryStart(
         access: SlideSpaceAccess,
         seg: ReentrySegment,
@@ -1073,9 +1068,7 @@ object PhysicsSlideTrajectoryBuilder {
         }
         val entryTan = if (towardSecond) tan else tan.scale(-1.0)
         val center = fa.center.lerp(fb.center, bestT)
-        // keep the actual contact position, the tube physics slides back in
         val entryPos = pos
-        // keep the incoming direction and speed when re entering
         val entryVel = vel
         return ReentryStart(
             bc, towardSecond, startT, entryPos, entryVel, center, entryTan, lat, up, radius

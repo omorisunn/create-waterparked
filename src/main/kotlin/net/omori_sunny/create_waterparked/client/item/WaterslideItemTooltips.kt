@@ -7,7 +7,6 @@ import net.minecraft.client.resources.language.I18n
 import net.neoforged.neoforge.event.entity.player.ItemTooltipEvent
 import net.omori_sunny.create_waterparked.content.registry.ModItems
 
-// Create-style hover tooltips for the slide anchor and the slide track item.
 object WaterslideItemTooltips {
 
     private const val KEY_PREFIX = "item.create_waterparked."
@@ -19,6 +18,12 @@ object WaterslideItemTooltips {
         }
         TooltipModifier.REGISTRY.register(ModItems.WATERSLIDE_TRACK) { event ->
             tooltip(event, "waterslide_track")
+        }
+        TooltipModifier.REGISTRY.register(ModItems.SLIDE_SKETCH) { event ->
+            tooltip(event, "slide_sketch")
+        }
+        TooltipModifier.REGISTRY.register(ModItems.SLIDE_DRAFTING_TABLE) { event ->
+            tooltip(event, "slide_drafting_table")
         }
     }
 

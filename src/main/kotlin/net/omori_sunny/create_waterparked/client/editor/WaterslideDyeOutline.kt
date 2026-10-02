@@ -20,7 +20,6 @@ import net.omori_sunny.create_waterparked.config.ModClientConfig
 import org.joml.Matrix4f
 import kotlin.math.max
 
-// dyeable sector outline
 @OnlyIn(Dist.CLIENT)
 object WaterslideDyeOutline {
 
@@ -66,7 +65,6 @@ object WaterslideDyeOutline {
         val g = ((rgb shr 8) and 255) / 255f
         val b = (rgb and 255) / 255f
 
-// sample the whole tube
         val count = bc.getSegmentCount().coerceAtLeast(1)
         val ts = FloatArray(count + 1) { i ->
             if (i == 0) 0f else if (i == count) 1f else bc.getSegmentT(i)
@@ -90,8 +88,9 @@ object WaterslideDyeOutline {
             prevLat = lat
         }
         val radii = FloatArray(count + 1) { Mth.lerp(ts[it], r0, r1) * worldScale }
+        val sectionAt = net.omori_sunny.create_waterparked.game.SlideCurveGeometry.sectionSampler(level, bc)
+        val sections = Array(count + 1) { sectionAt(ts[it]) }
 
-// include the open-end extensions
         val ext0 = openEndExtension(level, bc, atFirst = true)
         val ext1 = openEndExtension(level, bc, atFirst = false)
         val pointCount = count + 1 + (if (ext0 > 0.01f) 1 else 0) + (if (ext1 > 0.01f) 1 else 0)
@@ -99,6 +98,7 @@ object WaterslideDyeOutline {
         val la = arrayOfNulls<Vec3>(pointCount)
         val u = arrayOfNulls<Vec3>(pointCount)
         val ra = FloatArray(pointCount)
+        val pa = arrayOfNulls<FloatArray>(pointCount)
         var idx = 0
         if (ext0 > 0.01f) {
             c[idx] = worldPos(bc.getPosition(0.0).subtract(
@@ -107,6 +107,7 @@ object WaterslideDyeOutline {
             la[idx] = lats[0]!!
             u[idx] = ups[0]!!
             ra[idx] = radii[0]
+            pa[idx] = sections[0]
             idx++
         }
         for (i in 0..count) {
@@ -114,6 +115,7 @@ object WaterslideDyeOutline {
             la[idx] = lats[i]!!
             u[idx] = ups[i]!!
             ra[idx] = radii[i]
+            pa[idx] = sections[i]
             idx++
         }
         if (ext1 > 0.01f) {
@@ -123,33 +125,32 @@ object WaterslideDyeOutline {
             la[idx] = lats[count]!!
             u[idx] = ups[count]!!
             ra[idx] = radii[count]
+            pa[idx] = sections[count]
         }
 
         val consumer = bufferSource.getBuffer(WaterslideEditorRenderTypes.COLORED_QUADS)
         val start = Math.toRadians(hit.startAngleDegrees.toDouble())
         val end = Math.toRadians(hit.endAngleDegrees.toDouble())
-        // outline hugs the real outer wall surface: radius + (wallThickness - 0.1)
         val outer = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - 0.1f
 
-// longitudinal edges
         for (angle in doubleArrayOf(start, end)) {
-            var prev = ringPoint(c[0]!!, la[0]!!, u[0]!!, ra[0] + outer, angle)
+            val angleDeg = Math.toDegrees(angle).toFloat()
+            var prev = ringPoint(c[0]!!, la[0]!!, u[0]!!, ra[0] * multAt(pa[0], angleDeg) + outer, angle)
             for (i in 1 until pointCount) {
-                val curr = ringPoint(c[i]!!, la[i]!!, u[i]!!, ra[i] + outer, angle)
+                val curr = ringPoint(c[i]!!, la[i]!!, u[i]!!, ra[i] * multAt(pa[i], angleDeg) + outer, angle)
                 WaterslideEditorRenderTypes.billboardStrip(
                     poseStack, consumer, cameraPos, cameraRotation, prev, curr, 0.05f, r, g, b, 0.9f
                 )
                 prev = curr
             }
         }
-// end arcs as polygon segments (cross-section grid angles, like the walls)
         drawArc(
             poseStack, consumer, cameraPos, cameraRotation,
-            c[0]!!, la[0]!!, u[0]!!, ra[0] + outer, start, end, r, g, b
+            c[0]!!, la[0]!!, u[0]!!, pa[0], ra[0] + outer, start, end, r, g, b
         )
         drawArc(
             poseStack, consumer, cameraPos, cameraRotation,
-            c[pointCount - 1]!!, la[pointCount - 1]!!, u[pointCount - 1]!!,
+            c[pointCount - 1]!!, la[pointCount - 1]!!, u[pointCount - 1]!!, pa[pointCount - 1],
             ra[pointCount - 1] + outer, start, end, r, g, b
         )
     }
@@ -169,6 +170,7 @@ object WaterslideDyeOutline {
         center: Vec3,
         lat: Vec3,
         up: Vec3,
+        prof: FloatArray?,
         radius: Float,
         start: Double,
         end: Double,
@@ -176,7 +178,6 @@ object WaterslideDyeOutline {
         g: Float,
         b: Float
     ) {
-        // polygon segments sample the grid angles between the sector edges
         val startD = Math.toDegrees(start)
         val endD = Math.toDegrees(end)
         val crossN = WaterslideTubeMesh.crossSections()
@@ -192,15 +193,20 @@ object WaterslideDyeOutline {
             j++
         }
         angles.add(endD)
-        var prev = ringPoint(center, lat, up, radius, Math.toRadians(angles[0]))
+        fun shaped(a: Double): Float = radius * multAt(prof, Math.toDegrees(a).toFloat())
+        var prev = ringPoint(center, lat, up, shaped(angles[0]), Math.toRadians(angles[0]))
         for (i in 1 until angles.size) {
-            val curr = ringPoint(center, lat, up, radius, Math.toRadians(angles[i]))
+            val curr = ringPoint(center, lat, up, shaped(angles[i]), Math.toRadians(angles[i]))
             WaterslideEditorRenderTypes.billboardStrip(
                 poseStack, consumer, cameraPos, cameraRotation, prev, curr, 0.05f, r, g, b, 0.9f
             )
             prev = curr
         }
     }
+
+    private fun multAt(prof: FloatArray?, angleDeg: Float): Float =
+        if (prof == null) 1f
+        else net.omori_sunny.create_waterparked.game.SlideProfile.multiplierAt(prof, angleDeg)
 
     private fun ringPoint(center: Vec3, lat: Vec3, up: Vec3, radius: Float, rad: Double): Vec3 =
         center

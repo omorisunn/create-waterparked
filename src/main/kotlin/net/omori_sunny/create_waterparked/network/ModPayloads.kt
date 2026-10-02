@@ -42,6 +42,8 @@ object ModPayloads {
         registrar.server(SlideAttachmentEditPayload.TYPE, SlideAttachmentEditPayload.STREAM_CODEC, SlideAttachmentEditPayload::handleOnServer)
         registrar.client(GrabBarHoldPayload.TYPE, GrabBarHoldPayload.STREAM_CODEC, GrabBarHoldPayload::handleOnClient)
         registrar.server(GrabBarInputPayload.TYPE, GrabBarInputPayload.STREAM_CODEC, GrabBarInputPayload::handleOnServer)
+        SlideSketchApplyPayload.register(registrar)
+        SlideSketchSavePayload.register(registrar)
     }
 
     private fun <P : CustomPacketPayload> PayloadRegistrar.server(

@@ -14,7 +14,6 @@ object ModDataComponents {
     val REGISTRY: DeferredRegister<DataComponentType<*>> =
         DeferredRegister.create(Registries.DATA_COMPONENT_TYPE, CreateWaterparked.ID)
 
-    // first selected anchor
     val CONNECTING_FROM: DataComponentType<BlockPos> by
     REGISTRY.register("waterslide_connecting_from") { ->
         DataComponentType.builder<BlockPos>()
@@ -23,7 +22,6 @@ object ModDataComponents {
             .build()
     }
 
-    // encoded slide config line while the clipboard paste mode is active
     val SLIDE_PASTE_LINE: DataComponentType<String> by
     REGISTRY.register("slide_paste_line") { ->
         DataComponentType.builder<String>()
@@ -32,12 +30,19 @@ object ModDataComponents {
             .build()
     }
 
-    // slide position selected on a held SAB item (phase 1 of attachment placement)
     val SLIDE_ATTACHMENT_POS: DataComponentType<net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentPos> by
-    REGISTRY.register("slide_attachment_pos") { ->
-        DataComponentType.builder<net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentPos>()
-            .persistent(net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockItem.POSITION_CODEC)
-            .networkSynchronized(net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockItem.POSITION_STREAM_CODEC)
-            .build()
-    }
+        REGISTRY.register("slide_attachment_pos") { ->
+            DataComponentType.builder<net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentPos>()
+                .persistent(net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockItem.POSITION_CODEC)
+                .networkSynchronized(net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockItem.POSITION_STREAM_CODEC)
+                .build()
+        }
+
+    val SLIDE_SKETCH: DataComponentType<net.omori_sunny.create_waterparked.game.SlideSketchData> by
+        REGISTRY.register("slide_sketch") { ->
+            DataComponentType.builder<net.omori_sunny.create_waterparked.game.SlideSketchData>()
+                .persistent(net.omori_sunny.create_waterparked.game.SlideSketchData.CODEC)
+                .networkSynchronized(net.omori_sunny.create_waterparked.game.SlideSketchData.STREAM_CODEC)
+                .build()
+        }
 }

@@ -10,16 +10,10 @@ import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.SlideProfile
 import kotlin.math.cos
 import kotlin.math.sin
 
-// resolves an attachment's (site, t, angle) against the LIVE curve every
-// call: radius and curve edits move the attachment along automatically and
-// nothing ever stores a stale world position.
-//
-// slides inside Sable sub-levels live in plot space; client callers pass a
-// transform pair (point, direction) -> render space so render positions come
-// out in world space.
 object SlideAttachmentGeometry {
 
     class Resolved(
@@ -46,7 +40,6 @@ object SlideAttachmentGeometry {
         return Resolved(anchor, curve, ctx)
     }
 
-    /** model context for an explicit curve + (t, angle) */
     fun contextAt(
         level: Level,
         sabPos: BlockPos,
@@ -74,17 +67,19 @@ object SlideAttachmentGeometry {
             SlideCurveGeometry.radiusAt(level, a),
             SlideCurveGeometry.radiusAt(level, b)
         )
+        val section = SlideCurveGeometry.sectionSampler(level, curve)(t)
+        val shapedRadius = radius * (if (section == null) 1f else SlideProfile.multiplierAt(section, angle))
         val rad = Math.toRadians(angle.toDouble())
         val radialOut = lateral.scale(cos(rad)).add(up.scale(sin(rad)))
         val wall = ModConfig.wallThickness() - 0.1f
-        val position = center.add(radialOut.scale((radius + wall).toDouble()))
+        val position = center.add(radialOut.scale((shapedRadius + wall).toDouble()))
         return SlideAttachmentModelContext(
             level, sabPos, position, tangent, lateral, up,
-            radialOut, radius, ModConfig.wallThickness(), data, t, curve, sectorConfig, renderTransform
+            radialOut, shapedRadius, ModConfig.wallThickness(), data, t, curve, sectorConfig, renderTransform,
+            section, radius
         )
     }
 
-    /** world-space hull of a local attachment-space box under the frame */
     fun worldBounds(ctx: SlideAttachmentModelContext, local: AABB): AABB {
         val (lat, up, tan) = basis(ctx)
         val corners = listOf(
@@ -114,14 +109,12 @@ object SlideAttachmentGeometry {
         return AABB(minX, minY, minZ, maxX, maxY, maxZ)
     }
 
-    /** tube axis centre in the local lateral/up plane for an outer wall radius */
     fun axisOffset(ctx: SlideAttachmentModelContext, outerRadius: Double): Pair<Double, Double> {
         val cosA = ctx.radialOut.dot(ctx.lateral)
         val sinA = ctx.radialOut.dot(ctx.up)
         return -cosA * outerRadius to -sinA * outerRadius
     }
 
-    /** right-handed basis: cross(lateral, up) aligned with the tangent */
     fun basis(ctx: SlideAttachmentModelContext): Triple<Vec3, Vec3, Vec3> {
         val lat = ctx.lateral.normalize()
         var up = ctx.up.normalize()

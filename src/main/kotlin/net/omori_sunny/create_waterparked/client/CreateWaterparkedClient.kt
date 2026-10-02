@@ -20,6 +20,7 @@ import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentPlacement
 import net.omori_sunny.create_waterparked.client.editor.SlideAttachmentPlacementLine
 import net.omori_sunny.create_waterparked.client.attachment.GrabBarHoldClient
 import net.omori_sunny.create_waterparked.client.editor.SlideClipboardCopy
+import net.omori_sunny.create_waterparked.client.editor.SlideSketchApply
 import net.omori_sunny.create_waterparked.client.editor.WaterslideHotbarSync
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashParticle
 import net.omori_sunny.create_waterparked.client.particle.WaterslideSplashSpawner
@@ -65,9 +66,11 @@ object CreateWaterparkedClient {
         }
         MOD_BUS.addListener(::onClientSetup)
         MOD_BUS.addListener(::onRegisterRenderers)
+        MOD_BUS.addListener(::onRegisterMenuScreens)
         MOD_BUS.addListener(::onRegisterParticleProviders)
         MOD_BUS.addListener(::onItemColors)
         MOD_BUS.addListener(::onRegisterClientExtensions)
+        MOD_BUS.addListener(::onRegisterTooltipComponentFactory)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, true, WaterslideGhostPlacement::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideGhostPlacement::onRightClickItem)
@@ -82,6 +85,7 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideSectorEdit::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideClipboardPaste::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideClipboardCopy::onUseItemKey)
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideSketchApply::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onRightClickItem)
@@ -114,10 +118,16 @@ object CreateWaterparkedClient {
     }
 
     private fun onClientSetup(event: FMLClientSetupEvent) {
-        // touching the holder now registers the partial models before flywheel bakes them
         net.omori_sunny.create_waterparked.client.flywheel.ModPartialModels.ROLLER
         net.omori_sunny.create_waterparked.client.flywheel.ModPartialModels.ROLLER_SHAFT
         IterationRPPatcher.runIfNeeded()
+        net.minecraft.client.renderer.item.ItemProperties.register(
+            net.omori_sunny.create_waterparked.content.registry.ModItems.SLIDE_SKETCH,
+            ResourceLocation.fromNamespaceAndPath(CreateWaterparked.ID, "edited"),
+            { stack, _, _, _ ->
+                if (net.omori_sunny.create_waterparked.game.SlideSketchData.of(stack) != null) 1.0f else 0.0f
+            }
+        )
         net.omori_sunny.create_waterparked.client.item.WaterslideItemTooltips.register()
         RollerConveyorPlacementHelper.register()
         if (net.neoforged.fml.ModList.get().isLoaded("ponder") ||
@@ -175,6 +185,23 @@ object CreateWaterparkedClient {
             .apply()
     }
 
+    private fun onRegisterTooltipComponentFactory(
+        event: net.neoforged.neoforge.client.event.RegisterClientTooltipComponentFactoriesEvent
+    ) {
+        event.register(
+            net.omori_sunny.create_waterparked.content.sketch.SlideSketchPreviewTooltip::class.java
+        ) { marker ->
+            net.omori_sunny.create_waterparked.client.gui.SlideSketchPreviewClientTooltip(marker)
+        }
+    }
+
+    private fun onRegisterMenuScreens(event: net.neoforged.neoforge.client.event.RegisterMenuScreensEvent) {        event.register(
+            net.omori_sunny.create_waterparked.content.registry.ModMenus.SLIDE_DRAFTING_TABLE
+        ) { menu, inv, title ->
+            net.omori_sunny.create_waterparked.client.gui.SlideDraftingTableScreen(menu, inv, title)
+        }
+    }
+
     private fun onRegisterRenderers(event: EntityRenderersEvent.RegisterRenderers) {
         event.registerEntityRenderer(ModEntityTypes.SLIDE_SIT) { ctx ->
             object : EntityRenderer<SlideSitEntity>(ctx) {
@@ -218,7 +245,6 @@ object CreateWaterparkedClient {
         )
     }
 
-    // also registers with Create's CustomRenderedItems so the model wraps
     private fun onRegisterClientExtensions(event: net.neoforged.neoforge.client.extensions.common.RegisterClientExtensionsEvent) {
         val item: net.minecraft.world.item.Item =
             net.omori_sunny.create_waterparked.content.registry.ModItems.INFLATABLE_BOAT_1X2
@@ -272,7 +298,6 @@ object CreateWaterparkedClient {
 
     private var lastDebugState: Boolean? = null
 
-    // same hud row as the slide status so both editors align
     private fun onRenderGuiLayerPost(event: net.neoforged.neoforge.client.event.RenderGuiLayerEvent.Post) {
         if (event.getName() != net.neoforged.neoforge.client.gui.VanillaGuiLayers.SELECTED_ITEM_NAME) return
         val mc = Minecraft.getInstance()
@@ -283,7 +308,6 @@ object CreateWaterparkedClient {
 
     private fun onClientTick(event: ClientTickEvent.Post) {
         val mc = Minecraft.getInstance()
-        // every deck the client holds steps its own loads once per tick, whether or not it is being drawn
         net.omori_sunny.create_waterparked.content.roller.RollerConveyorBlockEntity.tickClientDecks()
         WaterslideTubeVisual.tickVisibility()
         WaterslideSupportEdit.onClientTick()
@@ -301,7 +325,6 @@ object CreateWaterparkedClient {
         }
     }
 
-    // a deck inside a sub-level is not ours to mine: no prediction, no cracking and no dust on the client
     private fun onLeftClickBlock(event: net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.LeftClickBlock) {
         if (!net.omori_sunny.create_waterparked.content.roller.RollerConveyorBlock.isProtected(event.level, event.pos)) return
         event.useBlock = net.neoforged.neoforge.common.util.TriState.FALSE

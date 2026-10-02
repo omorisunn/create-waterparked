@@ -23,6 +23,7 @@ import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeVisual
 import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.SlideProfile
 import net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation
 import net.omori_sunny.create_waterparked.config.ModClientConfig
 import net.omori_sunny.create_waterparked.config.ModConfig
@@ -367,25 +368,30 @@ object WaterslideSectorEdit {
 
                 val r0 = radiusAt(level, primary.bePositions.getFirst())
                 val r1 = radiusAt(level, primary.bePositions.getSecond())
+                val sectionAt = SlideCurveGeometry.sectionSampler(level, primary)
                 val samples = max(64, primary.getSegmentCount() * 4)
                 for (i in 0..samples) {
                     val t = i.toFloat() / samples
                     val center = primary.getPosition(t.toDouble())
                     val rel = localHit.subtract(center)
                     val dist = rel.length()
-                    val radius = Mth.lerp(t, r0, r1)
+                    val tangent0 = CoasterBezierRailFrames.unitTangentAt(primary, t)
+                    val (lateral0, up0) = SlideCurveGeometry.stableFrame(tangent0)
+                    val degrees0 = Math.toDegrees(Math.atan2(rel.dot(up0), rel.dot(lateral0))).toFloat()
+                    val mult = sectionAt(t)?.let { SlideProfile.multiplierAt(it, degrees0) } ?: 1f
+                    val radius = Mth.lerp(t, r0, r1) * mult
                     if (dist > radius + 0.4) continue
                     val score = abs(dist - radius)
                     if (score >= bestScore) continue
                     bestScore = score
-                    val tangent = CoasterBezierRailFrames.unitTangentAt(primary, t)
+                    val tangent = tangent0
                     val (lateral, up) = SlideCurveGeometry.stableFrame(tangent)
                     val degrees = Math.toDegrees(Math.atan2(rel.dot(up), rel.dot(lateral)))
                     best = WallHit(
                         primary, t, WaterslideSectorLayout.normalize(degrees.toFloat()),
                         surfacePlot = tubeSurfacePoint(
                             primary, level, t,
-                            Mth.lerp(t, r0, r1) + (net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - 0.1f),
+                            Mth.lerp(t, r0, r1) * mult + (net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - 0.1f),
                             lateral, up,
                             WaterslideSectorLayout.normalize(degrees.toFloat())
                         ),

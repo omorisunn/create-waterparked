@@ -35,7 +35,9 @@ abstract class SlideBandProvider : SlideAttachmentModelProvider() {
         val axisX: Double, val axisY: Double, val axisZ: Double,
         val latX: Double, val latY: Double, val latZ: Double,
         val upX: Double, val upY: Double, val upZ: Double,
-        val innerR: Double
+        val innerR: Double,
+        val innerBase: Double = innerR,
+        val sectionRadii: FloatArray? = null
     )
 
     protected class Span(
@@ -45,7 +47,6 @@ abstract class SlideBandProvider : SlideAttachmentModelProvider() {
         val capEnd: Boolean
     )
 
-    // arc length the band reaches upstream and downstream of the hub, in blocks
     protected abstract fun backDistance(data: CompoundTag): Double
 
     protected abstract fun frontDistance(data: CompoundTag): Double
@@ -58,7 +59,6 @@ abstract class SlideBandProvider : SlideAttachmentModelProvider() {
         spans: List<Span>
     ): List<Part> = emptyList()
 
-    // the drawn band itself, so picking and the placement outline always match it
     final override fun boundingBox(ctx: SlideAttachmentModelContext): AABB {
         val b = doubleArrayOf(
             Double.MAX_VALUE, Double.MAX_VALUE, Double.MAX_VALUE,
@@ -95,7 +95,6 @@ abstract class SlideBandProvider : SlideAttachmentModelProvider() {
         if (z > b[5]) b[5] = z
     }
 
-    // only reached while every sector is open and the band draws nothing
     private fun hubBox(ctx: SlideAttachmentModelContext): AABB {
         val outer = (ctx.radius + ctx.wallThickness - 0.1).toDouble()
         val (ox, oy) = SlideAttachmentGeometry.axisOffset(ctx, outer)
@@ -123,7 +122,6 @@ abstract class SlideBandProvider : SlideAttachmentModelProvider() {
         return out
     }
 
-    // wall spans remaining once the open sectors are cut out of the ring
     private fun wallSpans(sectors: List<PlacedSector>, sides: Int): List<Span> {
         val step = 360.0 / sides
         val out = ArrayList<Span>(sides)
@@ -179,21 +177,20 @@ abstract class SlideBandProvider : SlideAttachmentModelProvider() {
     private fun emitSpan(stations: List<Station>, span: Span, out: MutableList<Quad>) {
         val a0 = Math.toRadians(span.a0)
         val a1 = Math.toRadians(span.a1)
+        val midA = (a0 + a1) / 2.0
         for (i in 0 until stations.size - 1) {
             val s0 = stations[i]
             val s1 = stations[i + 1]
-            val r0 = s0.innerR
-            val r1 = s1.innerR
-            val u = (((r0 + r1) / 2.0) * (a1 - a0)).toFloat()
+            val u = (((shapedR(s0, midA, 0.0) + shapedR(s1, midA, 0.0)) / 2.0) * (a1 - a0)).toFloat()
             val v = distance(s0, s1).toFloat()
-            val o00 = ring(s0, a0, r0 - HUG_INSET)
-            val o01 = ring(s0, a1, r0 - HUG_INSET)
-            val o10 = ring(s1, a0, r1 - HUG_INSET)
-            val o11 = ring(s1, a1, r1 - HUG_INSET)
-            val i00 = ring(s0, a0, r0 - FRAME)
-            val i01 = ring(s0, a1, r0 - FRAME)
-            val i10 = ring(s1, a0, r1 - FRAME)
-            val i11 = ring(s1, a1, r1 - FRAME)
+            val o00 = ring(s0, a0, shapedR(s0, a0, HUG_INSET))
+            val o01 = ring(s0, a1, shapedR(s0, a1, HUG_INSET))
+            val o10 = ring(s1, a0, shapedR(s1, a0, HUG_INSET))
+            val o11 = ring(s1, a1, shapedR(s1, a1, HUG_INSET))
+            val i00 = ring(s0, a0, shapedR(s0, a0, FRAME))
+            val i01 = ring(s0, a1, shapedR(s0, a1, FRAME))
+            val i10 = ring(s1, a0, shapedR(s1, a0, FRAME))
+            val i11 = ring(s1, a1, shapedR(s1, a1, FRAME))
             out.add(quad(o00, o01, o11, o10, 0f, 0f, u, 0f, u, v, 0f, v))
             out.add(quad(i00, i10, i11, i01, 0f, 0f, v, 0f, v, u, 0f, u))
             val w = FRAME.toFloat()
@@ -206,22 +203,20 @@ abstract class SlideBandProvider : SlideAttachmentModelProvider() {
         }
         val first = stations.first()
         val last = stations.last()
-        val rf = first.innerR
-        val rl = last.innerR
-        val uf = (rf * (a1 - a0)).toFloat()
-        val ul = (rl * (a1 - a0)).toFloat()
+        val uf = ((shapedR(first, midA, 0.0)) * (a1 - a0)).toFloat()
+        val ul = ((shapedR(last, midA, 0.0)) * (a1 - a0)).toFloat()
         val w = FRAME.toFloat()
         out.add(
             quad(
-                ring(first, a0, rf - HUG_INSET), ring(first, a0, rf - FRAME),
-                ring(first, a1, rf - FRAME), ring(first, a1, rf - HUG_INSET),
+                ring(first, a0, shapedR(first, a0, HUG_INSET)), ring(first, a0, shapedR(first, a0, FRAME)),
+                ring(first, a1, shapedR(first, a1, FRAME)), ring(first, a1, shapedR(first, a1, HUG_INSET)),
                 0f, 0f, w, 0f, w, uf, 0f, uf
             )
         )
         out.add(
             quad(
-                ring(last, a0, rl - HUG_INSET), ring(last, a1, rl - HUG_INSET),
-                ring(last, a1, rl - FRAME), ring(last, a0, rl - FRAME),
+                ring(last, a0, shapedR(last, a0, HUG_INSET)), ring(last, a1, shapedR(last, a1, HUG_INSET)),
+                ring(last, a1, shapedR(last, a1, FRAME)), ring(last, a0, shapedR(last, a0, FRAME)),
                 0f, 0f, ul, 0f, ul, w, 0f, w
             )
         )
@@ -262,9 +257,20 @@ abstract class SlideBandProvider : SlideAttachmentModelProvider() {
             axis.dot(blat), axis.dot(bup), axis.dot(btan),
             lat.dot(blat), lat.dot(bup), lat.dot(btan),
             up.dot(blat), up.dot(bup), up.dot(btan),
-            (at.radius - 0.1).toDouble()
+            (at.radius - 0.1).toDouble(),
+            at.baseRadius.toDouble(),
+            at.sectionRadii
         )
     }
+
+    protected fun shapedR(s: Station, angleRad: Double, inset: Double): Double =
+        s.innerBase * sectionMultOf(s, angleRad) - inset
+
+    protected fun sectionMultOf(s: Station, angleRad: Double): Float =
+        if (s.sectionRadii == null) 1f
+        else net.omori_sunny.create_waterparked.game.SlideProfile.multiplierAt(
+            s.sectionRadii!!, Math.toDegrees(angleRad).toFloat()
+        )
 
     protected fun ring(s: Station, a: Double, r: Double): DoubleArray {
         val c = Math.cos(a)
@@ -336,12 +342,10 @@ abstract class SlideBandProvider : SlideAttachmentModelProvider() {
         return (lo - 1 + f) / steps
     }
 
-    // the wall angle is not carried on the context, so recover it from the radial direction
     private fun angleOf(ctx: SlideAttachmentModelContext): Float = Math.toDegrees(
         Math.atan2(ctx.radialOut.dot(ctx.up), ctx.radialOut.dot(ctx.lateral))
     ).toFloat()
 
-    // everything the built geometry depends on, and nothing that moves with the plot
     private fun signature(
         ctx: SlideAttachmentModelContext,
         left: Double,
@@ -357,6 +361,9 @@ abstract class SlideBandProvider : SlideAttachmentModelProvider() {
             .append(ctx.tangent.z).append('|')
         sb.append(endpointRadius(ctx, true)).append(',').append(endpointRadius(ctx, false)).append('|')
         sb.append(ctx.radius).append('|').append(ctx.wallThickness).append('|')
+        sb.append(ctx.sectionRadii?.let {
+            net.omori_sunny.create_waterparked.game.SlideProfile.contentSignature(it)
+        } ?: "-").append('|')
         sb.append(WaterslideTubeMesh.crossSections()).append('|')
         sb.append(left).append('|').append(right).append('|')
         sb.append(signatureExtra(ctx)).append('|')

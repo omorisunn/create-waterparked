@@ -1,5 +1,4 @@
 package net.omori_sunny.create_waterparked.content.waterslide
-// Anchor BE: peer curves, sector config and ghost block mirrors.
 
 import com.simibubi.create.AllBlocks
 import com.simibubi.create.api.contraption.transformable.TransformableBlockEntity
@@ -14,6 +13,7 @@ import net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.registry.ModBlockEntities
 import net.omori_sunny.create_waterparked.game.SlideAnchorIndex
+import net.omori_sunny.create_waterparked.game.SlideProfile
 import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import net.omori_sunny.create_waterparked.game.contraption.AnchorPeerCurveDataAccess
 import net.minecraft.core.BlockPos
@@ -51,6 +51,8 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
     override fun getLiftBlocks(): Float = super.getLiftBlocks() + radius
 
     val sectorConfigs: MutableMap<BlockPos, WaterslideSectorConfig> = mutableMapOf()
+
+    val curveProfiles: MutableMap<BlockPos, SlideProfile> = mutableMapOf()
 
     val ghostBlocks: MutableMap<BlockPos, MutableList<GhostBlockEntry>> = mutableMapOf()
 
@@ -176,8 +178,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         if (level != null && !level!!.isClientSide) {
             setChanged()
             notifyBlockUpdated()
-            // the water sim only keys on hasWater, so mark dirty on the
-            // empty <-> non-empty flip; partial amount changes need no recalc
             if (hasWater() != lastMarkedHasWater) {
                 lastMarkedHasWater = hasWater()
                 waterStructureChanged()
@@ -198,6 +198,20 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
     fun removeSectorConfig(peer: BlockPos) {
         if (sectorConfigs.remove(peer.immutable()) == null) return
         removeWateredCurve(peer)
+        setChanged()
+        notifyBlockUpdated()
+        waterStructureChanged()
+    }
+
+    fun curveProfileFor(peer: BlockPos): SlideProfile? = curveProfiles[peer.immutable()]
+
+    fun setCurveProfile(peer: BlockPos, profile: SlideProfile?) {
+        val key = peer.immutable()
+        if (profile == null) {
+            if (curveProfiles.remove(key) == null) return
+        } else {
+            curveProfiles[key] = profile
+        }
         setChanged()
         notifyBlockUpdated()
         waterStructureChanged()
@@ -338,9 +352,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         waterStructureChanged()
     }
 
-    // any structural edit that changes the water field (radius, curves,
-    // watering, water switch, sector config) marks the owning space dirty so
-    // the water sim recalcs on the next tick instead of the slow fallback scan
     private fun waterStructureChanged() {
         val lvl = level
         if (lvl != null && !lvl.isClientSide) {
@@ -371,6 +382,15 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             }
         }
         sectorConfigs.keys.retainAll(anchorPeerCurvesView.keys)
+        curveProfiles.clear()
+        for (entry in tag.getList("CurveProfiles", 10)) {
+            if (entry is CompoundTag && entry.contains("Peer", 4) && entry.contains("Profile", 10)) {
+                SlideProfile.read(entry.getCompound("Profile"))?.let {
+                    curveProfiles[BlockPos.of(entry.getLong("Peer"))] = it
+                }
+            }
+        }
+        curveProfiles.keys.retainAll(anchorPeerCurvesView.keys)
         ghostBlocks.clear()
         for (entry in tag.getList("GhostBlocks", 10)) {
             if (entry !is CompoundTag || !entry.contains("Peer", 4) || !entry.contains("Cell", 4)) continue
@@ -412,7 +432,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             waterTank.readFromNBT(registries, tag.getCompound("WaterTank"))
         }
         lastMarkedHasWater = hasWater()
-// refresh visuals after curve data arrives
         if (level?.isClientSide == true) {
             if (supportBracketVisible != prevBracketVisible || supportBeamVisible != prevBeamVisible) {
                 WaterslideTubeVisual.refreshAll()
@@ -437,15 +456,10 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         }
     }
 
-    // last NBT curve-topology snapshot on the server, avoids re-dirtying on
-    // every regular block syncing; transient across reloads (recovers via the
-    // slow fallback rescan anyway)
     private var lastPeerTopoSig: String? = null
 
-    // hasWater state already reported to the water sim via waterStructureChanged
     private var lastMarkedHasWater: Boolean = false
 
-    // public entry for contraption space reconstruction from captured NBT
     fun readCaptured(tag: CompoundTag, registries: HolderLookup.Provider?) {
         val regs = registries ?: level?.registryAccess() ?: return
         read(tag, regs, false)
@@ -464,6 +478,16 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
             list.add(entry)
         }
         tag.put("SectorConfigs", list)
+        val profileList = ListTag()
+        for ((peer, profile) in curveProfiles) {
+            val entry = CompoundTag()
+            entry.putLong("Peer", peer.asLong())
+            val profileTag = CompoundTag()
+            profile.write(profileTag)
+            entry.put("Profile", profileTag)
+            profileList.add(entry)
+        }
+        tag.put("CurveProfiles", profileList)
         val ghostList = ListTag()
         for ((peer, entries) in ghostBlocks) {
             for (entry in entries) {
@@ -650,9 +674,6 @@ class WaterslideAnchorBlockEntity(pos: BlockPos, state: BlockState) :
         ghostBlocks.putAll(remapped)
     }
 
-    // Create goggles overlay: tank-style water readout; the interface comes in
-    // through KineticBlockEntity, the data through the synced WaterTank.
-    // Hovering (no goggles) intentionally shows nothing.
     override fun addToGoggleTooltip(tooltip: MutableList<Component>, isPlayerSneaking: Boolean): Boolean =
         containedFluidTooltip(tooltip, isPlayerSneaking, waterHandler)
 

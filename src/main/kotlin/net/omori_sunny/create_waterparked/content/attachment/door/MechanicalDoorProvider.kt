@@ -11,7 +11,6 @@ class MechanicalDoorProvider : SlideAttachmentModelProvider() {
     companion object {
         private val shownOpen = HashMap<net.minecraft.core.BlockPos, Float>()
 
-        // quantized for cheap cache signatures
         @JvmStatic
         fun smoothedOpen(pos: net.minecraft.core.BlockPos, target: Float): Float {
             var shown = shownOpen.getOrDefault(pos, target)
@@ -39,22 +38,28 @@ class MechanicalDoorProvider : SlideAttachmentModelProvider() {
     override fun boundingBox(ctx: SlideAttachmentModelContext): AABB {
         val outer = ctx.radius + ctx.wallThickness - 0.1
         val (ox, oy) = SlideAttachmentGeometry.axisOffset(ctx, outer.toDouble())
-        val r = ctx.radius - 0.1
+        val r = ctx.baseRadius * ctx.sectionMaxMult - 0.1
         return AABB(ox - r - FRAME, oy - r - FRAME, -0.25, ox + r + FRAME, oy + r + FRAME, 0.25)
     }
 
-    private fun ring(cx: Double, cy: Double, radius: Double, sides: Int): List<Pair<Double, Double>> =
+    private fun ring(
+        ctx: SlideAttachmentModelContext,
+        cx: Double, cy: Double,
+        inset: Double, sides: Int
+    ): List<Pair<Double, Double>> =
         (0 until sides).map { k ->
-            val a = Math.toRadians(90.0 + 360.0 * k / sides)
-            (cx + radius * kotlin.math.cos(a)) to (cy + radius * kotlin.math.sin(a))
+            val angleDeg = (90.0 + 360.0 * k / sides).toFloat()
+            val r = (ctx.baseRadius * ctx.sectionMultAt(angleDeg) - inset).coerceAtLeast(0.05)
+            val a = Math.toRadians(angleDeg.toDouble())
+            (cx + r * kotlin.math.cos(a)) to (cy + r * kotlin.math.sin(a))
         }
 
     override fun parts(ctx: SlideAttachmentModelContext): List<Part> {
         val sides = net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh.crossSections()
-        val innerR = (ctx.radius - 0.1).toDouble()
+        val innerR = (ctx.baseRadius * ctx.sectionMaxMult - 0.1).coerceAtLeast(0.05).toDouble()
         val (ox, oy) = SlideAttachmentGeometry.axisOffset(ctx, (ctx.radius + ctx.wallThickness - 0.1).toDouble())
-        val outerRing = ring(ox, oy, innerR, sides)
-        val innerRing = ring(ox, oy, innerR - FRAME, sides)
+        val outerRing = ring(ctx, ox, oy, 0.1, sides)
+        val innerRing = ring(ctx, ox, oy, 0.1 + FRAME, sides)
 
         val out = ArrayList<Part>()
         val quads = ArrayList<Quad>()
@@ -123,7 +128,6 @@ class MechanicalDoorProvider : SlideAttachmentModelProvider() {
         return out
     }
 
-    // closed blades must cover the whole disc, hence the 1.1 width factor
     private fun apertureParts(
         ox: Double,
         oy: Double,
@@ -236,7 +240,6 @@ class MechanicalDoorProvider : SlideAttachmentModelProvider() {
         return out
     }
 
-    // edges are split per unit so the texture is never stretched
     private fun panelStrips(
         poly: List<Pair<Double, Double>>,
         zBack: Double,
@@ -275,7 +278,6 @@ class MechanicalDoorProvider : SlideAttachmentModelProvider() {
 
     private fun Double.pow2(): Double = this * this
 
-    // subject must be convex; ring must be counter-clockwise
     private fun clipToPolygon(
         subject: List<Pair<Double, Double>>,
         ringPts: List<Pair<Double, Double>>

@@ -8,18 +8,13 @@ import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 
-// everything a model needs to build itself: the resolved tube frame at the
-// attachment's (t, angle) plus the slide's radius/thickness and the host
-// block. Subclasses pick what they need.
 data class SlideAttachmentModelContext(
     val level: Level,
     val sabPos: BlockPos,
-    // attachment anchor on the outer wall: position + frame basis
     val position: Vec3,
     val tangent: Vec3,
     val lateral: Vec3,
     val up: Vec3,
-    // radial-out direction at the attachment angle (into the tube = negated)
     val radialOut: Vec3,
     val radius: Float,
     val wallThickness: Float,
@@ -27,27 +22,29 @@ data class SlideAttachmentModelContext(
     val t: Float,
     val curve: BezierConnection,
     val sectorConfig: WaterslideSectorConfig? = null,
-    val renderTransform: SlideAttachmentRenderTransform? = null
+    val renderTransform: SlideAttachmentRenderTransform? = null,
+    val sectionRadii: FloatArray? = null,
+    val baseRadius: Float = radius
 ) {
-    /** local attachment-space AABB (origin at the wall point, +z = tangent) */
     fun localAABB(sx: Double, sy: Double, sz: Double, ex: Double, ey: Double, ez: Double): AABB =
         AABB(sx, sy, sz, ex, ey, ez)
+
+    fun sectionMultAt(angleDeg: Float): Float =
+        if (sectionRadii == null) 1f
+        else net.omori_sunny.create_waterparked.game.SlideProfile.multiplierAt(sectionRadii, angleDeg)
+
+    val sectionMaxMult: Float
+        get() = sectionRadii?.max() ?: 1f
 }
 
-// model source of an attachment type: returns the parts that together form
-// the attachment visual. Procedural parts are code-defined boxes; json parts
-// are block models - both live in local attachment space (x = lateral, y =
-// up, z = tangent, origin at the wall point) and may combine freely.
 abstract class SlideAttachmentModelProvider {
 
-    /** outline box for the placement preview, in local attachment space */
     abstract fun boundingBox(ctx: SlideAttachmentModelContext): AABB
 
     open fun parts(ctx: SlideAttachmentModelContext): List<Part> = emptyList()
 
     sealed interface Part
 
-    /** solid colored box centred at (cx, cy, cz), optionally rolled around z */
     data class BoxPart(
         val cx: Double,
         val cy: Double,
@@ -60,7 +57,6 @@ abstract class SlideAttachmentModelProvider {
         val alpha: Int = 255
     ) : Part
 
-    /** block model posed in local attachment space */
     data class ModelPart(
         val model: net.minecraft.client.resources.model.ModelResourceLocation,
         val offsetX: Double = 0.0,
@@ -71,7 +67,6 @@ abstract class SlideAttachmentModelProvider {
         val scale: Double = 1.0
     ) : Part
 
-    /** raw manually-built quad in local attachment space */
     data class Quad(
         val x0: Double, val y0: Double, val z0: Double,
         val x1: Double, val y1: Double, val z1: Double,
@@ -91,7 +86,6 @@ abstract class SlideAttachmentModelProvider {
     data class TiledPart(
         val quads: List<Quad>,
         val texture: net.minecraft.resources.ResourceLocation,
-        // tiles per second along +u, so the layer can flow with the boost
         val scroll: Float = 0f
     ) : Part
 }

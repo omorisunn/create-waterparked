@@ -16,7 +16,6 @@ object ModBlockEntities {
 
     val WATERSLIDE_ANCHOR_BE: BlockEntityType<WaterslideAnchorBlockEntity> by
     REGISTRY.register("waterslide_anchor") { ->
-        // set pendingType for the type swap mixin
         var resolvedType: BlockEntityType<WaterslideAnchorBlockEntity>? = null
         val type = BlockEntityType.Builder.of(
             { pos, state ->
@@ -38,16 +37,33 @@ object ModBlockEntities {
     }
 
     val WATERSLIDE_RIVET_BE: BlockEntityType<net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetBlockEntity> by
-    REGISTRY.register("waterslide_rivet") { ->
-        BlockEntityType.Builder.of(
-            { pos, state ->
-                net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetBlockEntity(pos, state)
-            },
-            ModBlocks.WATERSLIDE_RIVET
-        ).build(null)
-    }
+        REGISTRY.register("waterslide_rivet") { ->
+            BlockEntityType.Builder.of(
+                { pos, state ->
+                    net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetBlockEntity(pos, state)
+                },
+                ModBlocks.WATERSLIDE_RIVET
+            ).build(null)
+        }
 
-    // carrier subclasses take their own type in the constructor, so bind it after build
+    val SLIDE_DRAFTING_TABLE_BE: BlockEntityType<net.omori_sunny.create_waterparked.content.sketch.SlideDraftingTableBlockEntity> by
+        REGISTRY.register("slide_drafting_table") { ->
+            var resolvedType: BlockEntityType<net.omori_sunny.create_waterparked.content.sketch.SlideDraftingTableBlockEntity>? = null
+            val type = BlockEntityType.Builder.of(
+                { pos, state ->
+                    net.omori_sunny.create_waterparked.content.sketch.SlideDraftingTableBlockEntity(
+                        resolvedType!!, pos, state
+                    )
+                },
+                ModBlocks.SLIDE_DRAFTING_TABLE
+            ).build(null)
+            resolvedType = type
+            type
+        }
+
+    val SLIDE_DRAFTING_TABLE_BE_TYPE: BlockEntityType<net.omori_sunny.create_waterparked.content.sketch.SlideDraftingTableBlockEntity> by
+        lazy { SLIDE_DRAFTING_TABLE_BE }
+
     val ROLLER_CONVEYOR_BE: BlockEntityType<RollerConveyorBlockEntity> by
     REGISTRY.register("roller_conveyor") { ->
         var resolvedType: BlockEntityType<RollerConveyorBlockEntity>? = null
@@ -59,7 +75,6 @@ object ModBlockEntities {
         type
     }
 
-    // the world shaft carries no state of its own beyond the run it drives
     val ROLLER_HINGE_SHAFT_BE: BlockEntityType<RollerWorldShaftBlockEntity> by
     REGISTRY.register("roller_hinge_shaft") { ->
         var resolvedType: BlockEntityType<RollerWorldShaftBlockEntity>? = null

@@ -54,7 +54,6 @@ import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.sqrt
 
-// server-side only
 object PlayerSlideController {
 
     private const val SIT_HEIGHT = 0.7
@@ -366,7 +365,6 @@ object PlayerSlideController {
         )
     }
 
-    // slide start requested by an attachment that already built the trajectory
     @JvmStatic
     fun startSlideAt(
         level: ServerLevel,
@@ -442,7 +440,6 @@ object PlayerSlideController {
         }
     }
 
-    // for render-frame smoothing on the client
     private fun sendEntityTrajectory(level: ServerLevel, session: Session, startGameTime: Long) {
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayersInDimension(
             level,
@@ -580,7 +577,13 @@ object PlayerSlideController {
         else b.asLong() to a.asLong()
         val h0 = bc.starts.getFirst()
         val h1 = bc.starts.getSecond()
-        val sig = "${access.space.cacheKey(access.level)}|$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()}"
+        val anchorBe = access.getBlockEntity(a) as? WaterslideAnchorBlockEntity
+        val ownSig = anchorBe?.curveProfileFor(b)?.signature()
+        var neighborSigs = ""
+        anchorBe?.anchorPeerCurvesView?.keys?.sortedBy { it.asLong() }?.forEach { n ->
+            anchorBe.curveProfileFor(n)?.let { neighborSigs += it.signature() }
+        }
+        val sig = "${access.space.cacheKey(access.level)}|$r0,$r1,${h0.x},${h0.y},${h0.z},${h1.x},${h1.y},${h1.z},${bc.getSegmentCount()},$ownSig,$neighborSigs"
         curveFramesCache[key]?.let { if (it.sig == sig) return it }
 
         val frames = SlideCurveGeometry.sampleFrames(access, bc, r0, r1, includeExtensions = false)
@@ -592,7 +595,7 @@ object PlayerSlideController {
         var maxY = -Double.MAX_VALUE
         var maxZ = -Double.MAX_VALUE
         for (f in frames) {
-            val r = f.radius.toDouble() + 1.0
+            val r = (f.radius * f.maxMultiplier).toDouble() + 1.0
             minX = minOf(minX, f.center.x - r)
             minY = minOf(minY, f.center.y - r)
             minZ = minOf(minZ, f.center.z - r)
@@ -622,13 +625,14 @@ object PlayerSlideController {
         val closest = fa.center.add(ab.scale(f))
         val radial = p.subtract(closest)
         val axisDist = radial.length()
-        val radius = (fa.radius + (fb.radius - fa.radius) * f.toFloat()).toDouble()
-        if (axisDist > radius - SLIDE_WALL_THICKNESS + gateMargin) return null
-
         val tan = fa.tangent.lerp(fb.tangent, f).normalize()
         val lat = fa.lateral.lerp(fb.lateral, f).normalize()
         val up = fa.up.lerp(fb.up, f).normalize()
         val angle = Math.toDegrees(atan2(radial.dot(up), radial.dot(lat))).toFloat()
+        val radius = (fa.radius + (fb.radius - fa.radius) * f.toFloat()) *
+            Mth.lerp(f.toFloat(), fa.wallMultiplier(angle), fb.wallMultiplier(angle))
+        if (axisDist > radius - SLIDE_WALL_THICKNESS + gateMargin) return null
+
         val sector = WaterslideSectorLayout.sectorAt(WaterslideSectorLayout.place(config), angle)
             ?: return null
         if (requireSolid && sector.sector.material == SectorMaterial.OPEN) return null
@@ -743,7 +747,6 @@ object PlayerSlideController {
         }
     }
 
-    // tighter sync interval while a speed effect is in motion
     private fun syncInterval(session: Session): Long =
         if (kotlin.math.abs(session.timeScale - 1.0) > 0.01 ||
             kotlin.math.abs(session.targetScale - 1.0) > 0.01
@@ -830,7 +833,6 @@ object PlayerSlideController {
 
     private fun endSession(level: ServerLevel, session: Session, reason: SlideEndReason) {
         val entity = session.entity
-        // a session this short always means something went wrong, so name it in the log
         if (level.gameTime - session.startTick <= 5L) {
             val first = session.trajectory.samples.first()
             val last = session.trajectory.samples.last()
@@ -977,7 +979,6 @@ object PlayerSlideController {
         return out
     }
 
-    // stuck sub-level entities report plot coords, already local
     private fun trackedSubOf(entity: Entity): UUID? =
         (entity as? EntityMovementExtension)?.`sable$getTrackingSubLevel`()?.uniqueId
 
@@ -1015,7 +1016,7 @@ object PlayerSlideController {
                 val r0 = SlideCurveGeometry.radiusAt(access, a)
                 val r1 = SlideCurveGeometry.radiusAt(access, b)
                 for (f in SlideCurveGeometry.sampleFrames(access, bc, r0, r1)) {
-                    val r = f.radius.toDouble() + 1.0
+                    val r = (f.radius * f.maxMultiplier).toDouble() + 1.0
                     minX = minOf(minX, f.center.x - r)
                     minY = minOf(minY, f.center.y - r)
                     minZ = minOf(minZ, f.center.z - r)
@@ -1086,7 +1087,7 @@ object PlayerSlideController {
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
                 val r1 = SlideCurveGeometry.radiusAt(level, b)
                 for (f in SlideCurveGeometry.sampleFrames(level, bc, r0, r1)) {
-                    val r = f.radius.toDouble() + 1.0
+                    val r = (f.radius * f.maxMultiplier).toDouble() + 1.0
                     minX = minOf(minX, f.center.x - r)
                     minY = minOf(minY, f.center.y - r)
                     minZ = minOf(minZ, f.center.z - r)
@@ -1129,7 +1130,6 @@ object PlayerSlideController {
         return !worn.isEmpty && worn.item is DivingBootsItem
     }
 
-    // matched by registry id so the mod works without Aeronautics installed
     private fun isHoldingCreativePhysicsStaff(entity: Entity): Boolean {
         if (entity !is LivingEntity) return false
         return isCreativePhysicsStaff(entity.mainHandItem) ||
@@ -1145,7 +1145,6 @@ object PlayerSlideController {
         if (entity is LivingEntity) entity.getDimensions(entity.getPose())
         else entity.getDimensions(Pose.STANDING)
 
-    // box centre above the origin, except the boat which uses its hull
     private fun centreOffsetY(entity: Entity): Double =
         (entity as? net.omori_sunny.create_waterparked.content.raft.InflatableBoat1x2Entity)
             ?.slideCentreOffsetY()
@@ -1198,13 +1197,13 @@ object PlayerSlideController {
                         access, first.center,
                         access.toWorld(first.center),
                         access.toWorldNormal(first.tangent).normalize(),
-                        r0, bc, true
+                        r0 * first.maxMultiplier, bc, true
                     )
                     out += SlideMouth(
                         access, last.center,
                         access.toWorld(last.center),
                         access.toWorldNormal(last.tangent.scale(-1.0)).normalize(),
-                        r1, bc, false
+                        r1 * last.maxMultiplier, bc, false
                     )
                 }
             }
@@ -1212,7 +1211,6 @@ object PlayerSlideController {
         return out
     }
 
-    // exempts player-placed rivets from the hostless-rivet cleanup
     @JvmStatic
     fun isRivetOnSlideWall(level: ServerLevel, pos: BlockPos): Boolean {
         val point = Vec3.atCenterOf(pos)
@@ -1241,7 +1239,8 @@ object PlayerSlideController {
                         if (lenSq < 1.0E-9) continue
                         val t = ((point.subtract(fa.center)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
                         val closest = fa.center.add(ab.scale(t))
-                        val radius = Mth.lerp(t.toDouble(), fa.radius.toDouble(), fb.radius.toDouble())
+                        val radius = Mth.lerp(t.toDouble(), fa.radius.toDouble(), fb.radius.toDouble()) *
+                            maxOf(fa.maxMultiplier, fb.maxMultiplier)
                         if (point.distanceTo(closest) <= radius + 0.4) return true
                     }
                 }
@@ -1250,7 +1249,6 @@ object PlayerSlideController {
         return false
     }
 
-    // the grab bar launch keeps the look the player had while hanging
     private fun holdsEntryLook(level: ServerLevel, session: Session): Boolean =
         session.keepEntryLook && level.gameTime - session.startTick < ENTRY_LOOK_TICKS
 

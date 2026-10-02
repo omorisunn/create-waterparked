@@ -5,7 +5,6 @@ import net.minecraft.world.item.CreativeModeTab
 import net.minecraft.world.item.ItemStack
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentBlockItem
 
-// shared layout helper for the Waterparked banner in the Simulated Coasters tab
 object WaterparkedCreativeTabLayout {
 
     @JvmStatic
@@ -20,10 +19,11 @@ object WaterparkedCreativeTabLayout {
             item === ModItems.ROLLER_CONVEYOR ||
             item === ModItems.INFLATABLE_BOAT_1X2 ||
             item === ModItems.COKE_TUBE_DRINK ||
+            item === ModItems.SLIDE_SKETCH ||
+            item === ModItems.SLIDE_DRAFTING_TABLE ||
             item is SlideAttachmentBlockItem
     }
 
-    // banner row index, the empty row right before the first Waterparked item
     @JvmStatic
     fun bannerRow(tab: CreativeModeTab): Int {
         val items = tab.displayItems

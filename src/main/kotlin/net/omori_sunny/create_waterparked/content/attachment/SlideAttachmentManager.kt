@@ -10,7 +10,6 @@ import net.omori_sunny.create_waterparked.content.attachment.grab_bar.GrabBarAtt
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
 import java.util.concurrent.ConcurrentHashMap
 
-// server-side index of loaded attachments, keyed by the anchor they ride on
 object SlideAttachmentManager {
 
     private val byAnchor = ConcurrentHashMap<Long, MutableSet<SlideAttachmentBlockEntity>>()
@@ -27,6 +26,12 @@ object SlideAttachmentManager {
         if (all.remove(be)) {
             byAnchor.values.forEach { it.remove(be) }
         }
+    }
+
+    fun clear() {
+        byAnchor.clear()
+        pathDemands.clear()
+        all.clear()
     }
 
     fun allAttachments(): Collection<SlideAttachmentBlockEntity> = all
@@ -47,7 +52,6 @@ object SlideAttachmentManager {
         return scale
     }
 
-    // worldPos and worldVel are the live session values, not the entity's
     fun onSessionTick(level: ServerLevel, rider: Entity, worldPos: Vec3, worldVel: Vec3) {
         if (all.isEmpty()) return
         for (be in all.toList()) {
@@ -147,7 +151,6 @@ object SlideAttachmentManager {
         return sum
     }
 
-    // per-tick validation pass: attachments whose curve is gone are dropped
     fun onServerTick(event: net.neoforged.neoforge.event.tick.ServerTickEvent.Post) {
         if (all.isEmpty()) return
         for (level in event.server.allLevels) {

@@ -27,6 +27,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.SectorMaterial
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.SlideProfile
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.RenderType
 import net.minecraft.client.renderer.block.model.BakedQuad
@@ -56,28 +57,21 @@ object WaterslideTubeMesh {
     private const val LENGTH_SUBDIVISIONS = 4
     private const val MAX_FRAME_BLOCKS = 0.5f
 
-    // keep in sync with instance/waterslide_tube.vert `BASE_WALL`: the wall is
-    // drawn outward to radius + (wallThickness - BASE_WALL)
     @JvmField
     val BASE_WALL: Float = 0.1f
-    // tiny radial offset so the support never sits exactly coplanar
     @JvmField
     val SUPPORT_HUG_EPSILON: Float = 0.005f
 
-    // support strip width in sprite pixels, 4px band with 2px border fold
     const val SUPPORT_STRIP_PX: Float = 4f
 
-    // concurrent model builds on Flywheel worker threads, getOrPut is atomic
     private val modelCache = java.util.concurrent.ConcurrentHashMap<String, TubeModels>()
     private val waterModelCache = java.util.concurrent.ConcurrentHashMap<String, Model>()
 
-// per-fragment UV reconstruction
     private val TUBE_SHADERS: MaterialShaders = SimpleMaterialShaders(
         ResourceUtil.rl("material/default.vert"),
         ResourceLocation.fromNamespaceAndPath("create_waterparked", "material/waterslide_tube.frag")
     )
 
-// wall is double-sided for mirrored junctions and side walls
     private val TUBE_CUTOUT_MATERIAL: Material =
         SimpleMaterial.builderOf(Materials.CUTOUT_MIPPED_BLOCK)
             .shaders(TUBE_SHADERS)
@@ -97,7 +91,6 @@ object WaterslideTubeMesh {
             .writeMask(WriteMask.COLOR)
             .build()
 
-// water band renders both faces and writes real depth for iterationRP
     val WATER_TRANSLUCENT_MATERIAL: Material =
         SimpleMaterial.builder()
             .transparency(Transparency.TRANSLUCENT)
@@ -106,7 +99,6 @@ object WaterslideTubeMesh {
             .writeMask(WriteMask.COLOR_DEPTH)
             .build()
 
-// thrown water is visible from both sides
     val STREAM_TRANSLUCENT_MATERIAL: Material =
         SimpleMaterial.builder()
             .transparency(Transparency.TRANSLUCENT)
@@ -115,7 +107,6 @@ object WaterslideTubeMesh {
             .writeMask(WriteMask.COLOR)
             .build()
 
-// stream variant writes depth only for iterationRP, culled at other angles
     val STREAM_TRANSLUCENT_DEPTH_MATERIAL: Material =
         SimpleMaterial.builder()
             .transparency(Transparency.TRANSLUCENT)
@@ -124,7 +115,6 @@ object WaterslideTubeMesh {
             .writeMask(WriteMask.COLOR_DEPTH)
             .build()
 
-// skeleton rings
     private val RING_TRANSLUCENT_MATERIAL: Material =
         SimpleMaterial.builder()
             .transparency(Transparency.TRANSLUCENT)
@@ -133,7 +123,6 @@ object WaterslideTubeMesh {
             .writeMask(WriteMask.COLOR)
             .build()
 
-// glass sectors are order independent, single sided like vanilla glass
     val GLASS_TRANSLUCENT_MATERIAL: Material =
         SimpleMaterial.builder()
             .transparency(Transparency.ORDER_INDEPENDENT)
@@ -150,7 +139,6 @@ object WaterslideTubeMesh {
         var nx: Float, var ny: Float, var nz: Float
     )
 
-// wall + caps
     data class SectorWall(
         val blockId: String,
         val model: Model,
@@ -176,10 +164,14 @@ object WaterslideTubeMesh {
         val prevLateral: Vec3,
         val currLateral: Vec3,
         val prevRadius: Float,
-        val currRadius: Float
-    )
+        val currRadius: Float,
+        val prevProfile: FloatArray? = null,
+        val currProfile: FloatArray? = null
+    ) {
+        val midProfile: FloatArray?
+            get() = SlideProfile.blendShared(prevProfile, currProfile, 0.5f)
+    }
 
-// model cache
     @JvmStatic
     fun modelsFor(config: WaterslideSectorConfig, radius: Float): TubeModels {
         val key = signature(config, radius)
@@ -187,10 +179,16 @@ object WaterslideTubeMesh {
     }
 
     @JvmStatic
+    fun modelsFor(config: WaterslideSectorConfig, radius: Float, profile: FloatArray?): TubeModels {
+        if (profile == null) return modelsFor(config, radius)
+        val key = signature(config, radius) + "|p" + SlideProfile.contentSignature(profile)
+        return modelCache.getOrPut(key) { build(config, radius, profile) }
+    }
+
+    @JvmStatic
     fun modelsFor(config: WaterslideSectorConfig): TubeModels =
         modelsFor(config, ModConfig.defaultSlideRadius())
 
-    // kept for existing world-visual call sites; level is not needed by build()
     @JvmStatic
     fun modelsFor(level: Level, config: WaterslideSectorConfig): TubeModels =
         modelsFor(config, ModConfig.defaultSlideRadius())
@@ -230,7 +228,6 @@ object WaterslideTubeMesh {
         return if (IrisColorwheelCompat.iterationRpWaterMode()) base * 10 else base
     }
 
-    // arc length of the cubic the vertex shader reconstructs
     @JvmStatic
     fun arcLength(frame: TubeSegmentFrame): Float {
         return bezierArcLength(
@@ -322,6 +319,8 @@ object WaterslideTubeMesh {
 
         val ext0 = openEndExtension(level, bc, atFirst = true)
         val ext1 = openEndExtension(level, bc, atFirst = false)
+        val sectionAt = SlideCurveGeometry.sectionSampler(level, bc)
+        val sections = Array(count + 1) { sectionAt(ts[it]) }
         val frames = ArrayList<TubeSegmentFrame>()
         if (ext0 > 0.01f) {
             val tan = tangents[0]!!
@@ -332,7 +331,7 @@ object WaterslideTubeMesh {
                 frames += TubeSegmentFrame(
                     centers[0].subtract(tan.scale((ext0 * (1 - f0)).toDouble())).subtract(origin),
                     centers[0].subtract(tan.scale((ext0 * (1 - f1)).toDouble())).subtract(origin),
-                    tan, tan, lats[0]!!, lats[0]!!, r0, r0
+                    tan, tan, lats[0]!!, lats[0]!!, r0, r0, sections[0], sections[0]
                 )
             }
         }
@@ -342,7 +341,8 @@ object WaterslideTubeMesh {
                 centers[i + 1].subtract(origin),
                 tangents[i]!!, tangents[i + 1]!!,
                 lats[i]!!, lats[i + 1]!!,
-                Mth.lerp(ts[i], r0, r1), Mth.lerp(ts[i + 1], r0, r1)
+                Mth.lerp(ts[i], r0, r1), Mth.lerp(ts[i + 1], r0, r1),
+                sections[i], sections[i + 1]
             )
         }
         if (ext1 > 0.01f) {
@@ -354,7 +354,7 @@ object WaterslideTubeMesh {
                 frames += TubeSegmentFrame(
                     centers[count].add(tan.scale((ext1 * f0).toDouble())).subtract(origin),
                     centers[count].add(tan.scale((ext1 * f1).toDouble())).subtract(origin),
-                    tan, tan, lats[count]!!, lats[count]!!, r1, r1
+                    tan, tan, lats[count]!!, lats[count]!!, r1, r1, sections[count], sections[count]
                 )
             }
         }
@@ -387,7 +387,6 @@ object WaterslideTubeMesh {
             }
             tangent = tangent.normalize()
 
-            // no rail frames and no extensions: always the stable world-up frame
             var (lat, _) = SlideCurveGeometry.stableFrame(tangent)
             if (prevLat != null && lat.dot(prevLat) < 0.0) {
                 lat = lat.scale(-1.0)
@@ -431,13 +430,15 @@ object WaterslideTubeMesh {
             }
         }
 
-    private fun build(config: WaterslideSectorConfig, radius: Float): TubeModels {
+    private fun build(config: WaterslideSectorConfig, radius: Float, profile: FloatArray? = null): TubeModels {
         val placed = WaterslideSectorLayout.place(config)
-        // low-poly cross-section, density from client config
         val crossN = crossSections()
         val degStep = 360f / crossN
         val gridAnchor = 90f
         val translucentCache = java.util.HashMap<ResourceLocation, Boolean>()
+
+        fun wallMultiplier(angleDeg: Float): Float =
+            if (profile == null) 1f else SlideProfile.multiplierAt(profile, angleDeg)
 
         val wallVerts = ArrayList<V>()
         val sectorBuckets = LinkedHashMap<String, ArrayList<V>>()
@@ -459,17 +460,13 @@ object WaterslideTubeMesh {
             val uTilesRaw = if (sideWall)
                 1f
             else {
-                // one tile per block at the inner radius for both walls
                 (radius - BASE_WALL).coerceAtLeast(0.1f) * sectorRadians
             }
-            // narrow sectors keep at least one tile for the opaque walls
-            val uTiles = max(uTilesRaw, 1f)
+        val uTiles = max(uTilesRaw, 1f)
 
             val centerW = max(texW - 2f * border, 1f)
             val centerH = max(texH - 2f * border, 1f)
 
-            // per-tile position (0..texW): the fold must wrap per TILE, the old
-            // % centerW wrapped per body window and dragged the texture along u
             val px = u * uTiles * texW
             val inTile = ((px % texW) + texW) % texW
             val uFrac = if (translucent) {
@@ -483,7 +480,6 @@ object WaterslideTubeMesh {
                 (border + u * centerW) / texW
             else
                 (inTile.coerceIn(border, texW - border)) / texW
-            // cap radial three zone fold, walls use the plain body window fold
             val vFrac = if (translucent && capV) {
                 val vPx = v * (net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() * 16f)
                 when {
@@ -513,13 +509,14 @@ object WaterslideTubeMesh {
             su0: Float, su1: Float, sv0: Float, sv1: Float
         ) {
             val a = Math.toRadians(angleDeg.toDouble())
-            val c = cos(a).toFloat()
-            val s = sin(a).toFloat()
-            val nx = c
-            val ny = s
-            // real radial span: radius 1.0 outer, below 0.95 inner
+            val m = wallMultiplier(angleDeg)
+            val c = cos(a).toFloat() * m
+            val s = sin(a).toFloat() * m
+            val nx = cos(a).toFloat()
+            val ny = sin(a).toFloat()
             val innerR = 0.92f
-            // u span approximates the wall thickness on the radial axis
+            val markZ = 0.25f
+            val markXY = kotlin.math.sqrt(1f - markZ * markZ)
             val sideRadians = 0.2f / 16f
             for (k in 0 until LENGTH_SUBDIVISIONS) {
                 val z0 = k / (2f * LENGTH_SUBDIVISIONS)
@@ -528,14 +525,14 @@ object WaterslideTubeMesh {
                 val v1 = (k + 1) / LENGTH_SUBDIVISIONS.toFloat()
                 if (dir > 0f) {
                     add(dst, c, s, z0, nx, ny, 0f, 0f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
-                    add(dst, c * innerR, s * innerR, z0, nx, ny, 0f, 1f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
-                    add(dst, c * innerR, s * innerR, z1, nx, ny, 0f, 1f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z0, nx * markXY, ny * markXY, markZ, 1f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z1, nx * markXY, ny * markXY, markZ, 1f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
                     add(dst, c, s, z1, nx, ny, 0f, 0f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
                 } else {
                     add(dst, c, s, z0, nx, ny, 0f, 0f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
                     add(dst, c, s, z1, nx, ny, 0f, 0f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
-                    add(dst, c * innerR, s * innerR, z1, nx, ny, 0f, 1f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
-                    add(dst, c * innerR, s * innerR, z0, nx, ny, 0f, 1f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z1, nx * markXY, ny * markXY, markZ, 1f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z0, nx * markXY, ny * markXY, markZ, 1f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
                 }
             }
         }
@@ -544,7 +541,6 @@ object WaterslideTubeMesh {
             if (p.sector.material == SectorMaterial.OPEN) continue
             val blockId = p.sector.blockId ?: continue
             val sprite = spriteFor(blockId) ?: continue
-            // one mesh per sector so each wall instance carries a single sprite
             val bucket = sectorBuckets.getOrPut(blockId.toString()) { ArrayList() }
             val texW = sprite.contents().width().toFloat()
             val texH = sprite.contents().height().toFloat()
@@ -552,15 +548,15 @@ object WaterslideTubeMesh {
             val sectorDegrees = p.endAngle - p.startAngle
             if (sectorDegrees <= 0.001f) continue
             val sectorRadians = Math.toRadians(sectorDegrees.toDouble()).toFloat()
+            val mArc = wallMultiplier((p.startAngle + p.endAngle) / 2f)
+            val arcRadians = sectorRadians * mArc
             val su0 = sprite.u0
             val su1 = sprite.u1
             val sv0 = sprite.v0
             val sv1 = sprite.v1
             val glass = translucentCache.getOrPut(blockId) { isTranslucent(blockId) }
-            // glass sectors use their own sprite border as the fold inset
             val effBorder = if (glass) borderPxOf(sprite).toFloat() else border
 
-            // global fixed grid, up-axis anchored, identical across tracks
             val startNorm = WaterslideSectorLayout.normalize(p.startAngle)
             val intervals = if (startNorm + sectorDegrees <= 360f)
                 listOf(startNorm to startNorm + sectorDegrees)
@@ -583,10 +579,12 @@ object WaterslideTubeMesh {
                         val f1 = (e + wrap - startNorm) / sectorDegrees
                         val a0 = Math.toRadians(s.toDouble())
                         val a1 = Math.toRadians(e.toDouble())
-                        val c0 = cos(a0).toFloat()
-                        val s0 = sin(a0).toFloat()
-                        val c1 = cos(a1).toFloat()
-                        val s1 = sin(a1).toFloat()
+                        val m0 = wallMultiplier(s)
+                        val m1 = wallMultiplier(e)
+                        val c0 = cos(a0).toFloat() * m0
+                        val s0 = sin(a0).toFloat() * m0
+                        val c1 = cos(a1).toFloat() * m1
+                        val s1 = sin(a1).toFloat() * m1
                         val midA = a0 + (a1 - a0) / 2.0
                         val cm = cos(midA).toFloat()
                         val sm = sin(midA).toFloat()
@@ -597,47 +595,41 @@ object WaterslideTubeMesh {
                             val v0 = k / LENGTH_SUBDIVISIONS.toFloat()
                             val v1 = (k + 1) / LENGTH_SUBDIVISIONS.toFloat()
 
-                            // inner wall first, translucent buckets blend in mesh order
-                            add(bucket, c0, s0, z0, -cm, -sm, 0f, f0, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c0, s0, z0, -cm, -sm, 0f, f0, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c0, s0, z1, -cm, -sm, 0f, f0, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c0, s0, z1, -cm, -sm, 0f, f0, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c1, s1, z1, -cm, -sm, 0f, f1, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c1, s1, z1, -cm, -sm, 0f, f1, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c1, s1, z0, -cm, -sm, 0f, f1, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c1, s1, z0, -cm, -sm, 0f, f1, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c0, s0, z0, -cm, -sm, 0f, f0, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z0, -cm, -sm, 0f, f0, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c0, s0, z1, -cm, -sm, 0f, f0, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z1, -cm, -sm, 0f, f0, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z1, -cm, -sm, 0f, f1, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z1, -cm, -sm, 0f, f1, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z0, -cm, -sm, 0f, f1, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z0, -cm, -sm, 0f, f1, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
 
-                            // Outer wall (drawn last)
-                            add(bucket, c0, s0, z0, cm, sm, 0f, f0, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c0, s0, z0, cm, sm, 0f, f0, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c1, s1, z0, cm, sm, 0f, f1, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c1, s1, z0, cm, sm, 0f, f1, v0, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c1, s1, z1, cm, sm, 0f, f1, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c1, s1, z1, cm, sm, 0f, f1, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c0, s0, z1, cm, sm, 0f, f0, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c0, s0, z1, cm, sm, 0f, f0, v1, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c0, s0, z0, cm, sm, 0f, f0, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z0, cm, sm, 0f, f0, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z0, cm, sm, 0f, f1, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z0, cm, sm, 0f, f1, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z1, cm, sm, 0f, f1, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z1, cm, sm, 0f, f1, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c0, s0, z1, cm, sm, 0f, f0, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z1, cm, sm, 0f, f0, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
                         }
 
-                        // End cap
-                        add(endCapVerts, c0, s0, 0f, c0, s0, 1f, f0, 1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(endCapVerts, c1, s1, 0f, c1, s1, 1f, f1, 1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(endCapVerts, c1, s1, 0f, -c1, -s1, 1f, f1, 0f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(endCapVerts, c0, s0, 0f, -c0, -s0, 1f, f0, 0f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(endCapVerts, c0, s0, 0f, c0, s0, 1f, f0, 1f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(endCapVerts, c1, s1, 0f, c1, s1, 1f, f1, 1f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(endCapVerts, c1, s1, 0f, -c1, -s1, 1f, f1, 0f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(endCapVerts, c0, s0, 0f, -c0, -s0, 1f, f0, 0f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
 
-                        // Start cap
-                        add(startCapVerts, c0, s0, 0f, c0, s0, -1f, f0, 1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(startCapVerts, c0, s0, 0f, -c0, -s0, -1f, f0, 0f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(startCapVerts, c1, s1, 0f, -c1, -s1, -1f, f1, 0f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(startCapVerts, c1, s1, 0f, c1, s1, -1f, f1, 1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c0, s0, 0f, c0, s0, -1f, f0, 1f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c0, s0, 0f, -c0, -s0, -1f, f0, 0f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c1, s1, 0f, -c1, -s1, -1f, f1, 0f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c1, s1, 0f, c1, s1, -1f, f1, 1f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
                     }
                 }
             }
 
-            // side walls next to open sectors (folded into this sector's mesh)
             val idx = placed.indexOf(p)
             val prev = placed[(idx - 1 + placed.size) % placed.size]
             val next = placed[(idx + 1) % placed.size]
-            // translucent neighbours count as open, the guard keeps seams wall less
             val prevOpenLike = prev.sector.material == SectorMaterial.OPEN ||
                 (!glass && prev.sector.blockId != null &&
                     translucentCache.getOrPut(prev.sector.blockId) { isTranslucent(prev.sector.blockId) })
@@ -645,16 +637,15 @@ object WaterslideTubeMesh {
                 (!glass && next.sector.blockId != null &&
                     translucentCache.getOrPut(next.sector.blockId) { isTranslucent(next.sector.blockId) })
             if (prevOpenLike) {
-                addSideWall(bucket, p.startAngle, -1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1)
+                addSideWall(bucket, p.startAngle, -1f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1)
             }
             if (nextOpenLike) {
-                addSideWall(bucket, p.endAngle, 1f, sectorRadians, texW, texH, effBorder, su0, su1, sv0, sv1)
+                addSideWall(bucket, p.endAngle, 1f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1)
             }
         }
 
         val sectorWalls = sectorBuckets.entries.map { (k, verts) ->
             val glass = translucentCache[ResourceLocation.tryParse(k)] == true
-            // glass sectors blend instead of alpha cutting, single sided
             SectorWall(
                 k,
                 SingleMeshModel(
@@ -680,7 +671,6 @@ object WaterslideTubeMesh {
         )
     }
 
-    // dynamic water envelope model between two sections
     @JvmStatic
     fun waterModelFor(
         vertsA: List<Float>,
@@ -719,9 +709,7 @@ object WaterslideTubeMesh {
     ): Model {
         val nA = vertsA.size / 2
         val nB = vertsB.size / 2
-        // axial subdivisions between the two cross-sections
         val zSteps = 1
-        // ring vertices are source positions only, never mesh quad data
         val ringVerts = ArrayList<V>()
         val waterVerts = ArrayList<V>()
         val waterSprite = Minecraft.getInstance().getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
@@ -730,16 +718,13 @@ object WaterslideTubeMesh {
         val su1 = waterSprite.u1
         val sv0 = waterSprite.v0
         val sv1 = waterSprite.v1
-        // bed and surface arc span a third of the circle, U tiles match the arc
         val tiles = (2f * Math.PI.toFloat() * radius * (330f - 210f) / 360f).coerceAtLeast(0.5f)
 
         fun addVertex(u: Float, v: Float, z: Float, uTex: Float) {
             val r = kotlin.math.sqrt(u * u + v * v).coerceAtLeast(0.001f)
-            // up facing normals make pack reflection fall off like real water
             val nx = if (shaderUpNormals) 0f else u / r
             val ny = if (shaderUpNormals) 1f else v / r
             val nz = 0f
-            // clean attributes, sprite rect rides the instance
             ringVerts += V(
                 u, v, z,
                 1f, 1f, 1f, 1f,
@@ -749,7 +734,6 @@ object WaterslideTubeMesh {
             )
         }
 
-        // only the bottom bed arc and top surface arc are built
         val bottomRings = zSteps + 1
         for (s in 0..zSteps) {
             val z = s.toFloat() / (2f * zSteps)
@@ -764,7 +748,6 @@ object WaterslideTubeMesh {
                 addVertex(vertsB[i * 2], vertsB[i * 2 + 1], z, i.toFloat() / nB * tiles)
             }
         }
-        // bottom band: water bed arc between consecutive axial rings
         for (s in 0 until zSteps) {
             for (i in 0 until nA - 1) {
                 waterVerts += ringVerts[s * nA + i]
@@ -773,7 +756,6 @@ object WaterslideTubeMesh {
                 waterVerts += ringVerts[s * nA + i + 1]
             }
         }
-        // top band: water surface arc between consecutive axial rings
         for (s in 0 until zSteps) {
             for (i in 0 until nB - 1) {
                 waterVerts += ringVerts[topBase + s * nB + i]
@@ -785,15 +767,34 @@ object WaterslideTubeMesh {
         return SingleMeshModel(meshOf(waterVerts, "waterslide_tube_water"), material)
     }
 
-    // band ring vertices on the water grid, clipped to the bed arc range
     @JvmStatic
-    fun bandVertices(rInFrac: Float, rSurfFrac: Float, mirror: Boolean): List<Float> {
+    fun bandVertices(rInFrac: Float, rSurfFrac: Float, mirror: Boolean): List<Float> =
+        circularBandVertices(rInFrac, rSurfFrac, mirror)
+
+    @JvmStatic
+    fun bandVertices(rInFrac: Float, rSurfFrac: Float, mirror: Boolean, profile: FloatArray?): List<Float> {
+        val circle = circularBandVertices(rInFrac, rSurfFrac, mirror)
+        if (profile == null) return circle
+        val scaled = ArrayList<Float>(circle.size)
+        var i = 0
+        while (i < circle.size) {
+            val u = circle[i]
+            val v = circle[i + 1]
+            val angle = Math.toDegrees(kotlin.math.atan2(v.toDouble(), u.toDouble())).toFloat()
+            val m = SlideProfile.multiplierAt(profile, angle)
+            scaled += if (mirror) -u * m else u * m
+            scaled += v * m
+            i += 2
+        }
+        return scaled
+    }
+
+    private fun circularBandVertices(rInFrac: Float, rSurfFrac: Float, mirror: Boolean): List<Float> {
         val crossN = waterCrossSections()
         val degStep = 360f / crossN
         val gridAnchor = 90f
         val bandLo = 210f
         val bandHi = 330f
-        // collect the clipped grid angles inside the band, ascending
         val angles = ArrayList<Float>()
         val norm = { a: Float -> WaterslideSectorLayout.normalize(a) }
         for (k in 0 until crossN) {
@@ -810,7 +811,6 @@ object WaterslideTubeMesh {
                 angles += e
             }
         }
-        // normalize into the band range so the ring runs 210 -> 330 continuously
         val sorted = angles.map { a ->
             if (a < bandLo - 0.01f) a + 360f else a
         }.sorted()
@@ -835,7 +835,6 @@ object WaterslideTubeMesh {
 
     private fun meshOf(verts: List<V>, descriptor: String): Mesh {
         if (verts.isEmpty()) {
-// degenerate vertex
             val block = MemoryBlock.mallocTracked(36L)
             val empty = FullVertexView()
             empty.ptr(block.ptr())
@@ -885,7 +884,6 @@ object WaterslideTubeMesh {
         val block = BuiltInRegistries.BLOCK.get(blockId) ?: return null
         val state = block.defaultBlockState()
         val model = Minecraft.getInstance().blockRenderer.getBlockModel(state)
-        // copycat style: dominant face sprite of the material block
         val counts = java.util.HashMap<TextureAtlasSprite, Int>()
         val random = RandomSource.create()
         for (dir in listOf<Direction?>(null) + Direction.entries.toList()) {
@@ -898,11 +896,9 @@ object WaterslideTubeMesh {
         return model.getParticleIcon(ModelData.EMPTY)
     }
 
-    // glass family id split on the glass segment
     private fun isTranslucent(blockId: ResourceLocation): Boolean =
         blockId.path.split('_').any { it.contains("glass") }
 
-    // border ring width scanned from the native image, cached per sprite
     private val borderCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     private fun borderPxOf(sprite: TextureAtlasSprite): Int {
@@ -919,7 +915,6 @@ object WaterslideTubeMesh {
                 val rgba = cls.getMethod("getPixelRGBA", Int::class.java, Int::class.java)
                 fun alpha(x: Int, y: Int): Int =
                     ((rgba.invoke(img, x, y) as Int) ushr 24) and 0xFF
-                // per side minimum across every row and column
                 var left = Int.MAX_VALUE
                 var right = Int.MAX_VALUE
                 var top = Int.MAX_VALUE
@@ -947,7 +942,6 @@ object WaterslideTubeMesh {
         }
     }
 
-    /** Sprite rect (u0,u1,v0,v1) for a block id — used to feed the instance. */
     @JvmStatic
     fun spriteRectFor(blockId: String): FloatArray? {
         val rl = ResourceLocation.tryParse(blockId) ?: return null
@@ -955,7 +949,6 @@ object WaterslideTubeMesh {
         return floatArrayOf(s.u0, s.u1, s.v0, s.v1)
     }
 
-    /** Sprite rect (u0,u1,v0,v1) of the water texture. */
     @JvmStatic
     fun waterSpriteRect(): FloatArray {
         val s = Minecraft.getInstance().getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
@@ -963,9 +956,6 @@ object WaterslideTubeMesh {
         return floatArrayOf(s.u0, s.u1, s.v0, s.v1)
     }
 
-    // support structure, copycat style bracket shell and beam
-
-    // shell is double sided, beam culls back faces, both use the tile fragment path
     @JvmStatic
     val SUPPORT_SHADERS: MaterialShaders = SimpleMaterialShaders(
         ResourceLocation.fromNamespaceAndPath("create_waterparked", "material/support_material.vert"),
@@ -981,7 +971,6 @@ object WaterslideTubeMesh {
 
     @JvmStatic
     val SUPPORT_BEAM_MATERIAL: Material =
-        // single sided: winding keeps the outside front facing
         SimpleMaterial.builderOf(Materials.CUTOUT_MIPPED_BLOCK)
             .shaders(SUPPORT_SHADERS)
             .build()
@@ -989,7 +978,6 @@ object WaterslideTubeMesh {
     private val bracketCache = java.util.concurrent.ConcurrentHashMap<String, Model>()
     private val beamCache = java.util.concurrent.ConcurrentHashMap<String, Model>()
 
-    // resolve the particle sprite exactly like Create copycat blocks
     @JvmStatic
     fun supportSprite(material: BlockState): TextureAtlasSprite? =
         runCatching {
@@ -997,7 +985,6 @@ object WaterslideTubeMesh {
                 .getParticleIcon(ModelData.EMPTY)
         }.getOrNull()
 
-    // bridge style bracket, lower third arc band, CPU baked in instance space
     @JvmStatic
     fun supportBracketModelFor(
         frame: TubeSegmentFrame,
@@ -1018,6 +1005,8 @@ object WaterslideTubeMesh {
                 .append('|').append(frame.prevTangent).append('|').append(frame.currTangent)
                 .append('|').append(frame.prevLateral).append('|').append(frame.currLateral)
                 .append('|').append(frame.prevRadius).append('|').append(frame.currRadius)
+                .append('|').append(frame.prevProfile?.let { SlideProfile.contentSignature(it) } ?: "-")
+                .append('|').append(frame.currProfile?.let { SlideProfile.contentSignature(it) } ?: "-")
             for (s in config.sectors) {
                 append('|').append(s.id)
                     .append(',').append(s.material)
@@ -1073,8 +1062,6 @@ object WaterslideTubeMesh {
         val crossN = crossSections()
         val degStep = 360f / crossN
         val gridAnchor = 90f
-        // snapped to the polygon grid (nearest grid line) so the band edges
-        // coincide with the tube wall's facet edges
         val arcLo = bracketArcLo()
         val arcHi = bracketArcHi()
         val su0 = sprite.u0
@@ -1100,17 +1087,13 @@ object WaterslideTubeMesh {
         val c2 = frame.currSpine.subtract(frame.currTangent.scale(handle.toDouble()))
         val c3 = frame.currSpine
         val supportThickness = ModClientConfig.supportThickness()
-        // the tube wall is expanded outward to radius + (wallThickness - BASE_WALL),
-        // so the bracket must hug that REAL outer surface (not the centerline
-        // radius) plus a small epsilon — otherwise with the default 0.5 wall the
-        // whole shell is buried inside the pipe, and at 0.1 it is exactly coplanar
-        // with the wall and z-fights/flickers
         val wallOuter = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - BASE_WALL
-        // inner shell hugs the tube's OUTER wall exactly (radius = tube radius);
-        // the outer shell adds the configured thickness so the bracket reads as
-        // a solid saddle clamped around the tube instead of floating away from it
         val rBase0 = frame.prevRadius
         val rBase1 = frame.currRadius
+        fun sectionMult(profile: FloatArray?, angleDeg: Float): Float =
+            if (profile == null) 1f else SlideProfile.multiplierAt(profile, angleDeg)
+        fun angleDegOf(angleCos: Float, angleSin: Float): Float =
+            Math.toDegrees(kotlin.math.atan2(angleSin.toDouble(), angleCos.toDouble())).toFloat()
         val lat0 = frame.prevLateral
         val lat1 = frame.currLateral
         val tan0 = frame.prevTangent
@@ -1151,9 +1134,6 @@ object WaterslideTubeMesh {
                         val cm = cos(midA).toFloat()
                         val sm = sin(midA).toFloat()
 
-                        // per-corner world-space (instance-space) evaluation; radiusOffset is 0
-                        // for the wall-hugging inner shell and supportThickness
-                        // for the outer shell
                         fun cor(
                             angleCos: Float, angleSin: Float, tf: Float, radiusOffset: Float
                         ): Triple<Vec3, Vec3, Vec3> {
@@ -1171,38 +1151,38 @@ object WaterslideTubeMesh {
                             }
                             lat = bezierNormalize(lat)
                             val faceUp = bezierNormalize(tangent.cross(lat))
-                            val radius = Mth.lerp(t, rBase0, rBase1) + radiusOffset
+                            val angleDeg = angleDegOf(angleCos, angleSin)
+                            val shapeMult = Mth.lerp(
+                                tf,
+                                sectionMult(frame.prevProfile, angleDeg),
+                                sectionMult(frame.currProfile, angleDeg)
+                            )
+                            val radius = Mth.lerp(t, rBase0, rBase1) * shapeMult + radiusOffset
                             val pos = spine
                                 .add(lat.scale((angleCos * radius).toDouble()))
                                 .add(faceUp.scale((angleSin * radius).toDouble()))
                             return Triple(pos, lat, faceUp)
                         }
 
-                        // emit one shell layer (inner wall-hugging, then outer)
                         fun emitLayer(radiusOffset: Float) {
                             for (k in 0 until LENGTH_SUBDIVISIONS) {
                                 val tf0 = k / LENGTH_SUBDIVISIONS.toFloat()
                                 val tf1 = (k + 1) / LENGTH_SUBDIVISIONS.toFloat()
-                                // v = arc length in BLOCK units (tile count, not
-                                // pixels) so the colorwheel/pack path samples the
-                                // atlas with a repeating 0..1 coordinate; the
-                                // support fragment shader scales back by texH
                                 val vTile0 = bezierArcLengthTo(c0, c1, c2, c3, tStart + (tEnd - tStart) * tf0) - arcStart
                                 val vTile1 = bezierArcLengthTo(c0, c1, c2, c3, tStart + (tEnd - tStart) * tf1) - arcStart
                                 val (p00, lat00, up00) = cor(cA0, sA0, tf0, radiusOffset)
                                 val (p10, lat10, up10) = cor(cA1, sA1, tf0, radiusOffset)
                                 val (p11, _, _) = cor(cA1, sA1, tf1, radiusOffset)
                                 val (p01, _, _) = cor(cA0, sA0, tf1, radiusOffset)
-                                // radius at quad center for u pixel scale
                                 val tC = tStart + (tEnd - tStart) * (tf0 + tf1) * 0.5f
-                                val radiusC = Mth.lerp(tC, rBase0, rBase1) + radiusOffset
-                                // normal = angle-mid direction in the local frame
+                                val midMult = Mth.lerp(
+                                    (tf0 + tf1) * 0.5f,
+                                    sectionMult(frame.prevProfile, angleDegOf(cm, sm)),
+                                    sectionMult(frame.currProfile, angleDegOf(cm, sm))
+                                )
+                                val radiusC = Mth.lerp(tC, rBase0, rBase1) * midMult + radiusOffset
                                 val n0 = bezierNormalize(lat00.scale(cm.toDouble()).add(up00.scale(sm.toDouble())))
                                 val n1 = bezierNormalize(lat10.scale(cm.toDouble()).add(up10.scale(sm.toDouble())))
-                                // copycat-style full-tile mapping: each face
-                                // spans the whole sprite window (border inset,
-                                // same fold the walls/glass use), v repeats the
-                                // sprite every block along the tube
                                 val centerH = max(texH - 2f * border, 1f)
                                 val stripW = max(texW - 2f * border, 1f)
                                 fun stripU(local: Float): Float {
@@ -1214,8 +1194,6 @@ object WaterslideTubeMesh {
                                     val f = ((border + (px % centerH)) % texH) / texH
                                     return sv0 + f * (sv1 - sv0)
                                 }
-                                // clean attributes (white/opaque, fullbright light,
-                                // no overlay); sprite rect lives in the uv
                                 verts += V(
                                     p00.x.toFloat(), p00.y.toFloat(), p00.z.toFloat(),
                                     1f, 1f, 1f, 1f, stripU(0f), vAtlas(vTile0), 0, 0x00F000F0,
@@ -1239,7 +1217,6 @@ object WaterslideTubeMesh {
                             }
                         }
 
-                        // side panels closing the shell band
                         val sideRIn = wallOuter + SUPPORT_HUG_EPSILON
                         val sideROut = sideRIn + supportThickness
                         val sideCenterH = max(texH - 2f * border, 1f)
@@ -1257,7 +1234,6 @@ object WaterslideTubeMesh {
                             val a = Math.toRadians(angleDeg.toDouble())
                             val cA = cos(a).toFloat()
                             val sA = sin(a).toFloat()
-                            // tangential normal (side face looks along the arc)
                             val tA = a + Math.PI / 2.0
                             val ct = cos(tA).toFloat()
                             val st = sin(tA).toFloat()
@@ -1304,7 +1280,6 @@ object WaterslideTubeMesh {
                             }
                             lat = bezierNormalize(lat)
                             val up = bezierNormalize(tangent.cross(lat))
-                            // one panel per angular cell of the fragment
                             for (j2 in 0 until crossN) {
                                 val raw0 = gridAnchor + j2 * degStep
                                 val raw1 = gridAnchor + (j2 + 1) * degStep
@@ -1315,9 +1290,16 @@ object WaterslideTubeMesh {
                                 val a0 = Math.toRadians(cs0.toDouble())
                                 val a1 = Math.toRadians(ce1.toDouble())
                                 fun pt(ang: Double, rOffset: Float): Vec3 {
+                                    val angDeg = Math.toDegrees(ang).toFloat()
+                                    val shapeMult = Mth.lerp(
+                                        tf,
+                                        sectionMult(frame.prevProfile, angDeg),
+                                        sectionMult(frame.currProfile, angDeg)
+                                    )
+                                    val baseR = Mth.lerp(t, rBase0, rBase1) * shapeMult
                                     val pos = bezierPoint(c0, c1, c2, c3, t)
-                                        .add(lat.scale((cos(ang) * (Mth.lerp(t, rBase0, rBase1) + rOffset)).toDouble()))
-                                        .add(up.scale((sin(ang) * (Mth.lerp(t, rBase0, rBase1) + rOffset)).toDouble()))
+                                        .add(lat.scale((cos(ang) * (baseR + rOffset)).toDouble()))
+                                        .add(up.scale((sin(ang) * (baseR + rOffset)).toDouble()))
                                     return pos
                                 }
                                 val pA0 = pt(a0, sideRIn)
@@ -1325,7 +1307,6 @@ object WaterslideTubeMesh {
                                 val pB1 = pt(a1, sideROut)
                                 val pB0 = pt(a0, sideROut)
                                 val n = if (tf <= 0.001f) tangent.scale(-1.0) else tangent
-                                // u across the cell angle, v across the thickness
                                 val frac0 = (cs0 - s) / (e - s)
                                 val frac1 = (ce1 - s) / (e - s)
                                 fun cellU(frac: Float): Float =
@@ -1369,9 +1350,6 @@ object WaterslideTubeMesh {
                             sDeg: Float, eDeg: Float, loDeg: Float, hiDeg: Float,
                             cA0x: Float, sA0x: Float, cA1x: Float, sA1x: Float
                         ) {
-                            // angular end faces ONLY at the shell's true ends:
-                            // the support-range edges or where the neighbour is
-                            // open/none - never at internal sector boundaries
                             val panelStart = sDeg <= arcLo + 0.001f ||
                                 materialNear(sDeg - 1.5f) == SectorMaterial.OPEN ||
                                 materialNear(sDeg - 1.5f) == null
@@ -1380,12 +1358,9 @@ object WaterslideTubeMesh {
                                 materialNear(eDeg + 1.5f) == null
                             if (panelStart) angularSidePanel(sDeg)
                             if (panelEnd) angularSidePanel(eDeg)
-                            // axial cross-section faces at both band ends
                             axialSidePanel(0f)
                             axialSidePanel(1f)
                         }
-                        // shell band: inner (tube-hugging) + outer layers FIRST,
-                        // then the side panels close the ends
                         emitLayer(wallOuter + SUPPORT_HUG_EPSILON)
                         if (supportThickness > 0.001f) {
                             emitLayer(wallOuter + SUPPORT_HUG_EPSILON + supportThickness)
@@ -1398,7 +1373,6 @@ object WaterslideTubeMesh {
         return SingleMeshModel(meshOf(verts, "waterslide_tube_support_bracket"), SUPPORT_SHELL_MATERIAL)
     }
 
-    // support beam model, square column in instance space, 4px strip UVs
     @JvmStatic
     fun supportBeamModelFor(
         base: Vec3,
@@ -1420,12 +1394,7 @@ object WaterslideTubeMesh {
         return beamCache.getOrPut(key) { buildBeam(base, axisN, len, sprite, topOffsets, bottomOffsets) }
     }
 
-    // must match the basis used by beamTopOffsets/beamBottomOffsets (same ref)
     private fun orthonormalBasis(axis: Vec3): Pair<Vec3, Vec3> {
-        // MUST match the basis used by beamTopOffsets/beamBottomOffsets in
-        // WaterslideTubeVisual (same ref): a mismatch makes the per-corner
-        // top/bottom offsets land on the WRONG corners of each face, so the
-        // four sides tile at different densities
         val ref = if (abs(axis.y) < 0.9f) Vec3(0.0, 1.0, 0.0) else Vec3(1.0, 0.0, 0.0)
         var n1 = bezierNormalize(ref.cross(axis))
         if (n1.lengthSqr() < 1.0E-8) n1 = Vec3(1.0, 0.0, 0.0)
@@ -1451,7 +1420,6 @@ object WaterslideTubeMesh {
         val (n1, n2) = orthonormalBasis(axisN)
 
         fun side(n: Vec3, w: Vec3) {
-            // quadrant index from the corner coordinates
             fun quadrant(wSign: Float): Int {
                 val n1c = (n.dot(n1) + w.dot(n1) * wSign) * half
                 val n2c = (n.dot(n2) + w.dot(n2) * wSign) * half
@@ -1467,7 +1435,6 @@ object WaterslideTubeMesh {
             fun pt(ws: Float, ts: Float, drop: Float): Vec3 =
                 base.add(n.scale(half.toDouble())).add(w.scale(ws.toDouble()))
                     .add(axisN.scale(ts.toDouble())).add(0.0, -drop.toDouble(), 0.0)
-            // bottom corners drop straight down onto the anchor top face
             val c0 = pt(-half, 0f, bottomOff(-1f))
             val c1 = pt(half, 0f, bottomOff(1f))
             val c2 = pt(half, len + topOff(1f), 0f)
@@ -1479,8 +1446,6 @@ object WaterslideTubeMesh {
             val tMin = min(vLo0, vLo1)
             val tMax = max(vHi0, vHi1)
             val totalBlocks = tMax - tMin
-            // one quad per block: the tiling element, linear uv inside each
-            // quad so the texture repeats per block and never reverses
             fun uV(v: Float): Float = su0 + v * (su1 - su0)
             fun vV(v: Float): Float = sv0 + v * (sv1 - sv0)
             fun vx(v: Vec3, u: Float, vv: Float): V =
@@ -1495,7 +1460,6 @@ object WaterslideTubeMesh {
                 val fa = tMin + k
                 val fb = min(fa + 1f, tMax)
                 val span = fb - fa
-                // lerp c0->c3 / c1->c2 across the edge run
                 fun edgePos(left: Boolean, fv: Float): Vec3 {
                     val a = if (left) c0 else c1
                     val b = if (left) c3 else c2
@@ -1515,12 +1479,10 @@ object WaterslideTubeMesh {
             }
         }
 
-        // four side faces, width runs along minus the normal to stay front facing
         side(n1, n2.scale(-1.0))
         side(n1.scale(-1.0), n2)
         side(n2, n1)
         side(n2.scale(-1.0), n1.scale(-1.0))
-        // no end caps, both ends sit inside other geometry
 
         return SingleMeshModel(meshOf(verts, "waterslide_tube_support_beam"), SUPPORT_BEAM_MATERIAL)
     }

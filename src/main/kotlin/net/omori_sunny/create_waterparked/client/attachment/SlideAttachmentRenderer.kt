@@ -33,7 +33,6 @@ object SlideAttachmentRenderer {
         clipCaches.clear()
     }
 
-    // a Ponder level and a live world can share a block pos
     private class ClipKey(val level: net.minecraft.world.level.Level, val pos: BlockPos) {
         override fun equals(other: Any?): Boolean =
             other is ClipKey && other.level === level && other.pos == pos
@@ -81,7 +80,6 @@ object SlideAttachmentRenderer {
             .createCompositeState(true)
     )
 
-    // origin is world space
     fun renderAll(poseStack: PoseStack, buffers: MultiBufferSource, origin: Vec3, partialTick: Float) {
         for (be in SlideAttachmentClientIndex.all()) {
             if (be.isRemoved) continue
@@ -149,6 +147,11 @@ object SlideAttachmentRenderer {
                         .GrabBarAttachment.TAG_HEIGHT
                 )).append('|')
                 .append(ctx.radius).append('|').append(ctx.wallThickness).append('|')
+                .append(
+                    ctx.sectionRadii?.let {
+                        net.omori_sunny.create_waterparked.game.SlideProfile.contentSignature(it)
+                    } ?: "-"
+                ).append('|')
                 .append(be.attachmentMaterial).append('|').append(polys.size)
                 .append('|').append(editing)
         }
@@ -204,7 +207,6 @@ object SlideAttachmentRenderer {
     private val tiledRenderTypes =
         HashMap<net.minecraft.resources.ResourceLocation, RenderType>()
 
-    // standalone repeating texture, so a uv past 1 tiles instead of clamping to the sprite edge
     private fun tiledRenderType(texture: net.minecraft.resources.ResourceLocation): RenderType =
         tiledRenderTypes.getOrPut(texture) {
             RenderType.create(
@@ -231,19 +233,48 @@ object SlideAttachmentRenderer {
     ): net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.Solid? {
         val (lat, up, tan) = SlideAttachmentGeometry.basis(ctx)
         val outer = ctx.radius + ctx.wallThickness - 0.1f
-        val inner = (ctx.radius - 0.1f).coerceAtLeast(0.05f)
-        val center = ctx.position.subtract(ctx.radialOut.scale(outer.toDouble()))
         val sides = net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh.crossSections()
-        val ring = (0 until sides).map { k ->
-            val a = Math.toRadians(90.0 + 360.0 * k / sides)
-            center.add(lat.scale(inner * kotlin.math.cos(a)))
-                .add(up.scale(inner * kotlin.math.sin(a)))
+        val center = ctx.position.subtract(ctx.radialOut.scale(outer.toDouble()))
+        val ring2d = (0 until sides).map { k ->
+            val angleDeg = (90.0 + 360.0 * k / sides).toFloat()
+            val inner = (ctx.baseRadius * ctx.sectionMultAt(angleDeg) - 0.1f).coerceAtLeast(0.05f)
+            val a = Math.toRadians(angleDeg.toDouble())
+            (inner * kotlin.math.cos(a)) to (inner * kotlin.math.sin(a))
+        }
+        val ring = convexHull2d(ring2d).map { (x, y) ->
+            center.add(lat.scale(x)).add(up.scale(y))
         }
         val ring0 = ring.map { it.subtract(tan.scale(2.0)) }
         val ring1 = ring.map { it.add(tan.scale(2.0)) }
         val c0 = ring0.first()
         val c1 = ring1.first()
         return net.omori_sunny.create_waterparked.client.render.WaterslideGhostCsg.prismSolid(ring0, ring1, c0, c1)
+    }
+
+    private fun convexHull2d(points: List<Pair<Double, Double>>): List<Pair<Double, Double>> {
+        if (points.size < 3) return points
+        val pts = points.sortedWith(compareBy({ it.first }, { it.second }))
+        fun cross(
+            o: Pair<Double, Double>, a: Pair<Double, Double>, b: Pair<Double, Double>
+        ): Double = (a.first - o.first) * (b.second - o.second) - (a.second - o.second) * (b.first - o.first)
+        val lower = ArrayList<Pair<Double, Double>>()
+        for (p in pts) {
+            while (lower.size >= 2 && cross(lower[lower.size - 2], lower[lower.size - 1], p) <= 1.0E-9) {
+                lower.removeAt(lower.size - 1)
+            }
+            lower.add(p)
+        }
+        val upper = ArrayList<Pair<Double, Double>>()
+        for (i in pts.indices.reversed()) {
+            val p = pts[i]
+            while (upper.size >= 2 && cross(upper[upper.size - 2], upper[upper.size - 1], p) <= 1.0E-9) {
+                upper.removeAt(upper.size - 1)
+            }
+            upper.add(p)
+        }
+        lower.removeAt(lower.size - 1)
+        upper.removeAt(upper.size - 1)
+        return lower + upper
     }
 
     private fun innerHalfSpaceSlabs(
@@ -325,7 +356,6 @@ object SlideAttachmentRenderer {
         )
     }
 
-    // shared emitter, uv already resolved to whatever space the layer samples
     private fun emitQuad(
         q: SlideAttachmentModelProvider.Quad,
         u0: Float, v0: Float, u1: Float, v1: Float,
@@ -407,7 +437,6 @@ object SlideAttachmentRenderer {
             .setOverlay(c.overlay).setLight(c.light).setNormal(pose, c.nx, c.ny, c.nz)
     }
 
-    // plot space to render space
     fun renderTransform(
         level: net.minecraft.world.level.Level,
         anchor: BlockPos
@@ -425,7 +454,6 @@ object SlideAttachmentRenderer {
         )
     }
 
-    // local origin is the attachment wall point
     private fun localToWorld(
         ctx: SlideAttachmentModelContext,
         x: Double, y: Double, z: Double
@@ -581,7 +609,6 @@ object SlideAttachmentRenderer {
 
     private fun lengthOf(v: DoubleArray): Double = len(v)
 
-    // f spans the inner strip, the border ring is never sampled
     private fun borderU(sprite: TextureAtlasSprite, f: Float): Float {
         val texW = sprite.contents().width().toFloat()
         val border = net.omori_sunny.create_waterparked.config.ModConfig.sectorBorderPx().toFloat()

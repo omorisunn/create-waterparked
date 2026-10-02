@@ -13,6 +13,7 @@ import net.omori_sunny.create_waterparked.content.registry.ModDataComponents
 import net.omori_sunny.create_waterparked.content.registry.ModDisplaySources
 import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
 import net.omori_sunny.create_waterparked.content.registry.ModItems
+import net.omori_sunny.create_waterparked.content.registry.ModMenus
 import net.omori_sunny.create_waterparked.content.registry.ModParticles
 import net.omori_sunny.create_waterparked.content.registry.ModSounds
 import net.omori_sunny.create_waterparked.content.registry.CoasterCreativeTabIntegration
@@ -55,6 +56,7 @@ object CreateWaterparked {
         ModEntityTypes.REGISTRY.register(MOD_BUS)
         ModRecipeSerializers.REGISTRY.register(MOD_BUS)
         ModDataComponents.REGISTRY.register(MOD_BUS)
+        ModMenus.REGISTRY.register(MOD_BUS)
         ModSounds.REGISTRY.register(MOD_BUS)
         ModParticles.REGISTRY.register(MOD_BUS)
         MOD_BUS.addListener(CoasterCreativeTabIntegration::onBuildCreativeModeTabContents)
@@ -69,6 +71,9 @@ object CreateWaterparked {
         NeoForge.EVENT_BUS.addListener(
             net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentManager::onServerTick
         )
+        NeoForge.EVENT_BUS.addListener { event: net.neoforged.neoforge.event.server.ServerStoppedEvent ->
+            net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentManager.clear()
+        }
         NeoForge.EVENT_BUS.addListener(net.omori_sunny.create_waterparked.content.roller.RollerDeckGuard::onBreak)
         net.omori_sunny.create_waterparked.content.roller.RollerLegacyAdoption.register()
         NeoForge.EVENT_BUS.addListener(WaterslideSupportInteraction::onPlayerLoggedOut)
@@ -119,7 +124,6 @@ object CreateWaterparked {
         WaterparkedCommands.register()
     }
 
-    // impact is per rpm; run once the blocks are registered
     private fun registerStressValues() {
         for (type in SlideAttachmentTypes.all()) {
             if (type.stressImpact <= 0.0 && type.stressImpactSupplier == null) continue

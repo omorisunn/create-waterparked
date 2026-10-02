@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "building",
+  "ingredients": [
+    {
+      "item": "minecraft:cartography_table"
+    },
+    {
+      "item": "create_waterparked:slide_sketch"
+    }
+  ],
+  "result": {
+    "count": 1,
+    "id": "create_waterparked:slide_drafting_table"
+  }
+}
