@@ -16,6 +16,7 @@ import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeInstance
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeInstanceType
 import net.omori_sunny.create_waterparked.client.flywheel.WaterslideTubeMesh
 import net.omori_sunny.create_waterparked.config.ModClientConfig
+import net.omori_sunny.create_waterparked.game.SlideProfile
 import net.omori_sunny.create_waterparked.config.ModConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorConfig
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
@@ -29,7 +30,6 @@ class WaterslideContraptionTubeVisual(
 
     private companion object {
         const val WALL_THICKNESS = 0.1f
-        // fixed cross section fractions, band stays inside the inner wall
         const val WATER_IN_FRAC = 0.85f
         const val WATER_SURF_FRAC = 0.8f
         const val WATER_COLOR_R = 0.3f
@@ -57,7 +57,6 @@ class WaterslideContraptionTubeVisual(
             ModConfig.defaultSlideRadius()
         }
 
-        // sector configs, peer to config
         val sectorConfigs = HashMap<BlockPos, WaterslideSectorConfig>()
         if (tag.contains("SectorConfigs", Tag.TAG_LIST.toInt())) {
             for (entry in tag.getList("SectorConfigs", Tag.TAG_COMPOUND.toInt())) {
@@ -68,7 +67,6 @@ class WaterslideContraptionTubeVisual(
             }
         }
 
-        // watered curves, peer to watered flag
         val wateredPeers = HashSet<BlockPos>()
         if (tag.contains("WateredCurves", Tag.TAG_LIST.toInt())) {
             for (entry in tag.getList("WateredCurves", Tag.TAG_COMPOUND.toInt())) {
@@ -80,7 +78,6 @@ class WaterslideContraptionTubeVisual(
             }
         }
 
-        // rebuild curves with localTo the captured anchor world position
         val out = ArrayList<MountedTubeCurve>()
         if (!tag.contains("AnchorPeerCurves", Tag.TAG_LIST.toInt())) return out
         for (entry in tag.getList("AnchorPeerCurves", Tag.TAG_COMPOUND.toInt())) {
@@ -91,10 +88,8 @@ class WaterslideContraptionTubeVisual(
             val raw = try {
                 BezierConnection(bezierTag, movementContext.localPos)
             } catch (e: Throwable) {
-                // a malformed curve should never crash the whole contraption
                 continue
             }
-            // only the primary host renders, dedupes the reciprocal copy
             if (!raw.isPrimary) continue
             if (!WaterslideTrackMaterials.isWaterslide(raw)) continue
             val config = sectorConfigs[peer] ?: WaterslideSectorConfig.defaultConfig()
@@ -103,7 +98,6 @@ class WaterslideContraptionTubeVisual(
         return out
     }
 
-    // packed light from the virtual render world
     private fun packedLight(pos: Vec3): Int {
         val bp = BlockPos.containing(pos)
         val block = simulationWorld.getBrightness(LightLayer.BLOCK, bp).coerceIn(0, 15)
@@ -111,12 +105,10 @@ class WaterslideContraptionTubeVisual(
         return LightTexture.pack(block, sky)
     }
 
-    // static water, no flow phases in the captured NBT
     override fun beginFrame() {
     }
 
     override fun update(partialTicks: Float) {
-        // re check a late water field sync so the tube can start flowing
         if (++refreshCounter % 10 == 0) {
             for (curve in curves) curve.rebuildWaterIfNeeded()
         }
@@ -137,13 +129,13 @@ class WaterslideContraptionTubeVisual(
         val radius: Float,
         val watered: Boolean
     ) {
-        // this anchor radius for both ends, no live peer to read from
         private val frames: List<WaterslideTubeMesh.TubeSegmentFrame> =
-            WaterslideTubeMesh.sampleSegments(curve, radius, radius, Vec3.ZERO)
+            WaterslideTubeMesh.sampleSegments(
+                this@WaterslideContraptionTubeVisual.moveCtx.world, curve, radius, radius, Vec3.ZERO
+            )
 
         private val models = WaterslideTubeMesh.modelsFor(config, radius)
 
-        // server synced water field, flows even when the captured NBT was empty
         private val waterField: net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation.CurveWater? =
             try {
                 net.omori_sunny.create_waterparked.client.water.WaterFlowSimulation.fieldFor(
@@ -154,14 +146,12 @@ class WaterslideContraptionTubeVisual(
                 null
             }
 
-        // cumulative arc length per frame for shared UV at boundary rings
         private val prefixArcs: FloatArray = FloatArray(frames.size + 1).also { arcs ->
             for (i in frames.indices) {
                 arcs[i + 1] = arcs[i] + WaterslideTubeMesh.arcLength(frames[i])
             }
         }
 
-        // packed light cache (wall + water share the same frame midpoints)
         private val lights: IntArray = IntArray(frames.size) { i ->
             val f = frames[i]
             packedLight(f.prevSpine.add(f.currSpine).scale(0.5))
@@ -177,7 +167,6 @@ class WaterslideContraptionTubeVisual(
             rebuildWaterIfNeeded()
         }
 
-        // builds the water band lazily, water field sync can lag creation
         fun rebuildWaterIfNeeded() {
             val crossSections = WaterslideTubeMesh.waterCrossSections()
             if (waterBuilt && crossSections == builtWaterCrossSections) return
@@ -200,27 +189,39 @@ class WaterslideContraptionTubeVisual(
         }
 
         private fun buildWall() {
-            val wallInstancer = instancerProvider.instancer(
-                WaterslideTubeInstanceType.INSTANCE, models.wall
-            )
-            for ((i, f) in frames.withIndex()) {
-                val wall = wallInstancer.createInstance()
-                wall.setSegment(
-                    f.prevSpine, f.currSpine,
-                    f.prevTangent, f.currTangent,
-                    f.prevLateral, f.currLateral,
-                    f.prevRadius, f.currRadius
+            val groups = LinkedHashMap<String, MutableList<Int>>()
+            for (i in frames.indices) {
+                val p = frames[i].midProfile
+                groups.getOrPut(if (p == null) "circle" else SlideProfile.contentSignature(p)) { mutableListOf() }.add(i)
+            }
+            for (idxs in groups.values) {
+                val shape = frames[idxs[0]].midProfile
+                val groupModels = if (shape == null) models
+                else WaterslideTubeMesh.modelsFor(config, radius, shape)
+                val wallInstancer = instancerProvider.instancer(
+                    WaterslideTubeInstanceType.INSTANCE, groupModels.wall
                 )
-                wall.light(lights[i])
-                wall.setChanged()
-                wall.wallThickness = WALL_THICKNESS
-                wall.mirror = 1f
-                wallInstances += wall
+                for (i in idxs) {
+                    val f = frames[i]
+                    val wall = wallInstancer.createInstance()
+                    wall.setSegment(
+                        f.prevSpine, f.currSpine,
+                        f.prevTangent, f.currTangent,
+                        f.prevLateral, f.currLateral,
+                        f.prevRadius, f.currRadius
+                    )
+                    wall.light(lights[i])
+                    wall.setChanged()
+                    wall.wallThickness = WALL_THICKNESS
+                    wall.mirror = 1f
+                    wallInstances += wall
+                }
             }
         }
 
         private fun buildWater() {
-            val verts = WaterslideTubeMesh.bandVertices(WATER_IN_FRAC, WATER_SURF_FRAC, false)
+            val midSection = frames.getOrNull(frames.size / 2)?.midProfile
+            val verts = WaterslideTubeMesh.bandVertices(WATER_IN_FRAC, WATER_SURF_FRAC, false, midSection)
             val half = verts.size / 2
             val waterModel = WaterslideTubeMesh.waterModelFor(
                 verts.subList(0, half), verts.subList(half, verts.size), radius
@@ -228,7 +229,6 @@ class WaterslideContraptionTubeVisual(
             val waterInstancer = instancerProvider.instancer(
                 WaterslideTubeInstanceType.INSTANCE, waterModel
             )
-            // average flow speed from the server synced field, drives the scroll
             val avgFlow = waterField?.let { f ->
                 if (f.segments.isEmpty()) 0f
                 else (f.segments.sumOf { it.speed.toDouble() } / f.segments.size.toDouble()).toFloat()
@@ -242,7 +242,6 @@ class WaterslideContraptionTubeVisual(
                     f.prevRadius, f.currRadius
                 )
                 w.light(lights[i])
-                // iterationRP light blue albedo, keeps the background readable
                 if (IrisColorwheelCompat.waterUvAtlasMode()) {
                     w.color(0.86f, 0.92f, 1f, WATER_COLOR_A)
                 } else {
@@ -252,13 +251,11 @@ class WaterslideContraptionTubeVisual(
                 w.mirror = 1f
                 w.arcBase = prefixArcs[i]
                 w.flowSign = if (avgFlow >= 0f) -1f else 1f
-                // flowing water driven by the contraption internal water sim
                 val flow = avgFlow / 40f
                 w.flowStart = flow
                 w.flowEnd = flow
                 w.flowUpstream = flow
                 w.downstreamMix = 1f
-                // iterationRP shades water through its own path, keep it static there
                 w.jitterScale = if (IrisColorwheelCompat.iterationRpWaterMode()) 0f
                     else ModClientConfig.waterJitterScale()
                 w.jitterFrequency = ModClientConfig.waterJitterFrequency()

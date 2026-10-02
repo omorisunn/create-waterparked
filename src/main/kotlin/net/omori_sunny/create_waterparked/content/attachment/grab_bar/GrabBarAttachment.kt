@@ -32,6 +32,7 @@ import net.omori_sunny.create_waterparked.content.attachment.detector.DetectorAt
 import net.omori_sunny.create_waterparked.content.attachment.door.MechanicalDoorAttachment
 import net.omori_sunny.create_waterparked.content.registry.ModEntityTypes
 import net.omori_sunny.create_waterparked.content.sit.SlideSitEntity
+import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
 import net.omori_sunny.create_waterparked.game.physics.GrabBarTrajectoryBuilder
 import net.omori_sunny.create_waterparked.game.physics.MainSlideSpaceAccess
 import net.omori_sunny.create_waterparked.game.physics.PhysicsSlideTrajectoryBuilder
@@ -76,10 +77,7 @@ class GrabBarAttachment(
         private const val PROGRESS_NONE = -1f
         private const val PROGRESS_LAUNCH = -2f
 
-        // vanilla player arm: the hand sits 10 px from the shoulder pivot, the model is drawn at
-        // 15/16 scale, so the reach is 0.9375 * 10/16 blocks
         private const val ARM_REACH = 0.586
-        // shoulder pivot 2 px below the model top: 0.9375 * (1.501 - 2/16) blocks above the feet
         private const val SHOULDER_HEIGHT = 1.29
         private const val LEAN_PRESS = 0.15
         private const val MIN_ARM_SPAN = 0.05
@@ -91,7 +89,6 @@ class GrabBarAttachment(
         private val holdsByEntity = HashMap<UUID, Hold>()
         private val releaseCooldown = HashMap<UUID, Long>()
 
-        // data keys that move on their own and never describe the tube
         private val RUNTIME_DATA_KEYS = setOf(
             TAG_GRABS,
             DetectorAttachment.TAG_COUNT,
@@ -108,7 +105,6 @@ class GrabBarAttachment(
 
         fun grabs(data: CompoundTag): Int = data.getInt(TAG_GRABS)
 
-        // automatic entry is blocked at this bar's own mouth only
         fun blocksEntry(
             level: ServerLevel,
             access: SlideSpaceAccess,
@@ -135,7 +131,6 @@ class GrabBarAttachment(
             return false
         }
 
-        // a bar that is gone would leave its player riding an unpositioned seat forever
         fun releaseStale(level: ServerLevel) {
             val cooldowns = releaseCooldown.entries.iterator()
             while (cooldowns.hasNext()) {
@@ -159,7 +154,6 @@ class GrabBarAttachment(
             }
         }
 
-        // the hanging client owns its key state, the mounted vanilla input path only ever sees a snapshot
         fun onClientInput(player: ServerPlayer, forward: Boolean, backward: Boolean) {
             val hold = holdsByEntity[player.uuid] ?: return
             hold.forwardFlag = forward
@@ -168,7 +162,6 @@ class GrabBarAttachment(
             hold.flagSeen = true
         }
 
-        // edge triggered so a player standing in range cannot flood the log
         private fun logRefusal(player: ServerPlayer, reason: String) {
             if (refusalReasons.put(player.uuid, reason) == reason) return
             CreateWaterparked.LOGGER.info("[GrabBar] {} not grabbed: {}", player.uuid, reason)
@@ -181,7 +174,6 @@ class GrabBarAttachment(
         private fun holdKey(level: ServerLevel, pos: BlockPos): String =
             level.dimension().location().toString() + "|" + pos.asLong()
 
-        // the launch keeps the client pose alive so it can ease into the seated ride
         private fun notifyLaunch(entity: Entity) {
             PacketDistributor.sendToPlayersTrackingEntityAndSelf(
                 entity,
@@ -220,7 +212,6 @@ class GrabBarAttachment(
             level === this.level && !player.isRemoved && player.isAlive &&
                 !sit.isRemoved && player.vehicle === sit
 
-        // never touches a mount that is not this hold's own seat
         fun release(push: Boolean) {
             holdsByBar.remove(holdKey(level, barPos))
             holdsByEntity.remove(player.uuid)
@@ -264,7 +255,6 @@ class GrabBarAttachment(
     private var buildingSignature: String? = null
     private var frameTick = -SCAN_INTERVAL_TICKS
 
-    // the worker only warms the shared caches, its own result is never ridden
     fun workerFinished(signature: String) {
         if (buildingSignature == signature) buildingSignature = null
     }
@@ -282,7 +272,6 @@ class GrabBarAttachment(
             tickHold(level, sab, frame, held)
             return
         }
-        // a bar destroyed or unloaded mid hold must not keep its redstone on
         if (sab.blockState.getValue(SlideAttachmentBlock.POWERED)) setPowered(level, sab, false)
         if (level.gameTime - frameTick < SCAN_INTERVAL_TICKS) return
         frameTick = level.gameTime
@@ -298,11 +287,11 @@ class GrabBarAttachment(
         val access = accessFor(level, SlideSpace.ofLevelAndSub(level, entry.curveA)) ?: return null
         val ctx = resolved.context
         val (lateral, up, _) = SlideAttachmentGeometry.basis(ctx)
-        val inner = (ctx.radius - 0.1f).coerceAtLeast(0.05f).toDouble()
+        val bottomDeg = SlideCurveGeometry.bottomAngleDegrees(lateral, up)
+        val inner = (ctx.baseRadius * ctx.sectionMultAt(bottomDeg) - 0.1f).coerceAtLeast(0.05f).toDouble()
         val outer = (ctx.radius + ctx.wallThickness - 0.1).toDouble()
         val spine = ctx.position.subtract(ctx.radialOut.scale(outer))
         val barCentre = spine.add(up.scale(height(entry.data).toDouble()))
-        // the bar sits on its own mouth, so the projection must stay in that half
         val towardSecond = entry.t < 0.5f
         val projected = projectOntoCurve(resolved.curve, barCentre)
         val t = if (towardSecond) projected.coerceIn(0.0, 0.5) else projected.coerceIn(0.5, 1.0)
@@ -317,7 +306,6 @@ class GrabBarAttachment(
         val inward = if (towardSecond) tangent else tangent.scale(-1.0)
         val outDir = inward.scale(-1.0)
         val startT = if (t < ENDPOINT_EPS || t > 1.0 - ENDPOINT_EPS) null else t.toFloat()
-        // the grip is the bar the provider draws: the axis point lifted to the control height
         val grip = startPos.add(up.scale(height(entry.data).toDouble()))
         val seated = height(entry.data) < -SEAT_HEIGHT_RATIO * inner
         return Frame(
@@ -339,7 +327,6 @@ class GrabBarAttachment(
         is SlideSpace.Contraption -> null
     }
 
-    // the hands stay on the grip, so the body rides the arm reach sphere around it
     private fun reach(frame: Frame, progress: Double): Reach {
         val horizontalOut = Vec3(frame.outWorld.x, 0.0, frame.outWorld.z)
         val out = if (horizontalOut.lengthSqr() < 1.0E-6) frame.outWorld else horizontalOut.normalize()
@@ -450,7 +437,6 @@ class GrabBarAttachment(
         hold: Hold
     ) {
         val player = hold.player
-        // the client flags win while they keep arriving, zza is only the fallback for a silent client
         val live = hold.flagSeen && level.gameTime - hold.flagTick <= INPUT_TIMEOUT_TICKS
         val forward = if (live) hold.forwardFlag else player.zza > 0f
         val backward = if (live) hold.backwardFlag else player.zza < 0f
@@ -536,7 +522,6 @@ class GrabBarAttachment(
         return BodyPose(width, dims.height.toDouble(), width / 2.0)
     }
 
-    // the client mirrors the pin every tick, so its target can never drift off the bar
     private fun sendHold(frame: Frame, hold: Hold) {
         val solved = reach(frame, hold.progress)
         val world = frame.access.toWorld(solved.feet)
@@ -556,7 +541,6 @@ class GrabBarAttachment(
         level.setBlockAndUpdate(sab.blockPos, sab.blockState.setValue(SlideAttachmentBlock.POWERED, powered))
     }
 
-    // optional off thread warm up: the launch never waits for it
     private fun requestTrajectory(
         level: ServerLevel,
         sab: SlideAttachmentBlockEntity,
@@ -587,7 +571,6 @@ class GrabBarAttachment(
         }
     }
 
-    // everything a rebuild depends on: the walked tube, the sectors and the attachments on it
     private fun signatureOf(level: ServerLevel, frame: Frame, pose: BodyPose): String {
         val tube = PhysicsSlideTrajectoryBuilder.tubeDigest(
             frame.access, frame.curve, frame.towardSecond, frame.startT

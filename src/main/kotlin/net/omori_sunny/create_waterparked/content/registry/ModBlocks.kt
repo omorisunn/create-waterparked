@@ -16,10 +16,6 @@ import thedarkcolour.kotlinforforge.neoforge.forge.getValue
 object ModBlocks {
     val REGISTRY: DeferredRegister.Blocks = DeferredRegister.createBlocks(CreateWaterparked.ID)
 
-    // slide curve block (named separately from the track ITEM: Ponder's scene
-    // registry keys scenes by raw ResourceLocation, so a block and an item with
-    // the same name would collide and the train-track storyboards would attach
-    // to our item - same naming style Coasters Simulated uses)
     val WATERSLIDE_TRACK: WaterslideTrackBlock by REGISTRY.register("waterslide_track_block") { ->
         WaterslideTrackBlock(
             BlockBehaviour.Properties.of()
@@ -32,12 +28,17 @@ object ModBlocks {
         )
     }
 
-    // slide anchor
     val WATERSLIDE_ANCHOR: WaterslideAnchorBlock by REGISTRY.register("waterslide_anchor") { ->
         WaterslideAnchorBlock(WaterslideAnchorBlock.defaultProperties())
     }
 
-    // extended CCS rivet for slide tube walls (sub-level placed, curve bound)
+    val SLIDE_DRAFTING_TABLE: net.omori_sunny.create_waterparked.content.sketch.SlideDraftingTableBlock by
+        REGISTRY.register("slide_drafting_table") { ->
+            net.omori_sunny.create_waterparked.content.sketch.SlideDraftingTableBlock(
+                net.omori_sunny.create_waterparked.content.sketch.SlideDraftingTableBlock.defaultProperties()
+            )
+        }
+
     val WATERSLIDE_RIVET: net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetBlock by
     REGISTRY.register("waterslide_rivet") { ->
         net.omori_sunny.create_waterparked.content.waterslide.WaterslideRivetBlock(
@@ -45,12 +46,10 @@ object ModBlocks {
         )
     }
 
-    // spike route A: subclass of Create's belt block
     val ROLLER_CONVEYOR: RollerConveyorBlock by REGISTRY.register("roller_conveyor") { ->
         RollerConveyorBlock(RollerConveyorBlock.defaultProperties())
     }
 
-    // the drive a hinged run leaves in the world at its pivot
     val ROLLER_HINGE_SHAFT: RollerWorldShaftBlock by REGISTRY.register("roller_hinge_shaft") { ->
         RollerWorldShaftBlock(RollerWorldShaftBlock.defaultProperties())
     }

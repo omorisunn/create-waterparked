@@ -11,6 +11,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlo
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.game.SlideAnchorIndex
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.SlideProfile
 import net.omori_sunny.create_waterparked.game.physics.MainSlideSpaceAccess
 import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import net.omori_sunny.create_waterparked.game.physics.SlideSpaceAccess
@@ -39,7 +40,7 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-// Server-side water shape from point-mass trajectories.
+// water shape from point-mass trajectories
 object ServerWaterSimulation {
 
     private const val ZERO_EPS = 1.0E-12
@@ -52,7 +53,6 @@ object ServerWaterSimulation {
 
     private val DEBUG = CreateWaterparked.LOGGER.isDebugEnabled
 
-    // one watered sub-segment of a curve
     data class WaterSegment(
         val arc: Float,
         val speed: Float
@@ -71,8 +71,15 @@ object ServerWaterSimulation {
         val arcStart: Float,
         val len: Float,
         val lat: Vec3,
-        val up: Vec3
-    )
+        val up: Vec3,
+        val profile: FloatArray? = null
+    ) {
+        fun innerAt(angleDeg: Float): Double =
+            if (profile == null) rIn.toDouble()
+            else (rIn * SlideProfile.multiplierAt(profile, angleDeg).toDouble()).coerceAtLeast(0.02)
+
+        val outerBound: Float = maxOf(rOut, rIn * (profile?.max() ?: 1f))
+    }
 
     private data class LegStart(
         val center: Vec3,
@@ -97,7 +104,6 @@ object ServerWaterSimulation {
             count++
         }
 
-        // average particle velocity projected onto the segment axis
         fun signedSpeed(): Float {
             if (count == 0) return 0f
             val avgAxis = axisSum.normalize()
@@ -106,7 +112,6 @@ object ServerWaterSimulation {
         }
     }
 
-    // spatial lattice of tube segments
     private open class Lattice<T>(
         private val pointA: (T) -> Vec3,
         private val pointB: (T) -> Vec3,
@@ -172,8 +177,7 @@ object ServerWaterSimulation {
         }
     }
 
-    private class SegGrid : Lattice<TubeSeg>({ it.a }, { it.b }, { it.rOut.toDouble() })
-
+    private class SegGrid : Lattice<TubeSeg>({ it.a }, { it.b }, { it.outerBound.toDouble() })
 
     private val fields = HashMap<String, Map<Pair<Long, Long>, CurveField>>()
     private val dirty = mutableSetOf<String>()
@@ -222,7 +226,6 @@ object ServerWaterSimulation {
 
     private fun spaceKey(access: SlideSpaceAccess): String = access.space.cacheKey(access.level)
 
-    // client debug toggle; recomputes once so trajectories get collected
     fun setDebug(player: ServerPlayer, enable: Boolean) {
         if (enable) {
             if (debugPlayers.add(player.uuid)) {
@@ -233,18 +236,14 @@ object ServerWaterSimulation {
         }
     }
 
-    // structure changed (radius, curve, watering, water switch): recalc on the
-    // next tick instead of waiting for the slow stable-signature rescan
     fun markDirty(level: Level) {
         if (!level.isClientSide) dirty += SlideSpace.Main.cacheKey(level)
     }
 
-    // same as markDirty but for a specific space (sub level / contraption)
     fun markSpaceDirty(level: Level, space: SlideSpace) {
         if (!level.isClientSide) dirty += space.cacheKey(level)
     }
 
-    // force a recalculation + resend for a joined player
     fun resync(level: Level) {
         if (level.isClientSide) return
         val key = SlideSpace.Main.cacheKey(level)
@@ -252,7 +251,6 @@ object ServerWaterSimulation {
         lastSig.remove(key)
     }
 
-    // force recompute for every loaded space and resend the fields
     fun refresh(level: ServerLevel) {
         if (level.isClientSide) return
         for (a in allAccesses(level)) {
@@ -265,7 +263,6 @@ object ServerWaterSimulation {
         tickAll(level)
     }
 
-    // resend the current field to players who just joined
     fun resendTo(level: ServerLevel) {
         val key = MainSlideSpaceAccess(level).space.cacheKey(level)
         val f = fields[key] ?: return
@@ -293,7 +290,6 @@ object ServerWaterSimulation {
     fun field(access: SlideSpaceAccess, a: BlockPos, b: BlockPos): CurveField? =
         fields[spaceKey(access)]?.get(edgeKey(a, b))
 
-    // water flow velocity at a world position for pushing players
     @JvmStatic
     fun waterVelocityAt(level: ServerLevel, pos: Vec3): Vec3? {
         val access = MainSlideSpaceAccess(level)
@@ -313,7 +309,16 @@ object ServerWaterSimulation {
             if (d < bestD) { bestD = d; best = s; bestT = t }
         }
         val seg = best ?: return null
-        if (bestD > (seg.rIn * seg.rIn).toDouble()) return null
+        val ab = seg.b.subtract(seg.a)
+        val lenSq = ab.lengthSqr()
+        val t = if (lenSq < ZERO_EPS) 0.0 else ((pos.subtract(seg.a)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
+        val closest = seg.a.add(ab.scale(t))
+        val radial = pos.subtract(closest)
+        val angle = Math.toDegrees(
+            kotlin.math.atan2(radial.dot(seg.up), radial.dot(seg.lat))
+        ).toFloat()
+        val wallIn = seg.innerAt(angle)
+        if (bestD > wallIn * wallIn) return null
         val arc = seg.arcStart + (bestT * seg.len).toFloat()
         val field = fieldMap[seg.curveKey] ?: return null
         if (field.segments.isEmpty()) return null
@@ -324,29 +329,22 @@ object ServerWaterSimulation {
         return seg.b.subtract(seg.a).normalize().scale(speed.toDouble())
     }
 
-    // called every server tick; recalculates all spaces together when needed
     fun tickAll(level: ServerLevel) {
         val accesses = allAccesses(level)
         if (accesses.isEmpty()) return
         val dim = level.dimension()
 
-        // defer only for moving sub levels that contain a waterslide
         val movingFast = accesses.any { a ->
             val sub = (a as? SubSlideSpaceAccess)?.sub ?: return@any false
             if (SlideAnchorIndex.all(level, a.space).isEmpty()) return@any false
             sub.latestLinearVelocity.lengthSquared() > 4.0
         }
-        // recalc on mouth pair count change, deferral while a sub level moves.
-        // cross-space topology only changes on anchor edit or sub level
-        // teleport, so rescan it at most every 20 ticks instead of every tick
-        // (null check, not a Long.MIN_VALUE sentinel: gameTime - MIN_VALUE
-        // overflows negative and would permanently disable the scan)
         val lastCrossScan = lastCrossScanTick[dim]
         val crossSig = if (lastCrossScan == null || level.gameTime - lastCrossScan >= 20) {
             lastCrossScanTick[dim] = level.gameTime
             crossLinkSignature(level)
         } else {
-            null // cached scan, skip the comparison this tick
+            null
         }
         if (!movingFast) {
             val pending = pendingCrossSigWhileMoving.remove(dim)
@@ -367,10 +365,6 @@ object ServerWaterSimulation {
             }
         }
 
-        // pose independent signature rescanned as a slow fallback: the fast
-        // path marks spaces dirty on structure edits (markDirty/markSpaceDirty),
-        // this catches anything that changed without going through the BE (NBT
-        // edits, other mods). 100 ticks = 5s worst case instead of 1s.
         for (a in accesses) {
             val key = spaceKey(a)
             val last = lastStableCheckTick[key]
@@ -437,7 +431,6 @@ object ServerWaterSimulation {
         }
     }
 
-    // server thread prepares immutable grids for the water worker
     private fun prepareCalc(level: ServerLevel, accesses: List<SlideSpaceAccess>): PreparedCalc? {
         val spaces = accesses.map { CalcSpace(it) }
         val sigByAccess = HashMap<String, Long>()
@@ -478,7 +471,7 @@ object ServerWaterSimulation {
                     WorldTubeSeg(
                         key, calc,
                         access.toWorld(s.a), access.toWorld(s.b),
-                        s.rOut.toDouble() * scale
+                        s.outerBound.toDouble() * scale
                     )
                 )
             }
@@ -526,7 +519,6 @@ object ServerWaterSimulation {
         )
     }
 
-    // worker thread particle integration, pure computation
     private fun runCalc(prepared: PreparedCalc): CalcResult {
         val debugOut = if (prepared.collectDebug) ArrayList<MutableList<Vec3>>() else null
         val perLeg = max(1, prepared.particleCount / max(1, prepared.flatSources.size))
@@ -547,7 +539,6 @@ object ServerWaterSimulation {
             }
         }
 
-        // Fallback for near-level sub-level curves with too little coverage.
         for (calc in prepared.spaces) {
             if (!calc.isSub) continue
             val key = calc.key
@@ -584,7 +575,6 @@ object ServerWaterSimulation {
         return CalcResult(prepared.accByAccess, prepared.exitsByAccess, debugOut, handoffs)
     }
 
-    // server thread publishes fields and sends packets
     private fun applyCalc(prepared: PreparedCalc, result: CalcResult) {
         val level = prepared.level
         val segLen = ModConfig.waterSegmentLength().toFloat()
@@ -657,7 +647,6 @@ object ServerWaterSimulation {
         return maxOf(s.x(), s.y(), s.z()).coerceAtLeast(0.1).toDouble()
     }
 
-    // immutable slide space snapshot for the water worker
     private class CalcSpace(access: SlideSpaceAccess) {
         val key: String = spaceKey(access)
         val subId: UUID? = (access.space as? SlideSpace.SubLevel)?.id
@@ -705,7 +694,6 @@ object ServerWaterSimulation {
 
     private class WorldGrid : Lattice<WorldTubeSeg>({ it.a }, { it.b }, { it.radius })
 
-    // cross space mouth topology for the per tick invalidation query
     private data class MouthPoint(val space: String, val pos: Long, val x: Double, val y: Double, val z: Double)
 
     private fun crossLinkSignature(level: ServerLevel): String {
@@ -769,7 +757,6 @@ object ServerWaterSimulation {
                 val f = if (atFirst) frames.first() else frames.last()
                 val tangent = if (atFirst) f.tangent else f.tangent.scale(-1.0)
                 val lateral = if (atFirst) f.lateral else f.lateral.scale(-1.0)
-                // sub level sources climb the whole rise, main world stays at 0.5
                 val exitFrame = if (atFirst) frames.last() else frames.first()
                 val rise = (exitFrame.center.y - f.center.y).coerceAtLeast(0.0)
                 val gravity = access.localGravity().length().coerceAtLeast(1.0)
@@ -786,7 +773,6 @@ object ServerWaterSimulation {
         return out
     }
 
-    // only true open ends throw across spaces
     private fun isOpenEndThrow(access: SlideSpaceAccess, edge: Pair<Long, Long>): Boolean {
         val a = BlockPos.of(edge.first)
         val b = BlockPos.of(edge.second)
@@ -796,13 +782,14 @@ object ServerWaterSimulation {
     }
 
     private fun segContains(seg: TubeSeg, p: Vec3, extra: Double): Boolean {
+        val bound = seg.outerBound.toDouble() + extra
         val ab = seg.b.subtract(seg.a)
         val lenSq = ab.lengthSqr()
-        if (lenSq < ZERO_EPS) return p.distanceToSqr(seg.a) <= (seg.rOut + extra) * (seg.rOut + extra)
+        if (lenSq < ZERO_EPS) return p.distanceToSqr(seg.a) <= bound * bound
         val t = ((p.subtract(seg.a)).dot(ab) / lenSq)
         if (t < 0.0 || t > 1.0) return false
         val axis = seg.a.add(ab.scale(t))
-        return p.distanceToSqr(axis) <= (seg.rOut.toDouble() + extra) * (seg.rOut.toDouble() + extra)
+        return p.distanceToSqr(axis) <= bound * bound
     }
 
     private fun integrateCross(
@@ -826,7 +813,6 @@ object ServerWaterSimulation {
         var gravityStep = access.gravity.scale(dt)
         var outsideLimit = if (access.isSub) 3 else 1
         val freeFlightLimit = 160
-        // uniform disc sample on the anchor opening
         val rr = sqrt(u) * src.rIn
         var pos = src.center
             .add(src.lateral.scale(cos(ang) * rr))
@@ -846,7 +832,6 @@ object ServerWaterSimulation {
             var newPos = pos.add(vel.scale(dt))
             var localSeg = grids[key]?.nearest(newPos)
 
-            // only treat the point as inside when the nearest segment contains it
             val containedHere = localSeg != null && segContains(localSeg, newPos, 1.0)
             if (!containedHere) {
                 val worldPos = access.toWorld(newPos)
@@ -886,8 +871,12 @@ object ServerWaterSimulation {
                     val dist = radial.length()
                     if (tRaw < 0.0 || tRaw > 1.0) {
                         pos = newPos
-                    } else if (dist <= seg.rOut + 1.0) {
-                        if (dist > seg.rIn) {
+                    } else if (dist <= seg.outerBound + 1.0) {
+                        val angle = Math.toDegrees(
+                            kotlin.math.atan2(radial.dot(seg.up), radial.dot(seg.lat))
+                        ).toFloat()
+                        val wallIn = seg.innerAt(angle)
+                        if (dist > wallIn) {
                             val n = radial.scale(1.0 / dist)
                             val vn = vel.dot(n)
                             if (vn > 0.0) {
@@ -896,7 +885,7 @@ object ServerWaterSimulation {
                                     vel = ab.normalize().scale(vn)
                                 }
                             }
-                            pos = axis.add(n.scale(seg.rIn.toDouble()))
+                            pos = axis.add(n.scale(wallIn))
                             vel = vel.scale((1.0 - waterFriction).coerceAtLeast(0.0))
                         } else {
                             pos = newPos
@@ -925,7 +914,7 @@ object ServerWaterSimulation {
                     val axis2 = seg2.a.add(ab2.scale(t2))
                     val radial2 = pos.subtract(axis2)
                     val dist2 = radial2.length()
-                    if (dist2 <= seg2.rOut) {
+                    if (dist2 <= seg2.outerBound) {
                         inTube = true
                         outside = 0
                         val arc = seg2.arcStart + (t2 * seg2.len).toFloat()
@@ -981,7 +970,8 @@ object ServerWaterSimulation {
                         edgeKey(a, b),
                         arc.toFloat(),
                         len.toFloat(),
-                        lat, up
+                        lat, up,
+                        SlideProfile.blendShared(fa.profile, fb.profile, 0.5f)
                     )
                     arc += len
                 }
@@ -992,7 +982,6 @@ object ServerWaterSimulation {
         return out
     }
 
-    // cached signature for the per tick standing player query
     private fun structureSignatureCached(access: SlideSpaceAccess): Long {
         val key = spaceKey(access)
         val old = lastSig[key]
@@ -1041,6 +1030,11 @@ object ServerWaterSimulation {
                 c = mixSig(c, bc.starts.getSecond().z.toRawBits())
                 c = mixSig(c, SlideCurveGeometry.radiusAt(access, p).toRawBits().toLong())
                 c = mixSig(c, SlideCurveGeometry.radiusAt(access, q).toRawBits().toLong())
+                be.curveProfileFor(q)?.let { c = mixStr(c, it.signature()) }
+                be.curveProfileFor(p)?.let { c = mixStr(c, it.signature()) }
+                for (n in be.anchorPeerCurvesView.keys) {
+                    be.curveProfileFor(n)?.let { c = mixStr(c, it.signature()) }
+                }
                 curves += c
             }
             anchors += mixSig(a, curves)
@@ -1050,7 +1044,6 @@ object ServerWaterSimulation {
         return h
     }
 
-    // pose independent signature, unaffected by sub level movement
     private fun stableStructureSignature(access: SlideSpaceAccess): Long =
         structureSignature(access, includePose = false, includeCrossFields = false)
 

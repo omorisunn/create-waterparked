@@ -7,7 +7,6 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentKine
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentModelContext
 import net.omori_sunny.create_waterparked.content.attachment.SlideBandProvider
 
-// wall hugging band wearing a translucent arrow skin that points along the boost
 class AcceleratorProvider : SlideBandProvider() {
 
     companion object {
@@ -31,11 +30,9 @@ class AcceleratorProvider : SlideBandProvider() {
     override fun signatureExtra(ctx: SlideAttachmentModelContext): String =
         AcceleratorAttachment.directionDegrees(ctx.data).toString() + ":" + scrollSpeed(ctx)
 
-    // tiles per second, one tile per block, so the arrows travel at the boost speed
     private fun scrollSpeed(ctx: SlideAttachmentModelContext): Float =
         ctx.data.getFloat(AcceleratorAttachment.TAG_RATE)
 
-    // arrows are rotated by the boost angle, measured from the axial axis toward the ring
     override fun extraParts(
         ctx: SlideAttachmentModelContext,
         stations: List<Station>,
@@ -58,7 +55,6 @@ class AcceleratorProvider : SlideBandProvider() {
             for (c in 0 until cells) {
                 val b0 = a0 + (a1 - a0) * c / cells
                 val b1 = a0 + (a1 - a0) * (c + 1) / cells
-                // the ring axis runs around the tube, so the boost has to be projected onto the wall
                 var dx = cosPhi
                 var dy = -Math.sin((b0 + b1) / 2.0) * sinPhi
                 val reachDir = Math.sqrt(dx * dx + dy * dy)
@@ -72,18 +68,19 @@ class AcceleratorProvider : SlideBandProvider() {
                 for (i in 0 until stations.size - 1) {
                     val s0 = stations[i]
                     val s1 = stations[i + 1]
-                    // the pad's axis side face, pushed a little further toward the tube axis
-                    val r0 = s0.innerR - FRAME - ARROW_INSET
-                    val r1 = s1.innerR - FRAME - ARROW_INSET
+                    val r0a = shapedR(s0, b0, FRAME + ARROW_INSET)
+                    val r0b = shapedR(s0, b1, FRAME + ARROW_INSET)
+                    val r1a = shapedR(s1, b0, FRAME + ARROW_INSET)
+                    val r1b = shapedR(s1, b1, FRAME + ARROW_INSET)
                     val sa = arc[i]
                     val sb = arc[i + 1]
-                    val qa0 = r0 * (b0 - origin)
-                    val qa1 = r0 * (b1 - origin)
-                    val qb0 = r1 * (b0 - origin)
-                    val qb1 = r1 * (b1 - origin)
+                    val qa0 = r0a * (b0 - origin)
+                    val qa1 = r0b * (b1 - origin)
+                    val qb0 = r1a * (b0 - origin)
+                    val qb1 = r1b * (b1 - origin)
                     quads.add(
                         quad(
-                            ring(s0, b0, r0), ring(s1, b0, r1), ring(s1, b1, r1), ring(s0, b1, r0),
+                            ring(s0, b0, r0a), ring(s1, b0, r1a), ring(s1, b1, r1b), ring(s0, b1, r0b),
                             uvU(sa, qa0, dx, dy), uvV(sa, qa0, dx, dy),
                             uvU(sb, qb0, dx, dy), uvV(sb, qb0, dx, dy),
                             uvU(sb, qb1, dx, dy), uvV(sb, qb1, dx, dy),
@@ -102,7 +99,6 @@ class AcceleratorProvider : SlideBandProvider() {
     private fun uvV(along: Double, around: Double, dx: Double, dy: Double): Float =
         ((-along * dy + around * dx) / TILE).toFloat()
 
-    // the around axis restarts at every open sector, so each run shares one origin angle
     private fun spanOrigins(spans: List<Span>): DoubleArray {
         val n = spans.size
         val out = DoubleArray(n)

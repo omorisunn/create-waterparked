@@ -47,6 +47,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorCon
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSupportPart
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.SlideProfile
 import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation
 import org.joml.Vector3d
@@ -60,7 +61,6 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-// one visual per anchor
 class WaterslideTubeVisual(
     ctx: VisualizationContext,
     private val be: WaterslideAnchorBlockEntity,
@@ -106,7 +106,6 @@ class WaterslideTubeVisual(
                 return best
             }
 
-    // copycat support target: anchor, part and an outline AABB
     class SupportPick(
         @JvmField val anchorPos: BlockPos,
         @JvmField val part: Int,
@@ -140,7 +139,6 @@ class WaterslideTubeVisual(
         collect()
     }
 
-    // radius/config only; water data arrives through the sync version
     private fun dataSignature(): String {
         val sb = StringBuilder()
         sb.append(WaterFlowSimulation.version()).append('|')
@@ -164,6 +162,18 @@ class WaterslideTubeVisual(
                     .append(',').append(s.type).append(',').append(s.widthDegrees).append(';')
             }
         }
+        for ((key, profile) in be.curveProfiles) {
+            sb.append("p").append(key.asLong()).append('=').append(profile.signature()).append(';')
+        }
+        for ((key, raw) in be.anchorPeerCurvesView) {
+            if (raw == null) continue
+            val neighborBe = be.level?.getBlockEntity(key)
+                as? net.omori_sunny.create_waterparked.content.waterslide.WaterslideAnchorBlockEntity
+            for ((nKey, nProfile) in neighborBe?.curveProfiles ?: emptyMap()) {
+                sb.append("n").append(key.asLong()).append('>').append(nKey.asLong())
+                    .append('=').append(nProfile.signature()).append(';')
+            }
+        }
         val lvl = be.level
         for ((key, raw) in be.anchorPeerCurvesView) {
             if (raw == null) continue
@@ -181,7 +191,21 @@ class WaterslideTubeVisual(
         return sb.toString()
     }
 
+    private var lastPollTick = -1L
+
     override fun beginFrame(ctx: DynamicVisual.Context) {
+        val lvl0 = be.level
+        if (lvl0 != null) {
+            val tick = lvl0.gameTime
+            if (tick % 20 == 0L && tick != lastPollTick) {
+                lastPollTick = tick
+                val sig = dataSignature()
+                if (sig != lastDataSig) {
+                    lastDataSig = sig
+                    collect()
+                }
+            }
+        }
         val lvl = be.level ?: return
         val now = AnimationTickHolder.getRenderTime(lvl)
         lastWaterTime = now
@@ -217,7 +241,6 @@ class WaterslideTubeVisual(
         }
     }
 
-    // beam connects anchor top to the bracket bottom face center
     private fun buildSupportBeam() {
         beamInstance?.delete()
         beamInstance = null
@@ -236,7 +259,10 @@ class WaterslideTubeVisual(
         val lat = if (atFirst) f.prevLateral else f.currLateral
         val faceUp = tan.cross(lat).normalize()
         val wallOuter = ModConfig.wallThickness() - WaterslideTubeMesh.BASE_WALL
-        val rOut = max(0.1f, if (atFirst) f.prevRadius else f.currRadius) +
+        val attachProfile = if (atFirst) f.prevProfile else f.currProfile
+        val shapeMult = if (attachProfile == null) 1f
+            else SlideProfile.multiplierAt(attachProfile, 270f)
+        val rOut = max(0.1f, (if (atFirst) f.prevRadius else f.currRadius) * shapeMult) +
             wallOuter + ModClientConfig.supportThickness() +
             WaterslideTubeMesh.SUPPORT_HUG_EPSILON
         val bottomLocal = spine.subtract(faceUp.scale(rOut.toDouble()))
@@ -394,7 +420,6 @@ class WaterslideTubeVisual(
         return LightTexture.pack(Mth.clamp(block, 0, 15), Mth.clamp(sky, 0, 15))
     }
 
-    // world gravity in local space, water follows the rotated sub level
     private fun localGravity(): Vec3 {
         val sub = subLevel ?: return Vec3(0.0, -32.0, 0.0)
         val out = sub.logicalPose().transformNormalInverse(
@@ -486,7 +511,22 @@ class WaterslideTubeVisual(
             water = WaterFlowSimulation.resultFor(level, curve)
         }
 
-        // rebuild from preview
+        private fun modelsFor(frame: WaterslideTubeMesh.TubeSegmentFrame): WaterslideTubeMesh.TubeModels =
+            if (frame.midProfile == null) models
+            else WaterslideTubeMesh.modelsFor(config, (frame.prevRadius + frame.currRadius) * 0.5f, frame.midProfile)
+
+        private fun frameShapeGroups(): List<Pair<FloatArray?, IntArray>> {
+            val groups = LinkedHashMap<String, MutableList<Int>>()
+            val shapes = HashMap<String, FloatArray?>()
+            for (i in frames.indices) {
+                val p = frames[i].midProfile
+                val key = if (p == null) "circle" else SlideProfile.contentSignature(p)
+                if (key !in shapes) shapes[key] = p
+                groups.getOrPut(key) { mutableListOf() }.add(i)
+            }
+            return groups.map { (k, idx) -> shapes[k] to idx.toIntArray() }
+        }
+
         fun refresh() {
             val a = curve.bePositions.first
             val b = curve.bePositions.second
@@ -510,7 +550,6 @@ class WaterslideTubeVisual(
             rebuildInstances()
         }
 
-        // uniform 0.5 chord sampling, the old merge drifted on curves
         private fun buildWaterFrames(r0: Float, r1: Float): List<WaterslideTubeMesh.TubeSegmentFrame> {
             val sf = SlideCurveGeometry.sampleFrames(level, curve, r0, r1, 0.5, true)
             val out = ArrayList<WaterslideTubeMesh.TubeSegmentFrame>()
@@ -533,6 +572,7 @@ class WaterslideTubeVisual(
             if (prevLat.lengthSqr() < 1.0E-9) prevLat = sf[0].lateral
             prevLat = prevLat.normalize()
             var prevRadius = sf[0].radius
+            var prevProfile = sf[0].profile
             var scan = 1
             for (s in 1..segCount) {
                 val targetChord = min(s * 0.5, total)
@@ -556,9 +596,10 @@ class WaterslideTubeVisual(
                     if (tan.dot(chordDir) < 0.0) tan = tan.scale(-1.0)
                 }
                 val radius = (a.radius + (b.radius - a.radius) * f).toFloat()
+                val profile = SlideProfile.blend(a.profile, b.profile, f.toFloat())
                 val frame = WaterslideTubeMesh.TubeSegmentFrame(
                     prevCenter.subtract(origin), center.subtract(origin),
-                    prevTan, tan, prevLat, lat, prevRadius, radius
+                    prevTan, tan, prevLat, lat, prevRadius, radius, prevProfile, profile
                 )
                 out.add(frame)
                 val chord = frame.currSpine.subtract(frame.prevSpine)
@@ -575,6 +616,7 @@ class WaterslideTubeVisual(
                 prevTan = tan
                 prevLat = lat
                 prevRadius = radius
+                prevProfile = profile
             }
             return out
         }
@@ -596,7 +638,6 @@ class WaterslideTubeVisual(
             }
         }
 
-        // diagnostic: junction spike, end ring frame vs neighbor frame
         private fun logJunctionDiagnostics() {
             if (waterFrames.size < 2) return
             for (atFirst in booleanArrayOf(true, false)) {
@@ -636,7 +677,6 @@ class WaterslideTubeVisual(
             }
         }
 
-        // the other watered curve sharing a junction anchor, if any
         private fun neighborCurveAt(anchor: BlockPos): BezierConnection? {
             val anchorBe = level.getBlockEntity(anchor) as? CoasterAnchorpointBlockEntity ?: return null
             if (anchorBe.legCount() != 2) return null
@@ -670,7 +710,6 @@ class WaterslideTubeVisual(
             return out
         }
 
-        // map a world stream point into instance space with the current pose
         private fun toStreamInstancePos(world: Vec3): Vec3 {
             val sub = subLevel ?: return world.subtract(origin)
             val plotGlobal = sub.logicalPose().transformPositionInverse(
@@ -839,7 +878,6 @@ class WaterslideTubeVisual(
             return null
         }
 
-        // bridge bracket, arc band at the anchor end, CPU baked in instance space
         private fun buildSupportBracket() {
             bracketInstance?.delete()
             bracketInstance = null
@@ -897,7 +935,6 @@ class WaterslideTubeVisual(
             this@WaterslideTubeVisual.toWorldPos(instanceLocal.add(origin))
 
         fun beamSupportPick(rayStart: Vec3, rayDir: Vec3, currentBest: Double): SupportPick? {
-            // hidden parts stay pickable: the wrench restores them
             val anchorPos = be.blockPos
             val atFirst = curve.bePositions.first == anchorPos
             val f = anchorFrame(atFirst)
@@ -908,7 +945,10 @@ class WaterslideTubeVisual(
             val lateral = if (atFirst) f.prevLateral else f.currLateral
             val faceUp = tangent.cross(lateral).normalize()
             val wallOuter = ModConfig.wallThickness() - WaterslideTubeMesh.BASE_WALL
-            val rOut = max(0.1f, if (atFirst) f.prevRadius else f.currRadius) +
+            val attachProfile = if (atFirst) f.prevProfile else f.currProfile
+            val shapeMult = if (attachProfile == null) 1f
+                else SlideProfile.multiplierAt(attachProfile, 270f)
+            val rOut = max(0.1f, (if (atFirst) f.prevRadius else f.currRadius) * shapeMult) +
                 wallOuter + ModClientConfig.supportThickness() +
                 WaterslideTubeMesh.SUPPORT_HUG_EPSILON
             val bottomLocal = spine.subtract(faceUp.scale(rOut.toDouble()))
@@ -971,7 +1011,6 @@ class WaterslideTubeVisual(
         }
 
         fun bracketSupportPick(rayStart: Vec3, rayDir: Vec3, currentBest: Double): SupportPick? {
-            // hidden parts stay pickable: the wrench restores them
             var hasShell = false
             for (s in config.sectors) {
                 if (s.material != SectorMaterial.OPEN) {
@@ -1041,10 +1080,16 @@ class WaterslideTubeVisual(
                     Vec3(1.0, 0.0, 0.0)
                 lat = lat.normalize()
                 val faceUp = tangent.cross(lat).normalize()
-                val radius = Mth.lerp(t, f.prevRadius, f.currRadius) + radiusOffset
 
                 for (ai in 0..angleSteps) {
-                    val angle = Math.toRadians((arcLo + (arcHi - arcLo) * ai / angleSteps).toDouble())
+                    val angleDeg = arcLo + (arcHi - arcLo) * ai / angleSteps
+                    val angle = Math.toRadians(angleDeg.toDouble())
+                    val shapeMult = Mth.lerp(
+                        t,
+                        sectionMult(f.prevProfile, angleDeg),
+                        sectionMult(f.currProfile, angleDeg)
+                    )
+                    val radius = Mth.lerp(t, f.prevRadius, f.currRadius) * shapeMult + radiusOffset
                     val local = spine
                         .add(lat.scale(Math.cos(angle) * radius))
                         .add(faceUp.scale(Math.sin(angle) * radius))
@@ -1080,7 +1125,6 @@ class WaterslideTubeVisual(
             tStart: Float, tEnd: Float,
             arcLo: Float, arcHi: Float, radius: Float
         ): List<Vec3> {
-            // polygon fitted outline, sample the cross section grid angles
             val crossN = WaterslideTubeMesh.crossSections()
             val degStep = 360f / crossN
             val grid = TreeSet<Int>()
@@ -1125,9 +1169,15 @@ class WaterslideTubeVisual(
             lat = lat.normalize()
             val faceUp = tangent.cross(lat).normalize()
             val angle = Math.toRadians(angleDeg.toDouble())
+            val shapeMult = Mth.lerp(
+                t,
+                sectionMult(f.prevProfile, angleDeg),
+                sectionMult(f.currProfile, angleDeg)
+            )
+            val shaped = radius * shapeMult
             val local = spine
-                .add(lat.scale(Math.cos(angle) * radius))
-                .add(faceUp.scale(Math.sin(angle) * radius))
+                .add(lat.scale(Math.cos(angle) * shaped))
+                .add(faceUp.scale(Math.sin(angle) * shaped))
             return worldSupportPoint(local)
         }
 
@@ -1171,7 +1221,8 @@ class WaterslideTubeVisual(
             val frameRadius = max(0.1f, (f.prevRadius + f.currRadius) * 0.5f)
             val rInFrac = WATER_IN_FRAC
             val rSurfFrac = WATER_SURF_FRAC
-            val verts = WaterslideTubeMesh.bandVertices(rInFrac, rSurfFrac, !segForward)
+            val section = SlideProfile.blend(f.prevProfile, f.currProfile, 0.5f)
+            val verts = WaterslideTubeMesh.bandVertices(rInFrac, rSurfFrac, !segForward, section)
             val vertsHalf = verts.size / 2
             val waterModel: Model = WaterslideTubeMesh.waterModelFor(
                 verts.subList(0, vertsHalf), verts.subList(vertsHalf, verts.size), frameRadius
@@ -1251,7 +1302,6 @@ class WaterslideTubeVisual(
             return idx
         }
 
-        // true open end only when the anchor carries a single curve
         private fun isOpenEnd(anchor: BlockPos): Boolean =
             (level.getBlockEntity(anchor) as? CoasterAnchorpointBlockEntity)?.legCount() == 1
 
@@ -1298,7 +1348,8 @@ class WaterslideTubeVisual(
                 if (streamForward) outletF.currRadius else outletF.prevRadius)
             val rInFrac = WATER_IN_FRAC
             val rSurfFrac = WATER_SURF_FRAC
-            val ring = WaterslideTubeMesh.bandVertices(rInFrac, rSurfFrac, false)
+            val outletSection = if (streamForward) outletF.currProfile else outletF.prevProfile
+            val ring = WaterslideTubeMesh.bandVertices(rInFrac, rSurfFrac, false, outletSection)
             val ringHalf = ring.size / 2
             val streamModel: Model = WaterslideTubeMesh.waterModelFor(
                 ring.subList(0, ringHalf), ring.subList(ringHalf, ring.size), outletRadius
@@ -1389,49 +1440,20 @@ class WaterslideTubeVisual(
             val wallThickness = ModConfig.wallThickness()
             val mirror = this.mirror
             if (translucent) {
-                val wallInstancer: Instancer<WaterslideTubeInstance> =
-                    instancerProvider().instancer(
-                        WaterslideTubeInstanceType.INSTANCE, models.wallTranslucent)
-                val wall = arrayOfNulls<WaterslideTubeInstance>(frames.size)
-                wallInstancer.createInstances(wall)
                 val spr = firstSectorSprite()
-                for (i in wall.indices) {
-                    val f = frames[i]
-                    val mid = f.prevSpine.add(f.currSpine).scale(0.5).add(origin)
-                    val light = tubeLight(level, mid)
-                    val inst = wall[i]!!
-                    inst
-                        .setSegment(
-                            f.prevSpine, f.currSpine,
-                            f.prevTangent, f.currTangent,
-                            f.prevLateral, f.currLateral,
-                            f.prevRadius, f.currRadius
-                        )
-                        .light(light)
-                        .setChanged()
-                    inst.wallThickness = wallThickness
-                    inst.mirror = mirror
-                    inst.isWater = 0f
-                    if (spr != null) {
-                        inst.spriteU0 = spr[0]; inst.spriteU1 = spr[1]
-                        inst.spriteV0 = spr[2]; inst.spriteV1 = spr[3]
-                    }
-                    inst.color(1f, 1f, 1f, 0.35f)
-                    instances.add(inst)
-                }
-            } else {
-                for (sw in models.sectorWalls) {
-                    val spr = WaterslideTubeMesh.spriteRectFor(sw.blockId) ?: continue
+                for ((shape, idxs) in frameShapeGroups()) {
+                    val groupModels = if (shape == null) models
+                    else WaterslideTubeMesh.modelsFor(config, frames[idxs[0]].let { (it.prevRadius + it.currRadius) * 0.5f }, shape)
                     val wallInstancer: Instancer<WaterslideTubeInstance> =
                         instancerProvider().instancer(
-                            WaterslideTubeInstanceType.INSTANCE, sw.model)
-                    val wall = arrayOfNulls<WaterslideTubeInstance>(frames.size)
+                            WaterslideTubeInstanceType.INSTANCE, groupModels.wallTranslucent)
+                    val wall = arrayOfNulls<WaterslideTubeInstance>(idxs.size)
                     wallInstancer.createInstances(wall)
-                    for (i in wall.indices) {
+                    for ((slot, i) in idxs.withIndex()) {
                         val f = frames[i]
                         val mid = f.prevSpine.add(f.currSpine).scale(0.5).add(origin)
                         val light = tubeLight(level, mid)
-                        val inst = wall[i]!!
+                        val inst = wall[slot]!!
                         inst
                             .setSegment(
                                 f.prevSpine, f.currSpine,
@@ -1444,14 +1466,51 @@ class WaterslideTubeVisual(
                         inst.wallThickness = wallThickness
                         inst.mirror = mirror
                         inst.isWater = 0f
-                        inst.spriteU0 = spr[0]; inst.spriteU1 = spr[1]
-                        inst.spriteV0 = spr[2]; inst.spriteV1 = spr[3]
-                        if (sw.translucent) {
-                            inst.waterTileSpan = 2f
-                            inst.arcBase = wallPrefixArcs[i]
-                            inst.downstreamMix = wallPrefixArcs[frames.size]
+                        if (spr != null) {
+                            inst.spriteU0 = spr[0]; inst.spriteU1 = spr[1]
+                            inst.spriteV0 = spr[2]; inst.spriteV1 = spr[3]
                         }
+                        inst.color(1f, 1f, 1f, 0.35f)
                         instances.add(inst)
+                    }
+                }
+            } else {
+                for ((shape, idxs) in frameShapeGroups()) {
+                    val groupModels = if (shape == null) models
+                    else WaterslideTubeMesh.modelsFor(config, frames[idxs[0]].let { (it.prevRadius + it.currRadius) * 0.5f }, shape)
+                    for (sw in groupModels.sectorWalls) {
+                        val spr = WaterslideTubeMesh.spriteRectFor(sw.blockId) ?: continue
+                        val wallInstancer: Instancer<WaterslideTubeInstance> =
+                            instancerProvider().instancer(
+                                WaterslideTubeInstanceType.INSTANCE, sw.model)
+                        val wall = arrayOfNulls<WaterslideTubeInstance>(idxs.size)
+                        wallInstancer.createInstances(wall)
+                        for ((slot, i) in idxs.withIndex()) {
+                            val f = frames[i]
+                            val mid = f.prevSpine.add(f.currSpine).scale(0.5).add(origin)
+                            val light = tubeLight(level, mid)
+                            val inst = wall[slot]!!
+                            inst
+                                .setSegment(
+                                    f.prevSpine, f.currSpine,
+                                    f.prevTangent, f.currTangent,
+                                    f.prevLateral, f.currLateral,
+                                    f.prevRadius, f.currRadius
+                                )
+                                .light(light)
+                                .setChanged()
+                            inst.wallThickness = wallThickness
+                            inst.mirror = mirror
+                            inst.isWater = 0f
+                            inst.spriteU0 = spr[0]; inst.spriteU1 = spr[1]
+                            inst.spriteV0 = spr[2]; inst.spriteV1 = spr[3]
+                            if (sw.translucent) {
+                                inst.waterTileSpan = 2f
+                                inst.arcBase = wallPrefixArcs[i]
+                                inst.downstreamMix = wallPrefixArcs[frames.size]
+                            }
+                            instances.add(inst)
+                        }
                     }
                 }
             }
@@ -1460,10 +1519,12 @@ class WaterslideTubeVisual(
             val last = frames[frames.size - 1]
 
             if (isOpenEnd(curve.bePositions.first)) {
+                val capModels = if (first.prevProfile == null) models
+                else WaterslideTubeMesh.modelsFor(config, first.prevRadius, first.prevProfile)
                 val startCapInstancer: Instancer<WaterslideTubeInstance> =
                     instancerProvider().instancer(
                         WaterslideTubeInstanceType.INSTANCE,
-                        if (translucent) models.startCapTranslucent else models.startCap
+                        if (translucent) capModels.startCapTranslucent else capModels.startCap
                     )
                 val startCap = startCapInstancer.createInstance()
                 val startTip = first.prevSpine
@@ -1493,10 +1554,12 @@ class WaterslideTubeVisual(
             }
 
             if (isOpenEnd(curve.bePositions.second)) {
+                val capModels = if (last.currProfile == null) models
+                else WaterslideTubeMesh.modelsFor(config, last.currRadius, last.currProfile)
                 val endCapInstancer: Instancer<WaterslideTubeInstance> =
                     instancerProvider().instancer(
                         WaterslideTubeInstanceType.INSTANCE,
-                        if (translucent) models.endCapTranslucent else models.endCap
+                        if (translucent) capModels.endCapTranslucent else capModels.endCap
                     )
                 val endCap = endCapInstancer.createInstance()
                 val endTip = last.currSpine
@@ -1597,10 +1660,8 @@ class WaterslideTubeVisual(
     )
 
     companion object {
-        // concurrent registry, the set is touched off the render thread
         val ACTIVE: MutableSet<WaterslideTubeVisual> = ConcurrentHashMap.newKeySet()
         private const val WALL_THICKNESS = 0.1f
-        // fixed cross section fractions shared by every segment, bed stays inside the wall
         private const val WATER_IN_FRAC = 0.85f
         private const val WATER_SURF_FRAC = 0.8f
 
@@ -1614,7 +1675,6 @@ class WaterslideTubeVisual(
         var lastShaderPack: String? = null
         var lastShaderShading = false
 
-        // ray pick the rendered support geometry across every anchor
         @JvmStatic
         fun pickSupport(start: Vec3, dir: Vec3): SupportPick? {
             var best = Double.MAX_VALUE
@@ -1675,7 +1735,6 @@ class WaterslideTubeVisual(
             return closestOnRay.distanceTo(closestOnSeg)
         }
 
-        // distance along the ray, same units as block hit distance
         private fun raySegmentArcDistance(rayStart: Vec3, rayDir: Vec3, a: Vec3, b: Vec3): Double {
             val rayEnd = rayStart.add(rayDir.scale(SUPPORT_PICK_RANGE))
             val u = rayEnd.subtract(rayStart)
@@ -1704,14 +1763,12 @@ class WaterslideTubeVisual(
             return t * t * (3f - 2f * t)
         }
 
-        // white tint under iterationRP keeps the albedo neutral, blue elsewhere
         private fun waterTint(): FloatArray =
             if (IrisColorwheelCompat.iterationRpWaterMode())
                 floatArrayOf(1f, 1f, 1f)
             else
                 floatArrayOf(0.3f, 0.6f, 1f)
 
-        // mesh is static under iterationRP, jitter stays for other packs
         private fun waterJitterScale(): Float =
             if (IrisColorwheelCompat.iterationRpWaterMode())
                 0f
@@ -1723,7 +1780,6 @@ class WaterslideTubeVisual(
             return floatArrayOf(sprite.u0, sprite.u1, sprite.v0, sprite.v1)
         }
 
-        // translucent when edited; refresh while dragging
         @JvmStatic
         fun tickVisibility() {
             val mc = Minecraft.getInstance()
@@ -1788,7 +1844,6 @@ class WaterslideTubeVisual(
             }
         }
 
-        // rebuild after a BE data packet
         @JvmStatic
         fun refreshAnchor(anchor: BlockPos) {
             val mc = Minecraft.getInstance()
@@ -1813,7 +1868,6 @@ class WaterslideTubeVisual(
             }
         }
 
-        // refresh water for every leg of the edited chain
         @JvmStatic
         fun refreshChain(level: Level, edges: List<Pair<Long, Long>>, skipAnchor: BlockPos) {
             for (visual in ArrayList(ACTIVE)) {
@@ -1822,7 +1876,6 @@ class WaterslideTubeVisual(
             }
         }
 
-        // the server recomputes and syncs water after an edit; just redraw locally
         @JvmStatic
         fun refreshChainAfterEdit(level: Level, anchor: BlockPos) {
             for (visual in ArrayList(ACTIVE)) {
@@ -1831,7 +1884,6 @@ class WaterslideTubeVisual(
             }
         }
 
-        // water sync data changed; redraw every visual
         @JvmStatic
         fun refreshAll() {
             for (visual in ArrayList(ACTIVE)) {
@@ -1840,7 +1892,6 @@ class WaterslideTubeVisual(
             }
         }
 
-        // world space sheet polylines rendered in the AFTER_LEVEL pass
         @JvmStatic
         fun worldStreamSheets(): List<Pair<List<List<Vec3>>, List<List<Vec3>>>> {
             val mc = Minecraft.getInstance()
@@ -1861,3 +1912,6 @@ class WaterslideTubeVisual(
 
     }
 }
+
+private fun sectionMult(profile: FloatArray?, angleDeg: Float): Float =
+    if (profile == null) 1f else SlideProfile.multiplierAt(profile, angleDeg)

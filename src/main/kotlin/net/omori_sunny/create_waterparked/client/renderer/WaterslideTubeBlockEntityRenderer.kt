@@ -48,6 +48,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLay
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSupportPart
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.SlideProfile
 import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import org.joml.Vector3d
 import kotlin.math.abs
@@ -61,27 +62,8 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-// thrown stream cross section thickness, stream physics uses the fixed value
 private const val STREAM_WALL_THICKNESS = 0.1f
 
-/**
- * Full-fidelity fallback BlockEntityRenderer for the waterslide anchor.
- *
- * Mirrors WaterslideTubeVisual + WaterslideTubeInstance + the instance vertex
- * shader one-to-one, but emits plain vertices (CPU-side expansion of every
- * shader fold):
- *   - tube wall, inner/outer rings per frame (sector slices, sprite UVs)
- *   - glass wall V-end-band fold (waterTileSpan > 1.5 path)
- *   - end caps at open ends
- *   - water band (bandVertices bed/surface + phase scroll + jitter FBM)
- *   - thrown stream (tail fade + jitter ramp)
- *   - support beam + bracket
- *   - skeleton rings (translucent ghost)
- *
- * All geometry is emitted in the ANCHOR-LOCAL space of the frames (the pose
- * stack carries the anchor translation: Ponder pre-translates, real worlds get
- * our own translate).
- */
 class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Context) :
     BlockEntityRenderer<WaterslideAnchorBlockEntity> {
 
@@ -107,11 +89,9 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val arcBase: Float, val speed: Float
     )
 
-    // cache per (entity position, signature): rebuild geometry only on edits
     private val cache = HashMap<Long, Pair<String, List<CurveGeometry>>>()
     private var lastSignature = ""
 
-    // dedicated render types, never share a buffer with world section rendering
     private val tubeCutout: RenderType = RenderType.entityCutout(TextureAtlas.LOCATION_BLOCKS)
     private val tubeTranslucent: RenderType = RenderType.entityTranslucentCull(TextureAtlas.LOCATION_BLOCKS)
 
@@ -129,7 +109,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val cm: Float, val sm: Float
     )
 
-    // wall/cap corner: position + normal + fully folded atlas uv
     private class CornerPoint(val p: RingPoint, val u: Float, val v: Float)
 
     override fun render(
@@ -142,8 +121,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
     ) {
         val level = be.level
         net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer.registerClientAnchor(be)
-        // ghosts ride the BER pass for non-main levels (Ponder); the real
-        // world draws them from the RenderLevelStageEvent instead
         if (level != null && level !== net.minecraft.client.Minecraft.getInstance().level) {
             try {
                 net.omori_sunny.create_waterparked.client.render.WaterslideGhostRenderer
@@ -154,13 +131,10 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                 )
             }
         }
-        // fallback gate, only draw when visualization is unavailable
         if (level == null || VisualizationManager.supportsVisualization(level)) return
         try {
             renderSafe(be, level!!, poseStack, buffers, partialTick)
         } catch (t: Throwable) {
-            // rendersafe pattern: a geometry hiccup must never break the render
-            // loop (the ponder chunk renderer removes BEs that throw)
             net.omori_sunny.create_waterparked.CreateWaterparked.LOGGER.error(
                 "[WaterslideBER] render failed at {}", be.blockPos, t
             )
@@ -179,14 +153,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
 
         val base = Vec3.atLowerCornerOf(be.blockPos)
 
-        // The dispatcher ALWAYS pre-translates the pose to the block entity
-        // position: LevelRenderer translates by (bePos - cameraPos) for both
-        // section and off-screen BEs, and Ponder's renderBlockEntities
-        // translates by the BE pos. So all geometry must be emitted in ANCHOR-
-        // LOCAL space (which the frames already are) — never add our own
-        // translate — and every vertex must be transformed by this pose
-        // (vertex() reads lastPose), otherwise the tube lands around the
-        // camera origin and follows the player.
         poseStack.pushPose()
         lastPose = poseStack.last()
 
@@ -205,7 +171,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             emitStream(be, level, c, translucentBuf, now)
             emitSkeleton(be, level, c, translucentBuf)
         }
-        // Ponder edit UI: cyan rings + control points (real editor UI, no custom geometry)
         if (tubeOwner != null && PonderSlideEditUiElement.ponderEditAnchorFor(level) != null) {
             try {
                 emitPonderEditUi(be, level, tubeOwner, poseStack, buffers)
@@ -213,7 +178,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                 CreateWaterparked.LOGGER.error("[WaterslideBER] edit UI failed at {}", be.blockPos, t)
             }
         }
-        // support: built for BOTH directions (primary + secondary)
         for (c in curves) {
             emitSupportBracket(be, level, c, cutout)
         }
@@ -222,7 +186,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         poseStack.popPose()
     }
 
-    // geometry cache access shared by render + the CPU support pick
     private fun geometryFor(be: WaterslideAnchorBlockEntity, level: Level): List<CurveGeometry>? {
         val eid = be.blockPos.asLong()
         val sig = signature(be, level)
@@ -234,26 +197,15 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return cache[eid]?.second
     }
 
-    // ------------------------------------------------------------------
-    // CPU fallback support pick (flywheel-inactive worlds: the visual's
-    // pickSupport runs over ACTIVE flywheel instances, which do not exist
-    // there - mirror its beam/bracket ray math here)
-    // ------------------------------------------------------------------
-
     companion object {
         const val LENGTH_SUBDIVISIONS = 4
         const val WATER_IN_FRAC = 0.85f
         const val WATER_SURF_FRAC = 0.8f
         private const val PICK_RANGE = 64.0
         private const val PICK_MARGIN = 0.08
-        // the real editor's control ring / boundary ring constants
         private const val CONTROL_RING_OFFSET = 0.75f
         private const val BOUNDARY_RING_GAP = 0.55f
 
-        // CPU fallback support pick: flywheel-inactive worlds have no ACTIVE
-        // visuals, so the visual's pickSupport sees nothing - ray-pick the
-        // bracket shell / beam from the BER geometry instead (mirrors the
-        // visual's beamSupportPick / bracketSupportPick math)
         @JvmStatic
         fun pickSupport(level: Level, rayStart: Vec3, rayDir: Vec3): WaterslideTubeVisual.SupportPick? {
             var bestD = Double.MAX_VALUE
@@ -262,9 +214,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             val dispatcher = mc.blockEntityRenderDispatcher
             for (be in net.omori_sunny.create_waterparked.client.render.WaterslideCurveRenderer.clientAnchors()) {
                 if (be.isRemoved) continue
-                // sublevel anchors live in plot-local space: keep the CPU pick
-                // reachable even when their BE level differs from the render
-                // level (the pose transform is applied inside pickFor)
                 if (be.level !== level && Sable.HELPER.getContaining(be) == null) continue
                 val renderer = dispatcher.getRenderer(be) as? WaterslideTubeBlockEntityRenderer ?: continue
                 val pick = try {
@@ -281,7 +230,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         }
     }
 
-    // one anchor: bracket shell pick (part 1) + beam pick (part 0)
     private fun pickFor(
         be: WaterslideAnchorBlockEntity,
         level: Level,
@@ -289,8 +237,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         rayDir: Vec3,
         currentBest: Double
     ): WaterslideTubeVisual.SupportPick? {
-        // sublevel anchors live in plot-local space: mirror the visual's pose
-        // transform so the ray is compared in the same space the frames are
         val sub = Sable.HELPER.getContaining(be) as? ClientSubLevel
         if (sub == null) return pickInPlotSpace(be, level, rayStart, rayDir, currentBest)
         return try {
@@ -301,7 +247,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                 currentBest
             )
         } catch (t: Throwable) {
-            // a pose hiccup must never break the pick; best effort fallback
             pickInPlotSpace(be, level, rayStart, rayDir, currentBest)
         }
     }
@@ -354,9 +299,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             val segLen = WaterslideTubeMesh.arcLength(f)
             if (segLen < 0.01f) continue
 
-            // ---- bracket shell (mirror of the visual's bracketSupportPick) ----
-            // hidden parts stay pickable so the wrench can restore them (same
-            // semantics as the flywheel pick; the emit side still gates the mesh)
             val config = c.config
             val hasShell = config.sectors.any { it.material != SectorMaterial.OPEN }
             if (hasShell) {
@@ -390,9 +332,15 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                         }
                         lat = bezierNormalize(lat)
                         val faceUp = bezierNormalize(tangent.cross(lat))
-                        val radius = Mth.lerp(t, f.prevRadius, f.currRadius) + radiusOffset
                         for (ai in 0..angleSteps) {
-                            val angle = Math.toRadians((arcLo + (arcHi - arcLo) * ai / angleSteps).toDouble())
+                            val angleDeg = arcLo + (arcHi - arcLo) * ai / angleSteps
+                            val angle = Math.toRadians(angleDeg.toDouble())
+                            val shapeMult = Mth.lerp(
+                                t,
+                                supportSectionMult(f.prevProfile, angleDeg),
+                                supportSectionMult(f.currProfile, angleDeg)
+                            )
+                            val radius = Mth.lerp(t, f.prevRadius, f.currRadius) * shapeMult + radiusOffset
                             val local = spine
                                 .add(lat.scale(Math.cos(angle) * radius))
                                 .add(faceUp.scale(Math.sin(angle) * radius))
@@ -406,16 +354,17 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                 }
             }
 
-            // ---- beam (mirror of the visual's beamSupportPick) ----
-            // hidden parts stay pickable so the wrench can restore them
             val s0 = if (atFirst) f.prevSpine else f.currSpine
             val s1 = if (atFirst) f.currSpine else f.prevSpine
             val spine = s0.add(s1).scale(0.5)
             val tan = if (atFirst) f.prevTangent else f.currTangent
             val lat = if (atFirst) f.prevLateral else f.currLateral
             val faceUp = tan.cross(lat).normalize()
-            val rOut = max(0.1f, if (atFirst) f.prevRadius else f.currRadius) +
-                wallOuter + supportThickness + WaterslideTubeMesh.SUPPORT_HUG_EPSILON
+            val attachProfile = if (atFirst) f.prevProfile else f.currProfile
+            val rOut = max(
+                0.1f,
+                (if (atFirst) f.prevRadius else f.currRadius) * supportSectionMult(attachProfile, 270f)
+            ) + wallOuter + supportThickness + WaterslideTubeMesh.SUPPORT_HUG_EPSILON
             val bottomLocal = spine.subtract(faceUp.scale(rOut.toDouble()))
             val anchorCenterLocal = Vec3(0.5, 1.0, 0.5)
             val axis = bottomLocal.subtract(anchorCenterLocal)
@@ -480,17 +429,13 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return closestOnRay.distanceTo(closestOnSeg)
     }
 
-    // the tube far outlives the anchor block: keep rendering + cull with a
-    // world-distance check like the legacy curve renderer
     override fun shouldRenderOffScreen(blockEntity: WaterslideAnchorBlockEntity): Boolean = true
 
     override fun getViewDistance(): Int = 192
 
-    // animation tick in seconds (matches AnimationTickHolder.getRenderTime)
     private fun AnimationTickHolderRender(level: Level): Float =
         net.createmod.catnip.animation.AnimationTickHolder.getRenderTime(level)
 
-    // geometry caches
     private fun buildCurves(be: WaterslideAnchorBlockEntity, level: Level): List<CurveGeometry> {
         val out = ArrayList<CurveGeometry>()
         val origin = Vec3.atLowerCornerOf(be.blockPos)
@@ -499,7 +444,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             val raw = e.value ?: continue
             val bc = if (raw.isPrimary) raw else raw.secondary()
             if (!WaterslideTrackMaterials.isWaterslide(bc)) continue
-            // peer = the map key, exactly like the visual's TubeCurve
             val peer = e.key
             val r0 = WaterslideRadiusEdit.radiusAt(level, bc.bePositions.first, defRadius)
             val r1 = WaterslideRadiusEdit.radiusAt(level, bc.bePositions.second, defRadius)
@@ -528,7 +472,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return out
     }
 
-    // exact mirror of TubeCurve.buildWaterFrames: uniform 0.5 chord sampling
     private fun buildWaterFrames(
         level: Level, bc: BezierConnection,
         r0: Float, r1: Float, origin: Vec3
@@ -599,10 +542,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             .append(ModClientConfig.polygonScale()).append('|')
             .append(net.omori_sunny.create_waterparked.config.ModConfig.wallThickness()).append('|')
             .append(be.radius).append('|')
-            // support state: the BER emits beam/bracket from these - a change
-            // (wrench fill/clear/cycle, axe delete, storyboard dump beat) MUST
-            // invalidate the geometry cache or the Ponder scene / any BER-only
-            // world keeps showing the old support look
             .append(be.supportMaterial(net.omori_sunny.create_waterparked.content.waterslide.WaterslideSupportPart.BRACKET).let {
                 net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(it.block)
             }).append('|')
@@ -622,6 +561,17 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                 sb.append(s.id).append(',').append(s.material).append(',').append(s.blockId).append(';')
             }
         }
+        for ((peer, profile) in be.curveProfiles) {
+            sb.append("p").append(peer.asLong()).append('=').append(profile.signature()).append(';')
+        }
+        for (e in be.anchorPeerCurvesView) {
+            val raw = e.value ?: continue
+            val neighborBe = level.getBlockEntity(e.key) as? WaterslideAnchorBlockEntity
+            for ((nKey, nProfile) in neighborBe?.curveProfiles ?: emptyMap()) {
+                sb.append("n").append(e.key.asLong()).append('>').append(nKey.asLong())
+                    .append('=').append(nProfile.signature()).append(';')
+            }
+        }
         for (e in be.anchorPeerCurvesView) {
             val raw = e.value ?: continue
             val bc = if (raw.isPrimary) raw else raw.secondary()
@@ -630,7 +580,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                 .append(bc.bePositions.first.asLong()).append(',')
                 .append(bc.bePositions.second.asLong()).append(',')
                 .append(bc.getSegmentCount()).append(';')
-            // spline geometry: shape edits (ponder ease) must invalidate the cache
             sb.append(bc.starts.first.x).append(',').append(bc.starts.first.y).append(',').append(bc.starts.first.z).append(',')
                 .append(bc.starts.second.x).append(',').append(bc.starts.second.y).append(',').append(bc.starts.second.z).append(',')
                 .append(bc.axes.first.x).append(',').append(bc.axes.first.y).append(',').append(bc.axes.first.z).append(',')
@@ -639,11 +588,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return sb.toString()
     }
 
-    // ------------------------------------------------------------------
-    // shader-mirrored helpers (instance vertex shader fold formulas)
-    // ------------------------------------------------------------------
-
-    // exact mirror of arcLenTo in waterslide_tube.vert
     private fun arcLenTo(c0: Vec3, c1: Vec3, c2: Vec3, c3: Vec3, v: Float): Float {
         var sum = 0.0
         for (i in 0 until 8) {
@@ -695,7 +639,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return sum.toFloat()
     }
 
-    // frame evaluation matching the instance vertex shader reconstruction
     private fun evalFrame(f: WaterslideTubeMesh.TubeSegmentFrame, t: Float): FrameEval {
         val td = t.toDouble()
         val omt = 1.0 - td
@@ -730,10 +673,8 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return FrameEval(spine, tangent, lateral, faceUp, radius)
     }
 
-    // GLSL fract (positive for any sign, matches mod(x, 1.0))
     private fun frac(x: Float): Float = x - floor(x)
 
-    // exact mirror of jitterHash13/jitterNoise3/jitterFbm in waterslide_tube.vert
     private fun jitterHash13(px: Float, py: Float, pz: Float): Float {
         var x = frac(px * 0.1031f)
         var y = frac(py * 0.1031f)
@@ -785,10 +726,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return t * t * (3f - 2f * t)
     }
 
-    // ------------------------------------------------------------------
-    // light + sprite helpers
-    // ------------------------------------------------------------------
-
     private fun tubeLight(level: Level, world: Vec3): Int =
         LevelRenderer.getLightColor(level, BlockPos.containing(world))
 
@@ -813,7 +750,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
     }
 
     private fun isEditing(level: Level, be: WaterslideAnchorBlockEntity): Boolean {
-        // Ponder: the whole tube is "under edit" while the storyboard edit state is on
         if (PonderSlideEditUiElement.ponderEditAnchorFor(level) != null) return true
         val edit = dev.silvergold.simulatedcoasters.client.track.BezierHandleEditMode.isActive() ||
             SubLevelEditFocus.isActive(level)
@@ -826,7 +762,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return false
     }
 
-    // dominant face sprite, exact mirror of WaterslideTubeMesh.spriteFor
     private fun spriteFor(blockId: ResourceLocation): TextureAtlasSprite? {
         val block = BuiltInRegistries.BLOCK.get(blockId) ?: return null
         val state = block.defaultBlockState()
@@ -843,11 +778,9 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return model.getParticleIcon(ModelData.EMPTY)
     }
 
-    // exact mirror of WaterslideTubeMesh.isTranslucent
     private fun isTranslucentBlock(blockId: ResourceLocation): Boolean =
         blockId.path.split('_').any { it.contains("glass") }
 
-    // exact mirror of WaterslideTubeMesh.borderPxOf (reflection scan)
     private fun borderPxOf(sprite: TextureAtlasSprite): Int {
         val key = sprite.contents().name().toString()
         return borderCache.getOrPut(key) {
@@ -891,15 +824,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
 
     private val borderCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
-    // ------------------------------------------------------------------
-    // vertex emission
-    // ------------------------------------------------------------------
-
-    // The dispatcher pre-translates the pose to the block entity position
-    // (LevelRenderer: bePos - camera; Ponder: bePos). The local geometry is
-    // only correct when EVERY vertex goes through that pose matrix - a raw
-    // addVertex(x, y, z) ignores the translation and pins the tube to the
-    // camera origin (the "tube floats above my head and follows me" symptom).
     private var lastPose: PoseStack.Pose? = null
 
     private fun vertex(v: VertexConsumer, p: RingPoint, u: Float, vt: Float, light: Int) {
@@ -964,8 +888,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         vertexColor(buf, e, ue, ve, light, r, g, bl, ae)
     }
 
-    // double-sided sheets: both windings, same per-corner uv (the visuals use
-    // backfaceCulling(false) materials for water/stream/support shell)
     private fun verts4Double(
         buf: VertexConsumer,
         a: RingPoint, b: RingPoint, d: RingPoint, e: RingPoint,
@@ -990,10 +912,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
     private fun Vec3.toRingWithN(n: Vec3): RingPoint =
         RingPoint(x.toFloat(), y.toFloat(), z.toFloat(),
             n.x.toFloat(), n.y.toFloat(), n.z.toFloat())
-
-    // ------------------------------------------------------------------
-    // generic sector grid cell iteration (mirrors build()/buildBracket())
-    // ------------------------------------------------------------------
 
     private fun forEachCell(
         startNorm: Float, sectorDegrees: Float,
@@ -1034,12 +952,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         }
     }
 
-    // ------------------------------------------------------------------
-    // walls (per sector bucket, folded UVs, glass end-band fold)
-    // ------------------------------------------------------------------
-
-    // cross point with folded sprite uv (mirrors the mesh add() fold + the
-    // vertex shader's glass V override) — t == mesh v for wall vertices
     private fun wallCorner(
         frame: WaterslideTubeMesh.TubeSegmentFrame, frameIndex: Int,
         wallPrefixArcs: FloatArray, totalArc: Float,
@@ -1052,12 +964,16 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val ev = evalFrame(frame, t)
         val radial = if (inner) max(ev.radius - WaterslideTubeMesh.BASE_WALL, 0.001f)
         else max(ev.radius + (wallThickness - WaterslideTubeMesh.BASE_WALL), 0.001f)
+        val section = SlideProfile.blend(frame.prevProfile, frame.currProfile, t)
+        val m = if (section == null) 1f
+        else SlideProfile.multiplierAt(section, Math.toDegrees(kotlin.math.atan2(y.toDouble(), x.toDouble())).toFloat())
+        val xs = x * m
+        val ys = y * m
         val nx = if (inner) -cm else cm
         val ny = if (inner) -sm else sm
-        val pos = ev.spine.add(ev.lateral.scale((x * radial).toDouble()))
-            .add(ev.faceUp.scale((y * radial).toDouble()))
+        val pos = ev.spine.add(ev.lateral.scale((xs * radial).toDouble()))
+            .add(ev.faceUp.scale((ys * radial).toDouble()))
         val n = ev.lateral.scale(nx.toDouble()).add(ev.faceUp.scale(ny.toDouble()))
-        // mesh add() uv fold
         val uFrac: Float
         val vFrac: Float
         if (glass) {
@@ -1078,8 +994,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         }
         var uAtlas = su0 + uFrac * (su1 - su0)
         var vAtlas = sv0 + vFrac * (sv1 - sv0)
-        // glass wall: the shader overrides V inside the two end bands with the
-        // tile's border rows (waterTileSpan > 1.5 path)
         if (glass && !ghost) {
             val chord = frame.currSpine.subtract(frame.prevSpine)
             val handle = chord.length() / 3.0
@@ -1163,7 +1077,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                         val frame = frames[fi]
                         val light = frameLights[fi]
                         val alpha = if (ghost) 0.35f else 1f
-                        // inner wall first, translucent buckets blend in mesh order
                         val ia = wallCorner(frame, fi, c.wallPrefixArcs, totalArc, ghost, glass,
                             t0, cell.c0, cell.s0, cell.f0, true, wallThickness,
                             texW, texH, border, centerW, centerH, su0, su1, sv0, sv1, uTilesRaw, uTiles, cell.cm, cell.sm)
@@ -1176,10 +1089,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                         val ie = wallCorner(frame, fi, c.wallPrefixArcs, totalArc, ghost, glass,
                             t0, cell.c1, cell.s1, cell.f1, true, wallThickness,
                             texW, texH, border, centerW, centerH, su0, su1, sv0, sv1, uTilesRaw, uTiles, cell.cm, cell.sm)
-                        // opaque cutout buckets are double sided (backfaceCulling
-                        // false), glass buckets single sided (cull on), ghost too
                         emitWallQuad(buf, ia, ib, id, ie, !glass || ghost, light, alpha)
-                        // outer wall (drawn last)
                         val oa = wallCorner(frame, fi, c.wallPrefixArcs, totalArc, ghost, glass,
                             t0, cell.c0, cell.s0, cell.f0, false, wallThickness,
                             texW, texH, border, centerW, centerH, su0, su1, sv0, sv1, uTilesRaw, uTiles, cell.cm, cell.sm)
@@ -1197,8 +1107,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                 }
             }
 
-            // side walls next to open sectors (folded into this sector's mesh,
-            // bucket only — never into the composite wallVerts)
             if (!ghost) {
                 val idx = placed.indexOf(p)
                 val prev = placed[(idx - 1 + placed.size) % placed.size]
@@ -1223,8 +1131,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         }
     }
 
-    // double-sided (cutout/translucent material with backfaceCulling(false)) vs
-    // single-sided (glass GLASS_TRANSLUCENT backfaceCulling(true))
     private fun emitWallQuad(
         buf: VertexConsumer,
         a: CornerPoint, b: CornerPoint, d: CornerPoint, e: CornerPoint,
@@ -1254,7 +1160,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val nx = c
         val ny = s
         val innerR = 0.92f
-        // mesh addSideWall: tiny sectorRadians so uTiles clamps to 1
         val sideRadians = 0.2f / 16f
         val uTilesS = max((radius - WaterslideTubeMesh.BASE_WALL).coerceAtLeast(0.1f) * sideRadians, 1f)
 
@@ -1282,8 +1187,10 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                     val ev = evalFrame(frame, t)
                     val radial = if (rFactor < 1f) max(ev.radius - WaterslideTubeMesh.BASE_WALL, 0.001f)
                     else max(ev.radius + (wallThickness - WaterslideTubeMesh.BASE_WALL), 0.001f)
-                    val x = c * rFactor
-                    val y = s * rFactor
+                    val section = SlideProfile.blend(frame.prevProfile, frame.currProfile, t)
+                    val m = if (section == null) 1f else SlideProfile.multiplierAt(section, angleDeg)
+                    val x = c * rFactor * m
+                    val y = s * rFactor * m
                     val pos = ev.spine.add(ev.lateral.scale((x * radial).toDouble()))
                         .add(ev.faceUp.scale((y * radial).toDouble()))
                     val n = ev.lateral.scale(nx.toDouble()).add(ev.faceUp.scale(ny.toDouble()))
@@ -1321,10 +1228,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         }
     }
 
-    // ------------------------------------------------------------------
-    // caps (only at true open ends) and skeleton rings
-    // ------------------------------------------------------------------
-
     private fun capCorner(
         spine: Vec3, lateral: Vec3, tangent: Vec3, radius: Float,
         x: Float, y: Float, u: Float, v: Float,
@@ -1349,7 +1252,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                     min(texW - border + (sPx - (uTilesRaw * texW - border)), texW - 0.05f) / texW
                 else -> (border + (sPx % centerW)) / texW
             }
-            // cap radial three zone fold
             val vPx = v * (wallThickness * 16f)
             vFrac = when {
                 vPx < border -> max(vPx, 0.05f) / texH
@@ -1376,7 +1278,8 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         buf: VertexConsumer, level: Level, base: Vec3,
         spine: Vec3, lateral: Vec3, tangent: Vec3, radius: Float,
         config: WaterslideSectorConfig, meshRadius: Float,
-        start: Boolean, ghost: Boolean, doubleSided: Boolean, light: Int
+        start: Boolean, ghost: Boolean, doubleSided: Boolean, light: Int,
+        section: FloatArray? = null
     ) {
         val crossN = WaterslideTubeMesh.crossSections()
         val degStep = 360f / crossN
@@ -1384,6 +1287,9 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val wallThickness = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness()
         val placed = WaterslideSectorLayout.place(config)
         val capNormal = if (start) tangent.scale(-1.0) else tangent
+        fun capMultiplier(x: Float, y: Float): Float =
+            if (section == null) 1f
+            else SlideProfile.multiplierAt(section, Math.toDegrees(kotlin.math.atan2(y.toDouble(), x.toDouble())).toFloat())
         for (p in placed) {
             val sec = p.sector
             if (sec.material == SectorMaterial.OPEN) continue
@@ -1404,43 +1310,42 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             val centerH = max(texH - 2f * border, 1f)
             val startNorm = WaterslideSectorLayout.normalize(p.startAngle)
             forEachCell(startNorm, sectorDegrees, crossN, degStep, gridAnchor, 0f, 360f) { cell ->
-                // annulus: inner (v = 0) to outer (v = 1) radially
                 val alpha = if (ghost) 0.35f else 1f
+                val m0 = capMultiplier(cell.c0, cell.s0)
+                val m1 = capMultiplier(cell.c1, cell.s1)
                 if (start) {
-                    // (c0 outer v1) (c0 inner v0) (c1 inner v0) (c1 outer v1)
                     val a = capCorner(spine, lateral, tangent, radius,
-                        cell.c0, cell.s0, cell.f0, 1f, false, capNormal,
+                        cell.c0 * m0, cell.s0 * m0, cell.f0, 1f, false, capNormal,
                         glass, wallThickness, texW, texH, border, centerW, centerH,
                         su0, su1, sv0, sv1, uTilesRaw, uTiles)
                     val b = capCorner(spine, lateral, tangent, radius,
-                        cell.c0, cell.s0, cell.f0, 0f, true, capNormal,
+                        cell.c0 * m0, cell.s0 * m0, cell.f0, 0f, true, capNormal,
                         glass, wallThickness, texW, texH, border, centerW, centerH,
                         su0, su1, sv0, sv1, uTilesRaw, uTiles)
                     val d = capCorner(spine, lateral, tangent, radius,
-                        cell.c1, cell.s1, cell.f1, 0f, true, capNormal,
+                        cell.c1 * m1, cell.s1 * m1, cell.f1, 0f, true, capNormal,
                         glass, wallThickness, texW, texH, border, centerW, centerH,
                         su0, su1, sv0, sv1, uTilesRaw, uTiles)
                     val e = capCorner(spine, lateral, tangent, radius,
-                        cell.c1, cell.s1, cell.f1, 1f, false, capNormal,
+                        cell.c1 * m1, cell.s1 * m1, cell.f1, 1f, false, capNormal,
                         glass, wallThickness, texW, texH, border, centerW, centerH,
                         su0, su1, sv0, sv1, uTilesRaw, uTiles)
                     emitWallQuad(buf, a, b, d, e, doubleSided, light, alpha)
                 } else {
-                    // (c0 outer v1) (c1 outer v1) (c1 inner v0) (c0 inner v0)
                     val a = capCorner(spine, lateral, tangent, radius,
-                        cell.c0, cell.s0, cell.f0, 1f, false, capNormal,
+                        cell.c0 * m0, cell.s0 * m0, cell.f0, 1f, false, capNormal,
                         glass, wallThickness, texW, texH, border, centerW, centerH,
                         su0, su1, sv0, sv1, uTilesRaw, uTiles)
                     val b = capCorner(spine, lateral, tangent, radius,
-                        cell.c1, cell.s1, cell.f1, 1f, false, capNormal,
+                        cell.c1 * m1, cell.s1 * m1, cell.f1, 1f, false, capNormal,
                         glass, wallThickness, texW, texH, border, centerW, centerH,
                         su0, su1, sv0, sv1, uTilesRaw, uTiles)
                     val d = capCorner(spine, lateral, tangent, radius,
-                        cell.c1, cell.s1, cell.f1, 0f, true, capNormal,
+                        cell.c1 * m1, cell.s1 * m1, cell.f1, 0f, true, capNormal,
                         glass, wallThickness, texW, texH, border, centerW, centerH,
                         su0, su1, sv0, sv1, uTilesRaw, uTiles)
                     val e = capCorner(spine, lateral, tangent, radius,
-                        cell.c0, cell.s0, cell.f0, 0f, true, capNormal,
+                        cell.c0 * m0, cell.s0 * m0, cell.f0, 0f, true, capNormal,
                         glass, wallThickness, texW, texH, border, centerW, centerH,
                         su0, su1, sv0, sv1, uTilesRaw, uTiles)
                     emitWallQuad(buf, a, b, d, e, doubleSided, light, alpha)
@@ -1467,7 +1372,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             val light = tubeLight(level, tip.add(base))
             emitCapQuads(buf, level, base, tip, first.prevLateral, tan, first.prevRadius,
                 c.config, c.meshRadius, start = true, ghost = ghost,
-                doubleSided = ghost, light = light)
+                doubleSided = ghost, light = light, section = first.prevProfile)
         }
         if (isOpenEnd(level, c.bc.bePositions.second)) {
             val tip = last.currSpine
@@ -1475,18 +1380,14 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             val light = tubeLight(level, tip.add(base))
             emitCapQuads(buf, level, base, tip, last.currLateral, tan, last.currRadius,
                 c.config, c.meshRadius, start = false, ghost = ghost,
-                doubleSided = ghost, light = light)
+                doubleSided = ghost, light = light, section = last.currProfile)
         }
     }
 
-    // Ponder edit UI: exact mirror of the real editor UI built from the shared
-    // editor API (drawAnchorCircle / renderControlPoints / drawHandleTip)
     private fun emitPonderEditUi(
         be: WaterslideAnchorBlockEntity, level: Level, c: CurveGeometry,
         poseStack: PoseStack, buffers: MultiBufferSource
     ) {
-        // draw into the BER's own tubeTranslucent buffer: custom editor RenderTypes
-        // are not stable on the Ponder SuperRenderTypeBuffer, the entity type is
         val mat = poseStack.last().pose()
         val buf = buffers.getBuffer(tubeTranslucent)
         val uv = whiteSpriteUv()
@@ -1507,15 +1408,12 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             val latN = lat.normalize()
             val radius = WaterslideRadiusEdit.radiusAt(level, anchor, ModConfig.defaultSlideRadius())
             val light = tubeLight(level, centerLocal.add(Vec3.atLowerCornerOf(be.blockPos)))
-            // tube opening ring, same as WaterslideRadiusEdit.drawAnchorCircle
             ringQuadsLocal(buf, mat, centerLocal, latN, up, radius, ringSegs, 0.0, uv, light,
                 0.2f, 0.9f, 1.0f, 1.0f)
-            // editor control ring, same as WaterslideSectorEdit.renderControlPoints
             val ringRadius = radius + CONTROL_RING_OFFSET
             ringQuadsLocal(buf, mat, centerLocal, latN, up, ringRadius, crossN, 90.0, uv, light,
                 0.15f, 0.85f, 1.0f, 1.0f)
-            // sector control points + boundary handles, same as controlPoints()
-            val anchorBe = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity
+                val anchorBe = level.getBlockEntity(anchor) as? WaterslideAnchorBlockEntity
             val peer = if (c.bc.bePositions.first == anchor) c.bc.bePositions.second else c.bc.bePositions.first
             if (anchorBe != null) {
                 val placed = WaterslideSectorLayout.place(anchorBe.sectorConfigFor(peer))
@@ -1537,7 +1435,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                     }
                 }
             }
-            // lift handle sprite, same as WaterslideRadiusEdit.drawHandleTip
             val tip = centerLocal.add(latN.scale(radius.toDouble()))
             diamondQuadLocal(buf, mat, tip, latN, up, 0.22f, uv, light, 1f, 0.9f, 0.1f)
         }
@@ -1600,19 +1497,16 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return uv
     }
 
-    // skeleton rings: endCap mesh at interior junctions (translucent ghost only)
     private fun emitSkeleton(
         be: WaterslideAnchorBlockEntity, level: Level, c: CurveGeometry,
         translucentBuf: VertexConsumer
     ) {
         if (!isEditing(level, be)) return
-        // skeleton rings hidden in Ponder: the storyboard shows ring/handle UI instead
         if (PonderSlideEditUiElement.ponderEditAnchorFor(level) != null) return
         if (!ModClientConfig.showSkeletonWhenTranslucent()) return
         val frames = c.frames
         if (frames.size < 2) return
         val base = Vec3.atLowerCornerOf(be.blockPos)
-        // end rings included: the storyboard edit state reads the opening rings as the UI
         for (i in 0 until frames.size) {
             val f = frames[i]
             val junction = f.prevSpine
@@ -1622,10 +1516,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                 c.config, c.meshRadius, start = false, ghost = true, doubleSided = true, light = light)
         }
     }
-
-    // ------------------------------------------------------------------
-    // water band (bandVertices bed + surface, phase scroll, jitter FBM)
-    // ------------------------------------------------------------------
 
     private fun frameIndexAtArc(arc: Float, waterFrames: List<WaterslideTubeMesh.TubeSegmentFrame>): Int {
         var idx = floor(arc / 0.5f).toInt()
@@ -1705,7 +1595,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         )
     }
 
-    // one water sheet (band segment or stream segment): the mesh quad order
     private fun emitWaterSheet(
         seg: WaterslideTubeMesh.TubeSegmentFrame,
         ring: List<Float>, nA: Int,
@@ -1770,8 +1659,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             val uTex = idx.toFloat() / nA * tiles
             val vf = if (!row0) 1f else 0f
             val basesArc = if (!row0) segArc else 0f
-            // downstreamMix = 1 -> the frag mixes to the down sample;
-            // flowSign = -1 subtracts the phase
             val vSpan = (arcBase + basesArc) - phase * 1f
             val u = su0 + frac(uTex) * (su1 - su0)
             val v = sv0 + frac(vSpan) * (sv1 - sv0)
@@ -1779,7 +1666,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         }
 
         for (i in 0 until nA - 1) {
-            // mesh order: (z0,i) (z1,i) (z1,i+1) (z0,i+1)
             val a0 = ringVertex(i, true)
             val a1 = ringVertex(i, false)
             val b1 = ringVertex(i + 1, false)
@@ -1789,27 +1675,20 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             val alphaZ0: Float
             val alphaZ1: Float
             if (hasFade) {
-                // streamArc = arcBase + t * 0.5 (fixed 0.5 arc step per segment)
                 alphaZ0 = 0.75f * (1f - smoothstep(fadeStart, fadeEnd, arcBase + 0f * 0.5f))
                 alphaZ1 = 0.75f * (1f - smoothstep(fadeStart, fadeEnd, arcBase + 0.5f))
             } else {
                 alphaZ0 = 0.75f
                 alphaZ1 = 0.75f
             }
-            // bottom band: water bed arc
             waterQuadDouble(buf, a0, a1, b1, b0,
                 ua.first, ua.second, ud.first, ud.second, uc.first, uc.second, ub.first, ub.second,
                 light, tint[0], tint[1], tint[2], alphaZ0, alphaZ1, alphaZ1, alphaZ0)
-            // top band: water surface arc
             waterQuadDouble(buf, a0, a1, b1, b0,
                 ua.first, ua.second, ud.first, ud.second, uc.first, uc.second, ub.first, ub.second,
                 light, tint[0], tint[1], tint[2], alphaZ0, alphaZ1, alphaZ1, alphaZ0)
         }
     }
-
-    // ------------------------------------------------------------------
-    // thrown stream (predictStreams + tail fade + jitter ramp)
-    // ------------------------------------------------------------------
 
     private fun buildStreamSegments(
         be: WaterslideAnchorBlockEntity, level: Level, c: CurveGeometry,
@@ -1965,10 +1844,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         }
     }
 
-    // ------------------------------------------------------------------
-    // support bracket + beam
-    // ------------------------------------------------------------------
-
     private fun emitSupportBracket(
         be: WaterslideAnchorBlockEntity, level: Level, c: CurveGeometry,
         cutout: VertexConsumer
@@ -2020,11 +1895,14 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val wallOuter = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - WaterslideTubeMesh.BASE_WALL
         val rBase0 = frame.prevRadius
         val rBase1 = frame.currRadius
+        fun sectionMult(profile: FloatArray?, angleDeg: Float): Float =
+            if (profile == null) 1f else SlideProfile.multiplierAt(profile, angleDeg)
+        fun angleDegOf(angleCos: Float, angleSin: Float): Float =
+            Math.toDegrees(kotlin.math.atan2(angleSin.toDouble(), angleCos.toDouble())).toFloat()
         val lat0 = frame.prevLateral
         val lat1 = frame.currLateral
         val arcStart = bezierArcLengthTo(c0, c1, c2, c3, tStart)
 
-        // current cell state, set in the cell loop before each layer/side emit
         var cA0x = 0f
         var sA0x = 0f
         var cA1x = 0f
@@ -2062,7 +1940,13 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
             }
             lat = bezierNormalize(lat)
             val faceUp = bezierNormalize(tangent.cross(lat))
-            val radius = Mth.lerp(t, rBase0, rBase1) + radiusOffset
+            val angleDeg = angleDegOf(angleCos, angleSin)
+            val shapeMult = Mth.lerp(
+                tf,
+                sectionMult(frame.prevProfile, angleDeg),
+                sectionMult(frame.currProfile, angleDeg)
+            )
+            val radius = Mth.lerp(t, rBase0, rBase1) * shapeMult + radiusOffset
             val pos = spine
                 .add(lat.scale((angleCos * radius).toDouble()))
                 .add(faceUp.scale((angleSin * radius).toDouble()))
@@ -2161,9 +2045,16 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                 val a0 = Math.toRadians(cs0.toDouble())
                 val a1 = Math.toRadians(ce1.toDouble())
                 fun pt(ang: Double, rOffset: Float): Vec3 {
+                    val angDeg = Math.toDegrees(ang).toFloat()
+                    val shapeMult = Mth.lerp(
+                        tf,
+                        sectionMult(frame.prevProfile, angDeg),
+                        sectionMult(frame.currProfile, angDeg)
+                    )
+                    val baseR = Mth.lerp(t, rBase0, rBase1) * shapeMult
                     val pos = bezierPoint(c0, c1, c2, c3, t)
-                        .add(lat.scale((cos(ang) * (Mth.lerp(t, rBase0, rBase1) + rOffset)).toDouble()))
-                        .add(up.scale((sin(ang) * (Mth.lerp(t, rBase0, rBase1) + rOffset)).toDouble()))
+                        .add(lat.scale((cos(ang) * (baseR + rOffset)).toDouble()))
+                        .add(up.scale((sin(ang) * (baseR + rOffset)).toDouble()))
                     return pos
                 }
 
@@ -2241,7 +2132,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
                         cm0x = cos(midA).toFloat(); sm0x = sin(midA).toFloat()
                         cSlo = s
                         cShi = e
-                        // inner shell (tube-hugging) + outer shell
                         emitLayer(wallOuter + WaterslideTubeMesh.SUPPORT_HUG_EPSILON)
                         if (supportThickness > 0.001f) {
                             emitLayer(wallOuter + WaterslideTubeMesh.SUPPORT_HUG_EPSILON + supportThickness)
@@ -2271,10 +2161,12 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         val lat = if (atFirst) f.prevLateral else f.currLateral
         val faceUp = tan.cross(lat).normalize()
         val wallOuter = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness() - WaterslideTubeMesh.BASE_WALL
-        val rOut = max(0.1f, if (atFirst) f.prevRadius else f.currRadius) +
+        val attachProfile = if (atFirst) f.prevProfile else f.currProfile
+        val shapeMult = if (attachProfile == null) 1f
+            else SlideProfile.multiplierAt(attachProfile, 270f)
+        val rOut = max(0.1f, (if (atFirst) f.prevRadius else f.currRadius) * shapeMult) +
             wallOuter + ModClientConfig.supportThickness() + WaterslideTubeMesh.SUPPORT_HUG_EPSILON
         val bottomLocal = spine.subtract(faceUp.scale(rOut.toDouble()))
-        // anchor top-face center, in instance space (frames are origin-relative)
         val anchorCenterLocal = Vec3(0.5, 1.0, 0.5)
         val axis = bottomLocal.subtract(anchorCenterLocal)
         val len = axis.length().toFloat()
@@ -2387,7 +2279,6 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         side(n2.scale(-1.0), n1.scale(-1.0))
     }
 
-    // must match the basis used by beamTopOffsets/beamBottomOffsets (same ref)
     private fun orthonormalBasis(axis: Vec3): Pair<Vec3, Vec3> {
         val ref = if (abs(axis.y.toFloat()) < 0.9f) Vec3(0.0, 1.0, 0.0) else Vec3(1.0, 0.0, 0.0)
         var n1 = bezierNormalize(ref.cross(axis))
@@ -2396,3 +2287,7 @@ class WaterslideTubeBlockEntityRenderer(context: BlockEntityRendererProvider.Con
         return Pair(n1, n2)
     }
 }
+
+private fun supportSectionMult(profile: FloatArray?, angleDeg: Float): Float =
+    if (profile == null) 1f else SlideProfile.multiplierAt(profile, angleDeg)
+

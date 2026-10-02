@@ -6,7 +6,6 @@ import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentGeom
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentModelContext
 import net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentModelProvider
 
-// single bar spanning the tube opening at the height of the red handle
 class GrabBarProvider : SlideAttachmentModelProvider() {
 
     companion object {
@@ -17,7 +16,7 @@ class GrabBarProvider : SlideAttachmentModelProvider() {
     override fun boundingBox(ctx: SlideAttachmentModelContext): AABB = barBox(ctx)
 
     override fun parts(ctx: SlideAttachmentModelContext): List<Part> {
-        val inner = (ctx.radius - WALL_INSET).coerceAtLeast(0.05f).toDouble()
+        val inner = innerHalf(ctx)
         val (axisX, axisY) = axis(ctx)
         val height = GrabBarAttachment.height(ctx.data).toDouble()
         return listOf(
@@ -29,7 +28,7 @@ class GrabBarProvider : SlideAttachmentModelProvider() {
     }
 
     private fun barBox(ctx: SlideAttachmentModelContext): AABB {
-        val inner = (ctx.radius - WALL_INSET).coerceAtLeast(0.05f).toDouble()
+        val inner = innerHalf(ctx)
         val (axisX, axisY) = axis(ctx)
         val half = BAR_THICKNESS / 2.0
         val height = GrabBarAttachment.height(ctx.data).toDouble()
@@ -37,6 +36,12 @@ class GrabBarProvider : SlideAttachmentModelProvider() {
             axisX - inner, axisY + height - half, -half,
             axisX + inner, axisY + height + half, half
         )
+    }
+
+    private fun innerHalf(ctx: SlideAttachmentModelContext): Double {
+        val right = ctx.baseRadius * ctx.sectionMultAt(0f) - WALL_INSET
+        val left = ctx.baseRadius * ctx.sectionMultAt(180f) - WALL_INSET
+        return minOf(left, right).coerceAtLeast(0.05f).toDouble()
     }
 
     private fun axis(ctx: SlideAttachmentModelContext): Pair<Double, Double> =

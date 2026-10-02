@@ -25,7 +25,6 @@ public abstract class CoasterBezierHandleEditMixin {
     private static final double LIFT_ORIGIN_OFFSET = 1.4;
     private static final float MIN_DRAG_LIFT = 0.25f;
 
-// actionbar lift readout without the radius offset
     @WrapOperation(
         method = "commitLift(Lnet/minecraft/server/level/ServerPlayer;"
             + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/Vec3;)V",
@@ -40,7 +39,6 @@ public abstract class CoasterBezierHandleEditMixin {
         return be instanceof WaterslideAnchorBlockEntity slide ? value - slide.getRadius() : value;
     }
 
-// keep the drag raw lift free of the radius offset
     @Inject(
         method = "computeLiftBlocksFromVirtualTarget(Lnet/minecraft/world/level/Level;"
             + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/Vec3;)Ljava/lang/Float;",
@@ -61,7 +59,6 @@ public abstract class CoasterBezierHandleEditMixin {
         cir.setReturnValue((float) Mth.clamp(raw, MIN_DRAG_LIFT, maxStored));
     }
 
-// snap target above the radius-shifted hub
     @Inject(
         method = "liftVirtualTargetWorldForStoredLift(Lnet/minecraft/world/level/Level;"
             + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/Vec3;F)"
@@ -81,7 +78,6 @@ public abstract class CoasterBezierHandleEditMixin {
         cir.setReturnValue(cir.getReturnValue().add(dir.scale(be.getRadius())));
     }
 
-// allow the secondary copy so drag preview works from either endpoint
     @Inject(
         method = "fetchPrimary(Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;"
             + "Lnet/minecraft/core/BlockPos;)Lcom/simibubi/create/content/trains/track/BezierConnection;",
@@ -98,6 +94,22 @@ public abstract class CoasterBezierHandleEditMixin {
         BezierConnection c = ape.getAnchorPeerCurvesView().get(remote);
         if (c != null && !c.isPrimary() && WaterslideTrackMaterials.isWaterslide(c)) {
             cir.setReturnValue(c.secondary());
+        }
+    }
+
+    @Inject(
+        method = "handleAxisClampReference(Lnet/minecraft/world/level/Level;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;)"
+            + "Ldev/silvergold/simulatedcoasters/track/CoasterBezierHandleEdit$HandleAxisClampSpec;",
+        at = @At("HEAD"),
+        cancellable = true
+    )
+    private static void waterslide$skipAxisClamp(Level level, BlockPos from, BlockPos to, CallbackInfoReturnable<?> cir) {
+        if (!ModConfig.INSTANCE.disableSlideCurveAngleLimit()) return;
+        BezierConnection c = CoasterBezierHandleEdit.fetchPrimary(level, from, to);
+        if (c == null) c = CoasterBezierHandleEdit.fetchPrimary(level, to, from);
+        if (c != null && WaterslideTrackMaterials.isWaterslide(c)) {
+            cir.setReturnValue(null);
         }
     }
 

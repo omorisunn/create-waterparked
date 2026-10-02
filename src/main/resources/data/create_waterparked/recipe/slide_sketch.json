@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    {
+      "item": "minecraft:paper"
+    },
+    {
+      "item": "create_waterparked:waterslide_track"
+    }
+  ],
+  "result": {
+    "count": 1,
+    "id": "create_waterparked:slide_sketch"
+  }
+}

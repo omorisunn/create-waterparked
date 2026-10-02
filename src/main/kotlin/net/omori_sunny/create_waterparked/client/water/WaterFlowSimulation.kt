@@ -13,6 +13,7 @@ import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorCon
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideSectorLayout
 import net.omori_sunny.create_waterparked.content.waterslide.WaterslideTrackMaterials
 import net.omori_sunny.create_waterparked.game.SlideCurveGeometry
+import net.omori_sunny.create_waterparked.game.SlideProfile
 import net.omori_sunny.create_waterparked.game.physics.SlideSpace
 import net.omori_sunny.create_waterparked.game.water.ServerWaterSimulation
 import net.omori_sunny.create_waterparked.network.WaterslideWaterSyncPayload
@@ -54,14 +55,23 @@ object WaterFlowSimulation {
         val r1: Float,
         val edge: Pair<Long, Long>,
         val lat: Vec3,
-        val up: Vec3
-    )
+        val up: Vec3,
+        val profile: FloatArray? = null
+    ) {
+        fun outerAt(t: Float, radial: Vec3): Float {
+            val centerline = r0 + (r1 - r0) * t
+            if (profile == null || radial.lengthSqr() < 1.0E-12) return centerline
+            val angle = Math.toDegrees(
+                kotlin.math.atan2(radial.dot(up), radial.dot(lat))
+            ).toFloat()
+            return centerline * SlideProfile.multiplierAt(profile, angle)
+        }
+    }
 
     private val fields = HashMap<String, HashMap<Pair<Long, Long>, CurveWater>>()
     private val segCache = HashMap<Pair<ResourceKey<Level>, String>, Pair<String, List<TubeSeg>>>()
     private var version = 0
     private var debugPolylines: List<List<Vec3>> = emptyList()
-    // cooldown cache: thrown-stream trajectories recompute only on a sync refresh
     private var streamCacheVersion = -1
     private val streamCache = HashMap<String, Pair<List<List<Vec3>>, List<List<Vec3>>>>()
 
@@ -86,7 +96,6 @@ object WaterFlowSimulation {
         version++
     }
 
-    // Ponder storyboard: inject a demo flow field so the BER water band scrolls
     @JvmStatic
     fun injectPonderField(level: Level, bc: BezierConnection, speed: Float) {
         val edge = edgeKeyOf(bc)
@@ -177,7 +186,6 @@ object WaterFlowSimulation {
         return null
     }
 
-    // contact check against the rendered water data, matches the visible band
     @JvmStatic
     fun isInsideWateredTube(level: Level, pos: Vec3, margin: Double = 0.6): Boolean {
         val seen = HashSet<Pair<Long, Long>>()
@@ -206,7 +214,6 @@ object WaterFlowSimulation {
         return false
     }
 
-    // cached thrown stream polylines for the splash spawner
     @JvmStatic
     fun hasAnyWaterFields(): Boolean = fields.values.any { map -> map.values.any { it.exists } }
 
@@ -222,12 +229,10 @@ object WaterFlowSimulation {
 
     data class StreamContact(val pos: Vec3, val velocity: Vec3)
 
-    // stream velocity at the closest polyline point, finite difference of the 0.05s steps
     @JvmStatic
     fun streamVelocityAt(level: Level, pos: Vec3, radius: Double): Vec3? =
         streamContactAt(level, pos, radius)?.velocity
 
-    // closest point on a thrown stream polyline within radius, plus its velocity
     @JvmStatic
     fun streamContactAt(level: Level, pos: Vec3, radius: Double): StreamContact? {
         val maxDistSq = radius * radius
@@ -263,7 +268,6 @@ object WaterFlowSimulation {
         return poly[i1].subtract(poly[i0]).scale(1.0 / span)
     }
 
-    // collision box contact check, clamped sphere distance to the tube
     @JvmStatic
     fun intersectsWateredTubeBox(level: Level, box: AABB, space: SlideSpace? = null): Boolean {
         val seen = HashSet<Pair<Long, Long>>()
@@ -323,7 +327,6 @@ object WaterFlowSimulation {
         return false
     }
 
-    // diagnostic distance to the closest watered curve surface, negative inside
     @JvmStatic
     fun debugNearestWateredTube(level: Level, pos: Vec3): Double {
         var best = Double.MAX_VALUE
@@ -367,8 +370,6 @@ object WaterFlowSimulation {
     private fun edgeKey(a: Long, b: Long): Pair<Long, Long> =
         if (a <= b) a to b else b to a
 
-    // exit stream prediction, client side visual only
-
     private class SegGrid {
         private val buckets = HashMap<Long, MutableList<TubeSeg>>()
 
@@ -404,8 +405,8 @@ object WaterFlowSimulation {
                             val lenSq = ab.lengthSqr()
                             if (lenSq < 1.0E-12) continue
                             val t = ((p.subtract(s.a)).dot(ab) / lenSq).coerceIn(0.0, 1.0)
-                            val r = (s.r0 + (s.r1 - s.r0) * t).toDouble()
                             val closest = s.a.add(ab.scale(t))
+                            val r = s.outerAt(t.toFloat(), p.subtract(closest)).toDouble()
                             val d = p.distanceToSqr(closest)
                             if (d < r * r && d < bestD) {
                                 bestD = d
@@ -428,7 +429,6 @@ object WaterFlowSimulation {
         }
     }
 
-    // outer and inner ring polylines of the exit water sheet
     @JvmStatic
     fun predictStreams(
         level: Level,
@@ -445,7 +445,6 @@ object WaterFlowSimulation {
         gravity: Vec3 = Vec3(0.0, -32.0, 0.0),
         sourceSpace: SlideSpace = SlideSpace.Main
     ): Pair<List<List<Vec3>>, List<List<Vec3>>>? {
-        // cooldown: only recompute after a sync refresh (version bump)
         if (streamCacheVersion != version) {
             streamCacheVersion = version
             streamCache.clear()
@@ -459,7 +458,6 @@ object WaterFlowSimulation {
             if (own.contains(hashVec(s.a)) || own.contains(hashVec(s.b))) continue
             grid.add(s)
         }
-        // fixed angular grid so the sheet lines up ring to ring at the mouth
         val count = 16
         val outer = ArrayList<List<Vec3>>(count)
         val inner = ArrayList<List<Vec3>>(count)
@@ -474,7 +472,6 @@ object WaterFlowSimulation {
             outer += traceStream(level, outerPos, exitVel, grid, gravity)
             inner += traceStream(level, innerPos, exitVel, grid, gravity)
         }
-        // keep every ray full length, the end fades instead of cutting
         if (outer.any { it.size >= 2 } && inner.any { it.size >= 2 }) {
             val result = outer to inner
             streamCache[cacheKey] = result
@@ -490,7 +487,6 @@ object WaterFlowSimulation {
         grid: SegGrid,
         gravity: Vec3
     ): List<Vec3> {
-        // strict physics, seconds, blocks per second
         val dt = 0.05
         val poly = ArrayList<Vec3>()
         var p = pos
@@ -500,7 +496,6 @@ object WaterFlowSimulation {
         for (step in 0 until 240) {
             val v0 = v
             val delta = v0.scale(dt)
-            // sweep the ballistic step in sub samples so fast streams cannot tunnel
             val subSteps = max(1, Math.ceil(delta.length() / 0.25).toInt())
             var hitFrac: Double? = null
             for (j in 1..subSteps) {
@@ -513,7 +508,6 @@ object WaterFlowSimulation {
                 }
                 val hitSeg = grid.hit(q)
                 if (hitSeg != null && streamHitsWall(level, hitSeg, q)) {
-                    // keep flying a short stretch past the pipe before cutting
                     grace++
                     if (grace >= 8) {
                         hitFrac = f
@@ -532,7 +526,6 @@ object WaterFlowSimulation {
         return poly
     }
 
-    // a thrown ray cuts only on a block sector wall, open sectors keep flying
     private fun streamHitsWall(level: Level, seg: TubeSeg, p: Vec3): Boolean {
         val a = BlockPos.of(seg.edge.first)
         val b = BlockPos.of(seg.edge.second)
@@ -569,7 +562,6 @@ object WaterFlowSimulation {
                 val b = bc.bePositions.getSecond()
                 val r0 = SlideCurveGeometry.radiusAt(level, a)
                 val r1 = SlideCurveGeometry.radiusAt(level, b)
-                // same sampling as the flywheel renderer, collision equals the visible tube
                 val segmentSpace = SlideSpace.ofLevelAndSub(level, be.blockPos)
                 val frames = WaterslideTubeMesh.sampleSegments(level, bc, r0, r1, Vec3.ZERO)
                 val radiusScale = radiusScaleBetween(level, segmentSpace, sourceSpace)
@@ -584,7 +576,8 @@ object WaterFlowSimulation {
                     out += TubeSeg(
                         fa, fb,
                         (f.prevRadius * radiusScale), (f.currRadius * radiusScale),
-                        edgeKeyOf(bc), lat, up
+                        edgeKeyOf(bc), lat, up,
+                        SlideProfile.blendShared(f.prevProfile, f.currProfile, 0.5f)
                     )
                 }
             }
@@ -594,7 +587,6 @@ object WaterFlowSimulation {
         return out
     }
 
-    // grid segments live in the source space, other spaces map through their poses
     private fun mapToSpace(level: Level, local: Vec3, from: SlideSpace, to: SlideSpace): Vec3 {
         if (from == to) return local
         val world = spaceToWorld(level, from, local)
@@ -669,7 +661,8 @@ object WaterFlowSimulation {
                     .append(bc.starts.getSecond().y).append(',')
                     .append(bc.starts.getSecond().z).append(',')
                     .append(SlideCurveGeometry.radiusAt(level, a)).append(',')
-                    .append(SlideCurveGeometry.radiusAt(level, b)).append(';')
+                    .append(SlideCurveGeometry.radiusAt(level, b)).append(',')
+                    .append(be.curveProfileFor(e.key)?.signature() ?: "-").append(';')
             }
         }
         return sb.toString()

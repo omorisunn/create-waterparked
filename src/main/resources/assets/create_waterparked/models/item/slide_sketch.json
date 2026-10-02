@@ -1,0 +1,14 @@
+{
+	"parent": "minecraft:item/generated",
+	"textures": {
+		"layer0": "create_waterparked:item/slide_sketch"
+	},
+	"overrides": [
+		{
+			"predicate": {
+				"create_waterparked:edited": 1.0
+			},
+			"model": "create_waterparked:item/edited_slide_sketch"
+		}
+	]
+}

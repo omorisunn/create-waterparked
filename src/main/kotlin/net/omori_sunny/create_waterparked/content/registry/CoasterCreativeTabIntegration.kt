@@ -3,7 +3,6 @@ package net.omori_sunny.create_waterparked.content.registry
 import dev.silvergold.simulatedcoasters.SimulatedCoasters
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent
 
-// adds Waterparked items to the Simulated Coasters creative tab
 object CoasterCreativeTabIntegration {
 
     @JvmStatic
@@ -13,7 +12,8 @@ object CoasterCreativeTabIntegration {
         event.accept(ModItems.WATERSLIDE_ANCHOR)
         event.accept(ModItems.ROLLER_CONVEYOR)
         event.accept(ModItems.COKE_TUBE_DRINK)
-        // only the default red boat in the creative tab
+        event.accept(ModItems.SLIDE_SKETCH)
+        event.accept(ModItems.SLIDE_DRAFTING_TABLE)
         val boat = net.minecraft.world.item.ItemStack(ModItems.INFLATABLE_BOAT_1X2)
         boat.set(
             net.minecraft.core.component.DataComponents.DYED_COLOR,
