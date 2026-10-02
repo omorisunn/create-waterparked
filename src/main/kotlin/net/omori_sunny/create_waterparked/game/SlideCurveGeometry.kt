@@ -90,7 +90,8 @@ object SlideCurveGeometry {
         fun sectionAt(t: Float): FloatArray? {
             if (own == null && before == null && after == null) return null
             var s = SlideProfile.blendShared(before?.radii, own?.radii, SlideProfile.smoothstep((t / window0).coerceIn(0f, 1f)))
-            s = SlideProfile.blendShared(s, after?.radii, SlideProfile.smoothstep(((1f - t) / window1).coerceIn(0f, 1f)))
+            // own at t <= 1-window1, the downstream neighbour's shape at t=1
+            s = SlideProfile.blendShared(s, after?.radii, SlideProfile.smoothstep(((t - (1f - window1)) / window1).coerceIn(0f, 1f)))
             return s
         }
 
@@ -156,8 +157,9 @@ object SlideCurveGeometry {
         val window0 = (transitionOf(own, before) / length).toFloat().coerceIn(0f, 0.45f)
         val window1 = (transitionOf(own, after) / length).toFloat().coerceIn(0f, 0.45f)
         return { t ->
-            var s = SlideProfile.blend(before?.radii, own?.radii, SlideProfile.smoothstep((t / window0).coerceIn(0f, 1f)))
-            s = SlideProfile.blend(s, after?.radii, SlideProfile.smoothstep(((1f - t) / window1).coerceIn(0f, 1f)))
+            var s = SlideProfile.blendShared(before?.radii, own?.radii, SlideProfile.smoothstep((t / window0).coerceIn(0f, 1f)))
+            // own at t <= 1-window1, the downstream neighbour's shape at t=1
+            s = SlideProfile.blendShared(s, after?.radii, SlideProfile.smoothstep(((t - (1f - window1)) / window1).coerceIn(0f, 1f)))
             s
         }
     }

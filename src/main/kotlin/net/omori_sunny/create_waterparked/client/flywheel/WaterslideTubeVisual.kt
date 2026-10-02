@@ -191,19 +191,21 @@ class WaterslideTubeVisual(
         return sb.toString()
     }
 
-    private var lastPollTick = -1L
+    // poll roughly every 20 frames (not every frame: the signature walk reads every neighbour
+    // BE) and every frame for the first moments after creation, while chunk data still arrives.
+    // frame counting, not gameTime: sub level clocks do not reliably advance, and a gameTime
+    // keyed poll fires once and then never again inside a plot
+    private var pollCounter = 0
 
     override fun beginFrame(ctx: DynamicVisual.Context) {
-        val lvl0 = be.level
-        if (lvl0 != null) {
-            val tick = lvl0.gameTime
-            if (tick % 20 == 0L && tick != lastPollTick) {
-                lastPollTick = tick
-                val sig = dataSignature()
-                if (sig != lastDataSig) {
-                    lastDataSig = sig
-                    collect()
-                }
+        pollCounter++
+        if (pollCounter <= 100 || pollCounter % 20 == 0) {
+            val sig = dataSignature()
+            if (sig != lastDataSig) {
+                collect()
+                // only remember the signature once the rebuild went through, so a failed
+                // collect retries on the next poll instead of being pinned to the bad state
+                lastDataSig = sig
             }
         }
         val lvl = be.level ?: return
@@ -515,6 +517,8 @@ class WaterslideTubeVisual(
             if (frame.midProfile == null) models
             else WaterslideTubeMesh.modelsFor(config, (frame.prevRadius + frame.currRadius) * 0.5f, frame.midProfile)
 
+        // groups by cross-section shape only: wall uvs fold in the shader from real world arcs,
+        // so the baked radius no longer influences tiling
         private fun frameShapeGroups(): List<Pair<FloatArray?, IntArray>> {
             val groups = LinkedHashMap<String, MutableList<Int>>()
             val shapes = HashMap<String, FloatArray?>()
@@ -1466,6 +1470,7 @@ class WaterslideTubeVisual(
                         inst.wallThickness = wallThickness
                         inst.mirror = mirror
                         inst.isWater = 0f
+                        inst.arcBase = wallPrefixArcs[i]
                         if (spr != null) {
                             inst.spriteU0 = spr[0]; inst.spriteU1 = spr[1]
                             inst.spriteV0 = spr[2]; inst.spriteV1 = spr[3]

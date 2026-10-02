@@ -24,6 +24,32 @@ void flw_materialFragment() {
         flw_sampleColor = mix(up, down, flw_tubeExtra.y);
         flw_fragColor = flw_vertexColor * flw_sampleColor;
         return;
+    } else if (flw_vertexTexCoord.x < 0.0) {
+        // wall shells, fins and caps: raw world-arc block coordinates from the vertex shader,
+        // folded here. Folding per fragment keeps interpolation continuous, so quads crossing
+        // a tile boundary never shear; every tile is exactly one block and partial tiles at
+        // fins and caps simply truncate at their outer edge
+        float u = flw_tubeSprite.x + fract(-flw_vertexTexCoord.x) * (flw_tubeSprite.y - flw_tubeSprite.x);
+        float vRaw = flw_vertexTexCoord.y;
+        float v;
+        if (flw_tubeFlags.w > 1.5) {
+            // glass: clamp the two end bands of the curve into the sprite border rows,
+            // the body tiles normally; total arc arrives in flw_tubeExtra.y
+            float total = max(flw_tubeExtra.y, 0.1);
+            float gTexH = clamp(round((flw_tubeSprite.w - flw_tubeSprite.z) * 1024.0), 1.0, 64.0);
+            float vPx = -1.0;
+            if (vRaw < borderPx / 16.0) {
+                vPx = max(vRaw * 16.0, 0.05);
+            } else if (vRaw > total - borderPx / 16.0) {
+                vPx = min(gTexH - borderPx + (vRaw - (total - borderPx / 16.0)) * 16.0, gTexH - 0.05);
+            }
+            v = vPx >= 0.0
+                ? flw_tubeSprite.z + (vPx / gTexH) * (flw_tubeSprite.w - flw_tubeSprite.z)
+                : flw_tubeSprite.z + fract(vRaw) * (flw_tubeSprite.w - flw_tubeSprite.z);
+        } else {
+            v = flw_tubeSprite.z + fract(vRaw) * (flw_tubeSprite.w - flw_tubeSprite.z);
+        }
+        uv = vec2(u, v);
     } else {
         // atlas-space sprite uv is baked into the mesh (kept clean for the
         // shaderpack path which samples texture() with the same vertex uv);

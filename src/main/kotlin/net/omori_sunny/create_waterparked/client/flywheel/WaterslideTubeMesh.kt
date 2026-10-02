@@ -440,6 +440,38 @@ object WaterslideTubeMesh {
         fun wallMultiplier(angleDeg: Float): Float =
             if (profile == null) 1f else SlideProfile.multiplierAt(profile, angleDeg)
 
+        // trapezoid integral of the multiplier over an angle span, walking the profile's bins
+        fun arcBetween(fromDeg: Float, toDeg: Float): Float {
+            if (toDeg - fromDeg < 1.0E-4f) return 0f
+            val steps = 8
+            var sum = 0f
+            for (i in 0 until steps) {
+                val a0 = fromDeg + (toDeg - fromDeg) * i / steps
+                val a1 = fromDeg + (toDeg - fromDeg) * (i + 1) / steps
+                sum += 0.5f * (wallMultiplier(a0) + wallMultiplier(a1)) *
+                    Math.toRadians((a1 - a0).toDouble()).toFloat()
+            }
+            return sum
+        }
+
+        // cumulative unit-ring arc across the section grid, integrated EXACTLY against the
+        // 64-bin multiplier table (a per-cell lerp under-samples sharp section corners and
+        // compresses the tiles there); scaled by the bake radius so u is already in world
+        // blocks - one constant per curve, no per-frame radius steps to spiral the seams
+        val gridArc = FloatArray(crossN + 1)
+        for (j in 0 until crossN) {
+            gridArc[j + 1] = gridArc[j] +
+                arcBetween(gridAnchor + j * degStep, gridAnchor + (j + 1) * degStep)
+        }
+        // raw domain [gridAnchor, gridAnchor+360] with NO modulo: u must stay monotonic or the
+        // one quad crossing the ring seam sweeps BACKWARDS through the whole circumference
+        // compressed into a single grid cell
+        fun unitArcRaw(angleDeg: Float): Float {
+            val fi = ((angleDeg - gridAnchor) / degStep).coerceIn(0f, crossN.toFloat())
+            val j = fi.toInt().coerceIn(0, crossN - 1)
+            return gridArc[j] + arcBetween(gridAnchor + j * degStep, gridAnchor + j * degStep + (fi - j) * degStep)
+        }
+
         val wallVerts = ArrayList<V>()
         val sectorBuckets = LinkedHashMap<String, ArrayList<V>>()
         val startCapVerts = ArrayList<V>()
@@ -456,6 +488,18 @@ object WaterslideTubeMesh {
             translucent: Boolean = false,
             capV: Boolean = false
         ) {
+            // negative u marks world-arc wall vertices: the shader folds them into strict
+            // one-block squares from real measurements; baked atlas folding only covers u >= 0
+            if (u < 0f) {
+                dst += V(
+                    x, y, z,
+                    1f, 1f, 1f, 1f,
+                    u, v,
+                    0, 0x00F000F0,
+                    nx, ny, nz
+                )
+                return
+            }
 
             val uTilesRaw = if (sideWall)
                 1f
@@ -514,25 +558,32 @@ object WaterslideTubeMesh {
             val s = sin(a).toFloat() * m
             val nx = cos(a).toFloat()
             val ny = sin(a).toFloat()
-            val innerR = 0.92f
+            // the inner edge vertex equals the inner shell vertex exactly (same position, the
+            // shader gives the marked branch the same inner-surface radius), so the fin always
+            // spans precisely the wall band
+            val innerR = 1f
             val markZ = 0.25f
             val markXY = kotlin.math.sqrt(1f - markZ * markZ)
+            // world-arc tiling like the shells: u runs across the fin in blocks (0.001 offset
+            // keeps the inner edge negative), v is the negative-z side-wall sentinel, both
+            // folded by the fragment shader into exact one-block tiles
+            val thickBlocks = m * net.omori_sunny.create_waterparked.config.ModConfig.wallThickness()
+            val uOuter = -(thickBlocks + 1f)
+            val uInner = -1f
             val sideRadians = 0.2f / 16f
             for (k in 0 until LENGTH_SUBDIVISIONS) {
                 val z0 = k / (2f * LENGTH_SUBDIVISIONS)
                 val z1 = (k + 1) / (2f * LENGTH_SUBDIVISIONS)
-                val v0 = k / LENGTH_SUBDIVISIONS.toFloat()
-                val v1 = (k + 1) / LENGTH_SUBDIVISIONS.toFloat()
                 if (dir > 0f) {
-                    add(dst, c, s, z0, nx, ny, 0f, 0f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
-                    add(dst, c * innerR, s * innerR, z0, nx * markXY, ny * markXY, markZ, 1f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
-                    add(dst, c * innerR, s * innerR, z1, nx * markXY, ny * markXY, markZ, 1f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
-                    add(dst, c, s, z1, nx, ny, 0f, 0f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c, s, z0, nx, ny, 0f, uOuter, -z0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z0, nx * markXY, ny * markXY, markZ, uInner, -z0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z1, nx * markXY, ny * markXY, markZ, uInner, -z1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c, s, z1, nx, ny, 0f, uOuter, -z1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
                 } else {
-                    add(dst, c, s, z0, nx, ny, 0f, 0f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
-                    add(dst, c, s, z1, nx, ny, 0f, 0f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
-                    add(dst, c * innerR, s * innerR, z1, nx * markXY, ny * markXY, markZ, 1f, v1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
-                    add(dst, c * innerR, s * innerR, z0, nx * markXY, ny * markXY, markZ, 1f, v0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c, s, z0, nx, ny, 0f, uOuter, -z0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c, s, z1, nx, ny, 0f, uOuter, -z1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z1, nx * markXY, ny * markXY, markZ, uInner, -z1, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
+                    add(dst, c * innerR, s * innerR, z0, nx * markXY, ny * markXY, markZ, uInner, -z0, sideRadians, texW, texH, border, su0, su1, sv0, sv1)
                 }
             }
         }
@@ -568,13 +619,19 @@ object WaterslideTubeMesh {
                 for (j in 0 until crossN) {
                     val raw0 = gridAnchor + j * degStep
                     val raw1 = gridAnchor + (j + 1) * degStep
-                    val cells = if (raw1 <= 360f) listOf(raw0 to raw1)
-                    else if (raw0 >= 360f) listOf(raw0 - 360f to raw1 - 360f)
-                    else listOf(raw0 to 360f, 0f to raw1 - 360f)
-                    for ((cg0, cg1) in cells) {
+                    // each cell carries (wrapped, raw) angles: wrapped for the interval math and
+                    // geometry, raw for the arc - the seam quad must see u grow to the full ring
+                    val cells = if (raw1 <= 360f) listOf((raw0 to raw1) to (raw0 to raw1))
+                    else if (raw0 >= 360f) listOf((raw0 - 360f to raw1 - 360f) to (raw0 to raw1))
+                    else listOf((raw0 to 360f) to (raw0 to 360f), (0f to raw1 - 360f) to (360f to raw1))
+                    for ((wrapped, raw) in cells) {
+                        val (cg0, cg1) = wrapped
+                        val (rr0, rr1) = raw
                         val s = max(cg0, lo)
                         val e = min(cg1, hi)
                         if (e <= s) continue
+                        val arcS = unitArcRaw(rr0 + (s - cg0))
+                        val arcE = unitArcRaw(rr0 + (e - cg0))
                         val f0 = (s + wrap - startNorm) / sectorDegrees
                         val f1 = (e + wrap - startNorm) / sectorDegrees
                         val a0 = Math.toRadians(s.toDouble())
@@ -589,40 +646,52 @@ object WaterslideTubeMesh {
                         val cm = cos(midA).toFloat()
                         val sm = sin(midA).toFloat()
 
+                        // wall shells carry arc*radius (world blocks at the bake radius, one
+                        // constant per curve) as negative u; v carries the frame parameter
+                        val uArc0 = -(arcS * radius + 1f)
+                        val uArc1 = -(arcE * radius + 1f)
+                        val wallThickBlocks = net.omori_sunny.create_waterparked.config.ModConfig.wallThickness()
+
                         for (k in 0 until LENGTH_SUBDIVISIONS) {
                             val z0 = k / (2f * LENGTH_SUBDIVISIONS)
                             val z1 = (k + 1) / (2f * LENGTH_SUBDIVISIONS)
                             val v0 = k / LENGTH_SUBDIVISIONS.toFloat()
                             val v1 = (k + 1) / LENGTH_SUBDIVISIONS.toFloat()
 
-                            add(bucket, c0, s0, z0, -cm, -sm, 0f, f0, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c0, s0, z0, -cm, -sm, 0f, f0, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c0, s0, z1, -cm, -sm, 0f, f0, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c0, s0, z1, -cm, -sm, 0f, f0, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c1, s1, z1, -cm, -sm, 0f, f1, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c1, s1, z1, -cm, -sm, 0f, f1, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c1, s1, z0, -cm, -sm, 0f, f1, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c1, s1, z0, -cm, -sm, 0f, f1, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c0, s0, z0, -cm, -sm, 0f, uArc0, z0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z0, -cm, -sm, 0f, uArc0, z0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c0, s0, z1, -cm, -sm, 0f, uArc0, z1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z1, -cm, -sm, 0f, uArc0, z1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z1, -cm, -sm, 0f, uArc1, z1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z1, -cm, -sm, 0f, uArc1, z1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z0, -cm, -sm, 0f, uArc1, z0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z0, -cm, -sm, 0f, uArc1, z0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
 
-                            add(bucket, c0, s0, z0, cm, sm, 0f, f0, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c0, s0, z0, cm, sm, 0f, f0, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c1, s1, z0, cm, sm, 0f, f1, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c1, s1, z0, cm, sm, 0f, f1, v0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c1, s1, z1, cm, sm, 0f, f1, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c1, s1, z1, cm, sm, 0f, f1, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(bucket, c0, s0, z1, cm, sm, 0f, f0, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
-                            add(wallVerts, c0, s0, z1, cm, sm, 0f, f0, v1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c0, s0, z0, cm, sm, 0f, uArc0, z0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z0, cm, sm, 0f, uArc0, z0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z0, cm, sm, 0f, uArc1, z0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z0, cm, sm, 0f, uArc1, z0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c1, s1, z1, cm, sm, 0f, uArc1, z1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c1, s1, z1, cm, sm, 0f, uArc1, z1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(bucket, c0, s0, z1, cm, sm, 0f, uArc0, z1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
+                            add(wallVerts, c0, s0, z1, cm, sm, 0f, uArc0, z1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass)
                         }
 
-                        add(endCapVerts, c0, s0, 0f, c0, s0, 1f, f0, 1f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(endCapVerts, c1, s1, 0f, c1, s1, 1f, f1, 1f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(endCapVerts, c1, s1, 0f, -c1, -s1, 1f, f1, 0f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(endCapVerts, c0, s0, 0f, -c0, -s0, 1f, f0, 0f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        // caps tile the same way as everything else: u across the wall thickness
+                        // in blocks (clamped partial tile), v along the ring arc in blocks; the
+                        // -(x+2) v encoding marks a cap ring for the vertex shader
+                        val capUOuter = -(0.5f * (m0 + m1) * wallThickBlocks + 1f)
+                        val capV0 = -(arcS * radius + 2f)
+                        val capV1 = -(arcE * radius + 2f)
+                        add(endCapVerts, c0, s0, 0f, c0, s0, 1f, capUOuter, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(endCapVerts, c1, s1, 0f, c1, s1, 1f, capUOuter, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(endCapVerts, c1, s1, 0f, -c1, -s1, 1f, -1f, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(endCapVerts, c0, s0, 0f, -c0, -s0, 1f, -1f, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
 
-                        add(startCapVerts, c0, s0, 0f, c0, s0, -1f, f0, 1f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(startCapVerts, c0, s0, 0f, -c0, -s0, -1f, f0, 0f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(startCapVerts, c1, s1, 0f, -c1, -s1, -1f, f1, 0f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
-                        add(startCapVerts, c1, s1, 0f, c1, s1, -1f, f1, 1f, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c0, s0, 0f, c0, s0, -1f, capUOuter, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c0, s0, 0f, -c0, -s0, -1f, -1f, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c1, s1, 0f, -c1, -s1, -1f, -1f, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(startCapVerts, c1, s1, 0f, c1, s1, -1f, capUOuter, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
                     }
                 }
             }
