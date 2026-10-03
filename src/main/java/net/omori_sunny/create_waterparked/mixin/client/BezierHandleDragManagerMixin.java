@@ -127,9 +127,18 @@ public abstract class BezierHandleDragManagerMixin {
 
     @Inject(method = "clientTick(Lnet/minecraft/client/Minecraft;)V", at = @At("HEAD"), cancellable = true)
     private static void waterslide$clientTick(Minecraft mc, CallbackInfo ci) {
-        WaterslideRadiusEdit.mixinClientTick(mc);
-        WaterslideSectorEdit.mixinClientTick(mc);
-        if (WaterslideRadiusEdit.isDragging() || WaterslideSectorEdit.isDraggingControlPoint() ||
+        net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor.onClientTickRaw(mc);
+        if (!net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor
+            .isHoveringOrDragging(mc)) {
+            WaterslideRadiusEdit.mixinClientTick(mc);
+            WaterslideSectorEdit.mixinClientTick(mc);
+        }
+        if ((net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor.isSession(mc) &&
+            mc.options.keyUse.isDown()) ||
+            net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor.isDragging() ||
+            net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor.isHoveringOrDragging(mc) ||
+            net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor.isLibPreviewHeld() ||
+            WaterslideRadiusEdit.isDragging() || WaterslideSectorEdit.isDraggingControlPoint() ||
             net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
                 .anyDragging()) {
             ci.cancel();
@@ -150,9 +159,28 @@ public abstract class BezierHandleDragManagerMixin {
         }
     }
 
+
+    @WrapOperation(
+        method = "shouldShowBezierEditAnchorStatusHud(Lnet/minecraft/client/Minecraft;)Z",
+        at = @At(
+            value = "INVOKE",
+            target = "Lcom/tterrag/registrate/util/entry/ItemEntry;isIn(Lnet/minecraft/world/item/ItemStack;)Z"
+        )
+    )
+    private static boolean pliers$hudGate(
+        com.tterrag.registrate.util.entry.ItemEntry<?> entry,
+        net.minecraft.world.item.ItemStack stack,
+        com.llamalad7.mixinextras.injector.wrapoperation.Operation<Boolean> original
+    ) {
+        return original.call(entry, stack) ||
+            net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor.isPlierStack(stack);
+    }
+
     private static boolean hoveringOrDraggingAny(Minecraft mc) {
         return WaterslideRadiusEdit.isHoveringOrDragging(mc) ||
             WaterslideSectorEdit.isHoveringOrDraggingControlPoint(mc) ||
+            net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor
+                .isHoveringOrDragging(mc) ||
             net.omori_sunny.create_waterparked.client.editor.controlpoint.SlideControlPointEditor
                 .anyHoveringOrDragging(mc);
     }

@@ -65,7 +65,8 @@
     "ponder.WaterslidePonderLevelAccessor",
     "ponder.WaterslidePonderLevelInvoker",
     "ponder.WaterslideSchematicLevelAccessor",
-    "ponder.WaterslidePonderSceneRegistryMixin"
+    "ponder.WaterslidePonderSceneRegistryMixin",
+    "client.CoasterWrenchCurveAnchorOutlineClientMixin"
   ],
   "injectors": {
     "defaultRequire": 1

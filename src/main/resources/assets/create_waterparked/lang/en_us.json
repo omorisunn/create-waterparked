@@ -150,5 +150,19 @@
   "create_waterparked.ponder.roller_ponder_1.text_2": "A wrench on the shaft flips its latch",
   "create_waterparked.ponder.roller_ponder_1.text_3": "Unlatched, a tilted arm lets its loads slide on their own",
   "block.create_waterparked.roller_conveyor": "Roller Conveyor",
-  "item.create_waterparked.roller_conveyor": "Roller Conveyor"
+  "item.create_waterparked.roller_conveyor": "Roller Conveyor",
+  "item.create_waterparked.brass_plier": "Brass Pliers",
+  "item.create_waterparked.brass_plier.tooltip.summary": "A precision tool for _tuning slide control points_",
+  "item.create_waterparked.brass_plier.tooltip.condition": "When used on an anchor",
+  "item.create_waterparked.brass_plier.tooltip.behaviour": "drag handles along axes, planes or fixed-length arcs with neighbour snapping",
+  "item.create_waterparked.brass_plier.tooltip.dial.condition": "When held",
+  "item.create_waterparked.brass_plier.tooltip.dial.behaviour": "hold Ctrl to open the settings rings",
+  "create_waterparked.pliers.align.cartesian": "Cartesian",
+  "create_waterparked.pliers.align.polar": "Polar",
+  "create_waterparked.pliers.space.absolute": "Absolute",
+  "create_waterparked.pliers.space.relative": "Relative",
+  "create_waterparked.pliers.plane.oxy": "Oxy",
+  "create_waterparked.pliers.plane.oxz": "Oxz",
+  "create_waterparked.pliers.plane.oyz": "Oyz",
+  "create_waterparked.pliers.activated": "Pliers edit session bound to this anchor"
 }

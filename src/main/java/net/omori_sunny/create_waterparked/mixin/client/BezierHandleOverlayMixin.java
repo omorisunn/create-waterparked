@@ -33,6 +33,48 @@ public abstract class BezierHandleOverlayMixin {
         return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
     }
 
+    @WrapOperation(
+        method = "renderWrenchRangeCurves(Lnet/minecraft/client/Minecraft;"
+            + "Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;"
+            + "Lnet/minecraft/world/phys/Vec3;Lorg/joml/Matrix4f;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lcom/tterrag/registrate/util/entry/ItemEntry;isIn(Lnet/minecraft/world/item/ItemStack;)Z"
+        )
+    )
+    private static boolean pliers$overlayGate(
+        com.tterrag.registrate.util.entry.ItemEntry<?> entry,
+        net.minecraft.world.item.ItemStack stack,
+        Operation<Boolean> original
+    ) {
+        return original.call(entry, stack) ||
+            net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor.isPlierStack(stack);
+    }
+
+    @WrapOperation(
+        method = "renderCurve",
+        at = @At(
+            value = "INVOKE",
+            target = "Ldev/silvergold/simulatedcoasters/client/track/BezierHandleOverlay;"
+                + "handleControlPointWorld(Lcom/simibubi/create/content/trains/track/BezierConnection;"
+                + "Lcom/simibubi/create/content/trains/track/BezierConnection;I)"
+                + "Lnet/minecraft/world/phys/Vec3;"
+        )
+    )
+    private static net.minecraft.world.phys.Vec3 pliers$previewStarts(
+        com.simibubi.create.content.trains.track.BezierConnection bc0,
+        com.simibubi.create.content.trains.track.BezierConnection bc1,
+        int idx,
+        Operation<net.minecraft.world.phys.Vec3> original
+    ) {
+        com.simibubi.create.content.trains.track.BezierConnection edited =
+            net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor.lastEdited();
+        if (edited != null && bc1 == edited && bc0 != edited) {
+            return original.call(edited, edited, idx);
+        }
+        return original.call(bc0, bc1, idx);
+    }
+
     @Inject(method = "renderWrenchRangeCurves", at = @At("RETURN"))
     private static void waterslide$renderSectorControlPoints(
         Minecraft mc,

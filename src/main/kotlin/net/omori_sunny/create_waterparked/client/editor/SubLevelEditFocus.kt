@@ -28,7 +28,10 @@ object SubLevelEditFocus {
     fun tick(mc: Minecraft) {
         val level = mc.level ?: return clear()
         val player = mc.player ?: return clear()
-        if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
+        if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem) &&
+            player.mainHandItem.item !== net.omori_sunny.create_waterparked.content.registry.ModItems.BRASS_PLIER &&
+            player.offhandItem.item !== net.omori_sunny.create_waterparked.content.registry.ModItems.BRASS_PLIER
+        ) return clear()
 
         val current = BezierHandleEditMode.getActiveAnchor()
         val currentCtx = current?.let { SableClientEdit.resolve(level, it) }

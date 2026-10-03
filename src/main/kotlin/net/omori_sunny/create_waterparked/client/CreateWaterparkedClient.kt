@@ -86,6 +86,14 @@ object CreateWaterparkedClient {
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, WaterslideClipboardPaste::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideClipboardCopy::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideSketchApply::onUseItemKey)
+        NeoForge.EVENT_BUS.addListener(
+            EventPriority.HIGHEST,
+            net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor::onUseItemKey
+        )
+        NeoForge.EVENT_BUS.addListener(net.omori_sunny.create_waterparked.client.editor.pliers.PliersRadialOverlay::onClientTick)
+        NeoForge.EVENT_BUS.addListener(net.omori_sunny.create_waterparked.client.editor.pliers.PliersRadialOverlay::onGuiRender)
+        NeoForge.EVENT_BUS.addListener(net.omori_sunny.create_waterparked.client.editor.pliers.PliersRadialOverlay::onMouseScroll)
+        NeoForge.EVENT_BUS.addListener(net.omori_sunny.create_waterparked.client.editor.pliers.PliersRadialOverlay::onKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onUseItemKey)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onRightClickBlock)
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, SlideAttachmentPlacement::onRightClickItem)
@@ -288,6 +296,13 @@ object CreateWaterparkedClient {
                         .SlideControlPointEditor.renderAll(
                             mc, event.poseStack, buffers, camera.position, event.modelViewMatrix
                         )
+                    net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor
+                        .frameUpdate(mc)
+                    net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersGizmo.render(
+                        mc, event.poseStack,
+                        buffers.getBuffer(WaterslideEditorRenderTypes.COLORED_QUADS),
+                        camera.position, event.modelViewMatrix
+                    )
                     buffers.endBatch(WaterslideEditorRenderTypes.COLORED_QUADS)
                     WaterslideEditorRenderTypes.endBoundaryHandleBillboardBatches(buffers)
                     buffers.endBatch(WaterslideEditorRenderTypes.SEE_THROUGH_LINES)

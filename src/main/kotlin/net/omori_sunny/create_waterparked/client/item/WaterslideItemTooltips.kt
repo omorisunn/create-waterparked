@@ -25,15 +25,24 @@ object WaterslideItemTooltips {
         TooltipModifier.REGISTRY.register(ModItems.SLIDE_DRAFTING_TABLE) { event ->
             tooltip(event, "slide_drafting_table")
         }
+        TooltipModifier.REGISTRY.register(ModItems.BRASS_PLIER) { event ->
+            tooltip(event, "brass_plier", dialHint = true)
+        }
     }
 
-    private fun tooltip(event: ItemTooltipEvent, name: String) {
+    private fun tooltip(event: ItemTooltipEvent, name: String, dialHint: Boolean = false) {
         val builder = ItemDescription.Builder(FontHelper.Palette.STANDARD_CREATE)
         builder.addSummary(I18n.get("$KEY_PREFIX$name.tooltip.summary"))
         builder.addBehaviour(
             I18n.get("$KEY_PREFIX$name.tooltip.condition"),
             I18n.get("$KEY_PREFIX$name.tooltip.behaviour")
         )
+        if (dialHint) {
+            builder.addBehaviour(
+                I18n.get("$KEY_PREFIX$name.tooltip.dial.condition"),
+                I18n.get("$KEY_PREFIX$name.tooltip.dial.behaviour")
+            )
+        }
         event.toolTip.addAll(1, builder.build().currentLines)
     }
 }

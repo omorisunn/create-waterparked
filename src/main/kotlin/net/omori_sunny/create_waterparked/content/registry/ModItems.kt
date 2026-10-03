@@ -64,4 +64,10 @@ object ModItems {
         Supplier { ModBlocks.SLIDE_DRAFTING_TABLE },
         Item.Properties().stacksTo(64)
     )
+
+    val BRASS_PLIER: Item by REGISTRY.registerItem(
+        "brass_plier",
+        ::Item,
+        Item.Properties().stacksTo(1)
+    )
 }

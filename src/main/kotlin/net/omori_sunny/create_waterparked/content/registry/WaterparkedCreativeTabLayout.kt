@@ -21,6 +21,7 @@ object WaterparkedCreativeTabLayout {
             item === ModItems.COKE_TUBE_DRINK ||
             item === ModItems.SLIDE_SKETCH ||
             item === ModItems.SLIDE_DRAFTING_TABLE ||
+            item === ModItems.BRASS_PLIER ||
             item is SlideAttachmentBlockItem
     }
 
