@@ -149,5 +149,19 @@
   "create_waterparked.roller.hinge_unlocked": "铰链：已解锁（自由轴承）",
   "create_waterparked.roller.hinge_fallback": "铰链：已解锁（回退模式）",
   "block.create_waterparked.roller_conveyor": "滚筒传送带",
-  "item.create_waterparked.roller_conveyor": "滚筒传送带"
+  "item.create_waterparked.roller_conveyor": "滚筒传送带",
+  "item.create_waterparked.brass_plier": "黄铜钳",
+  "item.create_waterparked.brass_plier.tooltip.summary": "用于_精调滑梯控制点_的工具",
+  "item.create_waterparked.brass_plier.tooltip.condition": "当对锚点使用时",
+  "item.create_waterparked.brass_plier.tooltip.behaviour": "沿轴/平面/定长圆弧拖动手柄，并自动对齐邻近控制点",
+  "item.create_waterparked.brass_plier.tooltip.dial.condition": "手持长按时",
+  "item.create_waterparked.brass_plier.tooltip.dial.behaviour": "按住 Ctrl 打开设置圆环",
+  "create_waterparked.pliers.align.cartesian": "直角坐标",
+  "create_waterparked.pliers.align.polar": "极坐标",
+  "create_waterparked.pliers.space.absolute": "绝对方向",
+  "create_waterparked.pliers.space.relative": "相对方向",
+  "create_waterparked.pliers.plane.oxy": "Oxy",
+  "create_waterparked.pliers.plane.oxz": "Oxz",
+  "create_waterparked.pliers.plane.oyz": "Oyz",
+  "create_waterparked.pliers.activated": "黄铜钳已锁定此锚点"
 }
