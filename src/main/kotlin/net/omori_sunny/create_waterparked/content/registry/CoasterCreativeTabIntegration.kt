@@ -25,5 +25,6 @@ object CoasterCreativeTabIntegration {
         for (type in net.omori_sunny.create_waterparked.content.attachment.SlideAttachmentTypes.all()) {
             event.accept(type.item.get())
         }
+        event.accept(ModItems.BRASS_PLIER)
     }
 }
