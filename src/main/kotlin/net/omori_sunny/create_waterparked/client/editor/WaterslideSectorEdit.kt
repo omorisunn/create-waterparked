@@ -758,7 +758,10 @@ object WaterslideSectorEdit {
         val player = mc.player ?: return clear()
         val level = mc.level ?: return clear()
         if (!SubLevelEditFocus.isActive(level)) return clear()
-        if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
+        if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem) &&
+            player.mainHandItem.item !== net.omori_sunny.create_waterparked.content.registry.ModItems.BRASS_PLIER &&
+            player.offhandItem.item !== net.omori_sunny.create_waterparked.content.registry.ModItems.BRASS_PLIER
+        ) return clear()
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return clear()
         val ctx = SableClientEdit.resolve(level, anchor) ?: return clear()
         if (SlideEditState.isEditingAttachment()) {

@@ -29,6 +29,7 @@ import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.api.distmarker.OnlyIn
 import net.neoforged.neoforge.network.PacketDistributor
+import net.omori_sunny.create_waterparked.client.editor.pliers.BrassPliersEditor
 import org.joml.Matrix4f
 import org.joml.Vector3d
 import kotlin.math.abs
@@ -82,7 +83,10 @@ object WaterslideRadiusEdit {
         val player = mc.player ?: return clear()
         val level = mc.level ?: return clear()
         if (!SubLevelEditFocus.isActive(level)) return clear()
-        if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem)) return clear()
+        if (!AllItems.WRENCH.isIn(player.mainHandItem) && !AllItems.WRENCH.isIn(player.offhandItem) &&
+            player.mainHandItem.item !== net.omori_sunny.create_waterparked.content.registry.ModItems.BRASS_PLIER &&
+            player.offhandItem.item !== net.omori_sunny.create_waterparked.content.registry.ModItems.BRASS_PLIER
+        ) return clear()
         val anchor = SubLevelEditFocus.activeAnchor(level) ?: return clear()
         val ctx = SableClientEdit.resolve(level, anchor) ?: return clear()
         if (SlideEditState.isEditingAttachment()) {
@@ -95,6 +99,14 @@ object WaterslideRadiusEdit {
         SlideEditState.enterSlide()
         val be = ctx.be
         if (WaterslideSectorEdit.isDraggingControlPoint() || BezierHandleDragManager.isDraggingHandle()) return
+        if (BrassPliersEditor.isDragging()) {
+            if (dragging) {
+                dragging = false
+                dragAnchor = null
+                lastDragSoundRadius = Float.NaN
+            }
+            return
+        }
 
         val eye = if (ctx.sub == null) player.eyePosition else SableClientEdit.worldToPlot(ctx.sub!!, player.eyePosition)
         val view = if (ctx.sub == null) player.getViewVector(1f)
@@ -161,16 +173,22 @@ object WaterslideRadiusEdit {
 
         poseStack.pushPose()
 
+        val subScale = ctx.sub?.let {
+            val s = it.logicalPose().scale()
+            maxOf(s.x(), s.y(), s.z()).coerceAtLeast(0.1).toFloat()
+        } ?: 1f
         val radius = previewRadii[anchor] ?: be.radius
-        drawAnchorCircle(level, ctx, poseStack, bufferSource, cameraPos, cameraRotation, radius, 0.2f, 0.9f, 1.0f)
+        drawAnchorCircle(level, ctx, poseStack, bufferSource, cameraPos, cameraRotation, radius * subScale, 0.2f, 0.9f, 1.0f)
         val tipPlot = handleTipWorld(level, ctx.globalPos, radius)
         val tip = if (ctx.sub == null) tipPlot else SableClientEdit.toWorld(ctx.sub!!, tipPlot)
         val lateralPlot = handleLateral(level, ctx.globalPos)
         val lateral = if (ctx.sub == null) lateralPlot else SableClientEdit.toWorldNormal(ctx.sub!!, lateralPlot)
         val hovering = isHovering(mc, level, ctx.globalPos, radius)
+        val pliersDrag = BrassPliersEditor.draggedAnchorOf(BrassPliersEditor.Kind.RADIUS) ==
+            ctx.globalPos
         drawHandleTip(
             poseStack, bufferSource, cameraPos, cameraRotation, tip,
-            lateral, dragging, hovering
+            lateral, dragging || pliersDrag, hovering && !pliersDrag
         )
 
         poseStack.popPose()
@@ -308,6 +326,23 @@ object WaterslideRadiusEdit {
         val center = anchorCenter(level, pos)
         return center.add(handleLateral(level, pos).scale(radius.toDouble()))
     }
+
+    @JvmStatic
+    fun pliersAnchorCenter(level: Level, pos: BlockPos): Vec3 = anchorCenter(level, pos)
+
+    @JvmStatic
+    fun pliersHandleTip(level: Level, pos: BlockPos): Vec3 {
+        val be = level.getBlockEntity(pos) as? WaterslideAnchorBlockEntity ?: return Vec3.ZERO
+        return handleTipWorld(level, pos, be.radius)
+    }
+
+    @JvmStatic
+    fun pliersPreviewRadius(anchor: BlockPos, radius: Float?) {
+        if (radius == null) previewRadii.remove(anchor) else previewRadii[anchor] = radius
+    }
+
+    @JvmStatic
+    fun pliersHandleLateral(level: Level, pos: BlockPos): Vec3 = handleLateral(level, pos).normalize()
 
     private fun dragTargetWorld(mc: Minecraft, level: Level, pos: BlockPos): Vec3? {
         val player = mc.player ?: return null

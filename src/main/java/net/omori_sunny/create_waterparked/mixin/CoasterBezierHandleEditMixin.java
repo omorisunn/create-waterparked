@@ -154,4 +154,22 @@ public abstract class CoasterBezierHandleEditMixin {
     private static boolean coasterOrWaterslideEquals(ResourceLocation self, Object other, Operation<Boolean> original) {
         return WaterslideTrackMaterials.isCoasterOrWaterslideEquals(self, other) || original.call(self, other);
     }
+
+    @Inject(
+        method = "liftedWorldCenterFromCanonicalTangent(Lnet/minecraft/world/level/Level;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/Vec3;)"
+            + "Lnet/minecraft/world/phys/Vec3;",
+        at = @At("HEAD"),
+        cancellable = true
+    )
+    private static void waterslide$plainLiftedCenter(
+        Level level,
+        BlockPos pos,
+        Vec3 tangent,
+        CallbackInfoReturnable<Vec3> cir
+    ) {
+        if (level.getBlockEntity(pos) instanceof WaterslideAnchorBlockEntity) {
+            cir.setReturnValue(CoasterAnchorpointBlockEntity.worldCenter(level, pos));
+        }
+    }
 }
