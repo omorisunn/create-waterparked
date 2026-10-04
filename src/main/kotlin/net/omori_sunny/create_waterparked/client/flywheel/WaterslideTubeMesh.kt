@@ -142,6 +142,14 @@ object WaterslideTubeMesh {
     data class SectorWall(
         val blockId: String,
         val model: Model,
+        val translucent: Boolean,
+        val u0: Float,
+        val u1: Float
+    )
+
+    data class SectorCap(
+        val blockId: String,
+        val model: Model,
         val translucent: Boolean
     )
 
@@ -150,6 +158,8 @@ object WaterslideTubeMesh {
         val sectorWalls: List<SectorWall>,
         val startCap: Model,
         val endCap: Model,
+        val sectorStartCaps: List<SectorCap>,
+        val sectorEndCaps: List<SectorCap>,
         val wallTranslucent: Model,
         val startCapTranslucent: Model,
         val endCapTranslucent: Model,
@@ -474,8 +484,11 @@ object WaterslideTubeMesh {
 
         val wallVerts = ArrayList<V>()
         val sectorBuckets = LinkedHashMap<String, ArrayList<V>>()
+        val sectorUBounds = HashMap<String, FloatArray>()
         val startCapVerts = ArrayList<V>()
         val endCapVerts = ArrayList<V>()
+        val startCapBuckets = LinkedHashMap<String, ArrayList<V>>()
+        val endCapBuckets = LinkedHashMap<String, ArrayList<V>>()
 
         fun add(
             dst: MutableList<V>,
@@ -592,7 +605,8 @@ object WaterslideTubeMesh {
             if (p.sector.material == SectorMaterial.OPEN) continue
             val blockId = p.sector.blockId ?: continue
             val sprite = spriteFor(blockId) ?: continue
-            val bucket = sectorBuckets.getOrPut(blockId.toString()) { ArrayList() }
+            val bKey = blockId.toString() + "#" + placed.indexOf(p)
+            val bucket = sectorBuckets.getOrPut(bKey) { ArrayList() }
             val texW = sprite.contents().width().toFloat()
             val texH = sprite.contents().height().toFloat()
             val border = ModConfig.sectorBorderPx().toFloat()
@@ -632,6 +646,9 @@ object WaterslideTubeMesh {
                         if (e <= s) continue
                         val arcS = unitArcRaw(rr0 + (s - cg0))
                         val arcE = unitArcRaw(rr0 + (e - cg0))
+                        val bounds = sectorUBounds.getOrPut(bKey) { floatArrayOf(Float.MAX_VALUE, -Float.MAX_VALUE) }
+                        bounds[0] = minOf(bounds[0], arcS * radius)
+                        bounds[1] = maxOf(bounds[1], arcE * radius)
                         val f0 = (s + wrap - startNorm) / sectorDegrees
                         val f1 = (e + wrap - startNorm) / sectorDegrees
                         val a0 = Math.toRadians(s.toDouble())
@@ -683,15 +700,25 @@ object WaterslideTubeMesh {
                         val capUOuter = -(0.5f * (m0 + m1) * wallThickBlocks + 1f)
                         val capV0 = -(arcS * radius + 2f)
                         val capV1 = -(arcE * radius + 2f)
+                        val capEnd = endCapBuckets.getOrPut(bKey) { ArrayList() }
+                        val capStart = startCapBuckets.getOrPut(bKey) { ArrayList() }
                         add(endCapVerts, c0, s0, 0f, c0, s0, 1f, capUOuter, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(capEnd, c0, s0, 0f, c0, s0, 1f, capUOuter, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
                         add(endCapVerts, c1, s1, 0f, c1, s1, 1f, capUOuter, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(capEnd, c1, s1, 0f, c1, s1, 1f, capUOuter, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
                         add(endCapVerts, c1, s1, 0f, -c1, -s1, 1f, -1f, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(capEnd, c1, s1, 0f, -c1, -s1, 1f, -1f, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
                         add(endCapVerts, c0, s0, 0f, -c0, -s0, 1f, -1f, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(capEnd, c0, s0, 0f, -c0, -s0, 1f, -1f, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
 
                         add(startCapVerts, c0, s0, 0f, c0, s0, -1f, capUOuter, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(capStart, c0, s0, 0f, c0, s0, -1f, capUOuter, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
                         add(startCapVerts, c0, s0, 0f, -c0, -s0, -1f, -1f, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(capStart, c0, s0, 0f, -c0, -s0, -1f, -1f, capV0, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
                         add(startCapVerts, c1, s1, 0f, -c1, -s1, -1f, -1f, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(capStart, c1, s1, 0f, -c1, -s1, -1f, -1f, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
                         add(startCapVerts, c1, s1, 0f, c1, s1, -1f, capUOuter, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
+                        add(capStart, c1, s1, 0f, c1, s1, -1f, capUOuter, capV1, arcRadians, texW, texH, effBorder, su0, su1, sv0, sv1, translucent = glass, capV = glass)
                     }
                 }
             }
@@ -714,25 +741,49 @@ object WaterslideTubeMesh {
         }
 
         val sectorWalls = sectorBuckets.entries.map { (k, verts) ->
-            val glass = translucentCache[ResourceLocation.tryParse(k)] == true
+            val matId = k.substringBefore('#')
+            val glass = translucentCache[ResourceLocation.tryParse(matId)] == true
+            val bounds = sectorUBounds[k] ?: floatArrayOf(0f, 0f)
             SectorWall(
-                k,
+                matId,
                 SingleMeshModel(
                     meshOf(verts, "waterslide_tube_wall"),
                     if (glass) GLASS_TRANSLUCENT_MATERIAL else TUBE_CUTOUT_MATERIAL
                 ),
-                glass
+                glass,
+                bounds[0],
+                bounds[1]
             )
         }
 
         val wallMesh = meshOf(wallVerts, "waterslide_tube_wall")
         val startCapMesh = meshOf(startCapVerts, "waterslide_tube_start_cap")
         val endCapMesh = meshOf(endCapVerts, "waterslide_tube_end_cap")
+        val sectorStartCaps = startCapBuckets.entries.map { (k, verts) ->
+            val matId = k.substringBefore('#')
+            val glass = translucentCache[ResourceLocation.tryParse(matId)] == true
+            SectorCap(
+                matId,
+                SingleMeshModel(meshOf(verts, "waterslide_tube_start_cap"), TUBE_CAP_CUTOUT_MATERIAL),
+                glass
+            )
+        }
+        val sectorEndCaps = endCapBuckets.entries.map { (k, verts) ->
+            val matId = k.substringBefore('#')
+            val glass = translucentCache[ResourceLocation.tryParse(matId)] == true
+            SectorCap(
+                matId,
+                SingleMeshModel(meshOf(verts, "waterslide_tube_end_cap"), TUBE_CAP_CUTOUT_MATERIAL),
+                glass
+            )
+        }
         return TubeModels(
             SingleMeshModel(wallMesh, TUBE_CUTOUT_MATERIAL),
             sectorWalls,
             SingleMeshModel(startCapMesh, TUBE_CAP_CUTOUT_MATERIAL),
             SingleMeshModel(endCapMesh, TUBE_CAP_CUTOUT_MATERIAL),
+            sectorStartCaps,
+            sectorEndCaps,
             SingleMeshModel(wallMesh, TUBE_TRANSLUCENT_MATERIAL),
             SingleMeshModel(startCapMesh, TUBE_TRANSLUCENT_MATERIAL),
             SingleMeshModel(endCapMesh, TUBE_TRANSLUCENT_MATERIAL),
@@ -1017,6 +1068,32 @@ object WaterslideTubeMesh {
         val s = spriteFor(rl) ?: return null
         return floatArrayOf(s.u0, s.u1, s.v0, s.v1)
     }
+
+    @JvmStatic
+    fun spriteInfoFor(blockId: String): FloatArray? {
+        val rl = ResourceLocation.tryParse(blockId) ?: return null
+        val s = spriteFor(rl) ?: return null
+        val border = if (isTranslucent(rl)) borderPxOf(s).toFloat()
+        else net.omori_sunny.create_waterparked.config.ModConfig.sectorBorderPx().toFloat()
+        val (w, h) = spriteSizeOf(s)
+        return floatArrayOf(s.u0, s.u1, s.v0, s.v1, w.toFloat(), h.toFloat(), border)
+    }
+
+    private val texSizeCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, Int>>()
+
+    private fun spriteSizeOf(sprite: TextureAtlasSprite): Pair<Int, Int> =
+        texSizeCache.getOrPut(sprite.contents().name().toString()) {
+            try {
+                val c = sprite.contents()
+                val wf = SpriteContents::class.java.getDeclaredField("width")
+                val hf = SpriteContents::class.java.getDeclaredField("height")
+                wf.isAccessible = true
+                hf.isAccessible = true
+                (wf.get(c) as Int) to (hf.get(c) as Int)
+            } catch (t: Throwable) {
+                16 to 16
+            }
+        }
 
     @JvmStatic
     fun waterSpriteRect(): FloatArray {

@@ -4,7 +4,59 @@
 in vec4 flw_tubeSprite;
 in vec3 flw_tubeTex;
 in vec4 flw_tubeFlags;
-in vec2 flw_tubeExtra;
+in vec4 flw_tubeExtra;
+
+// seamless center-band fold for a world-locked block coordinate: the texture's border rows
+// are never sampled, the center repeats on a world-continuous phase at native pixel scale —
+// nothing stretches, and adjacent tiles connect. border=0 is plain tiling.
+float sliceCoord(float xBlocks, float texPx, float border) {
+    float centerW = texPx - 2.0 * border;
+    if (centerW < 1.0) return fract(xBlocks) * texPx;
+    return border + mod(xBlocks * texPx - border, centerW);
+}
+
+// ring-arc u for wall shells: REAL border strips only at the sector's own edges (the
+// fragment's sector bounds arrive in flw_tubeExtra for opaque walls); the interior folds
+// with the seamless center band
+float wallU(float uBlocks, float texPx, float border, vec4 sprite, vec2 sector) {
+    float span = sprite.y - sprite.x;
+    float bBlocks = border / texPx;
+    float su0 = sector.x;
+    float su1 = sector.y;
+    if (border >= 0.5 && su1 - su0 > 2.0 * bBlocks) {
+        float p;
+        if (uBlocks >= su0 && uBlocks < su0 + bBlocks) {
+            p = (uBlocks - su0) / bBlocks * border;
+        } else if (uBlocks > su1 - bBlocks && uBlocks <= su1) {
+            p = texPx - border + (uBlocks - (su1 - bBlocks)) / bBlocks * border;
+        } else {
+            p = sliceCoord(uBlocks, texPx, border);
+        }
+        return sprite.x + (p / texPx) * span;
+    }
+    return sprite.x + (sliceCoord(uBlocks, texPx, border) / texPx) * span;
+}
+
+// curve-length v for wall shells: REAL border strips at the curve's two mouths (the curve's
+// world v range arrives in flw_tubeExtra.zw); the interior folds seamlessly
+float wallV(float vBlocks, float texPx, float border, vec4 sprite, vec2 vRange) {
+    float span = sprite.w - sprite.z;
+    float bBlocks = border / texPx;
+    float v0 = vRange.x;
+    float v1 = vRange.y;
+    if (border >= 0.5 && v1 - v0 > 2.0 * bBlocks) {
+        float p;
+        if (vBlocks >= v0 && vBlocks < v0 + bBlocks) {
+            p = (vBlocks - v0) / bBlocks * border;
+        } else if (vBlocks > v1 - bBlocks && vBlocks <= v1) {
+            p = texPx - border + (vBlocks - (v1 - bBlocks)) / bBlocks * border;
+        } else {
+            p = sliceCoord(vBlocks, texPx, border);
+        }
+        return sprite.z + (p / texPx) * span;
+    }
+    return sprite.z + (sliceCoord(vBlocks, texPx, border) / texPx) * span;
+}
 
 void flw_materialFragment() {
     float isWater = flw_tubeFlags.x;
@@ -29,7 +81,11 @@ void flw_materialFragment() {
         // folded here. Folding per fragment keeps interpolation continuous, so quads crossing
         // a tile boundary never shear; every tile is exactly one block and partial tiles at
         // fins and caps simply truncate at their outer edge
-        float u = flw_tubeSprite.x + fract(-flw_vertexTexCoord.x) * (flw_tubeSprite.y - flw_tubeSprite.x);
+        float uBlocks = -flw_vertexTexCoord.x;
+        bool isWallShell = flw_tubeFlags.w < 1.5 && flw_tubeFlags.y < 1.5;
+        float u = isWallShell
+            ? wallU(uBlocks, texW, borderPx, flw_tubeSprite, flw_tubeExtra.xy)
+            : flw_tubeSprite.x + (sliceCoord(uBlocks, texW, borderPx) / texW) * (flw_tubeSprite.y - flw_tubeSprite.x);
         float vRaw = flw_vertexTexCoord.y;
         float v;
         if (flw_tubeFlags.w > 1.5) {
@@ -45,9 +101,11 @@ void flw_materialFragment() {
             }
             v = vPx >= 0.0
                 ? flw_tubeSprite.z + (vPx / gTexH) * (flw_tubeSprite.w - flw_tubeSprite.z)
-                : flw_tubeSprite.z + fract(vRaw) * (flw_tubeSprite.w - flw_tubeSprite.z);
+                : flw_tubeSprite.z + (sliceCoord(vRaw, texH, borderPx) / texH) * (flw_tubeSprite.w - flw_tubeSprite.z);
+        } else if (isWallShell) {
+            v = wallV(vRaw, texH, borderPx, flw_tubeSprite, flw_tubeExtra.zw);
         } else {
-            v = flw_tubeSprite.z + fract(vRaw) * (flw_tubeSprite.w - flw_tubeSprite.z);
+            v = flw_tubeSprite.z + (sliceCoord(vRaw, texH, borderPx) / texH) * (flw_tubeSprite.w - flw_tubeSprite.z);
         }
         uv = vec2(u, v);
     } else {

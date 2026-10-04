@@ -144,6 +144,7 @@ class WaterslideTubeVisual(
         sb.append(WaterFlowSimulation.version()).append('|')
         sb.append(ModClientConfig.polygonScale()).append('|')
         sb.append(ModConfig.wallThickness()).append('|')
+        sb.append(ModConfig.sectorBorderPx()).append('|')
         sb.append(be.radius).append('|')
         sb.append(be.supportMaterial(WaterslideSupportPart.BRACKET)).append('|')
         sb.append(be.supportMaterial(WaterslideSupportPart.BEAM)).append('|')
@@ -876,7 +877,7 @@ class WaterslideTubeVisual(
             for (s in config.sectors) {
                 if (s.material == SectorMaterial.OPEN) continue
                 val blockId = s.blockId ?: continue
-                val r = WaterslideTubeMesh.spriteRectFor(blockId.toString())
+                val r = WaterslideTubeMesh.spriteInfoFor(blockId.toString())
                 if (r != null) return r
             }
             return null
@@ -1474,6 +1475,7 @@ class WaterslideTubeVisual(
                         if (spr != null) {
                             inst.spriteU0 = spr[0]; inst.spriteU1 = spr[1]
                             inst.spriteV0 = spr[2]; inst.spriteV1 = spr[3]
+                            inst.texW = spr[4]; inst.texH = spr[5]; inst.borderPx = spr[6]
                         }
                         inst.color(1f, 1f, 1f, 0.35f)
                         instances.add(inst)
@@ -1484,7 +1486,7 @@ class WaterslideTubeVisual(
                     val groupModels = if (shape == null) models
                     else WaterslideTubeMesh.modelsFor(config, frames[idxs[0]].let { (it.prevRadius + it.currRadius) * 0.5f }, shape)
                     for (sw in groupModels.sectorWalls) {
-                        val spr = WaterslideTubeMesh.spriteRectFor(sw.blockId) ?: continue
+                        val spr = WaterslideTubeMesh.spriteInfoFor(sw.blockId) ?: continue
                         val wallInstancer: Instancer<WaterslideTubeInstance> =
                             instancerProvider().instancer(
                                 WaterslideTubeInstanceType.INSTANCE, sw.model)
@@ -1509,10 +1511,13 @@ class WaterslideTubeVisual(
                             inst.isWater = 0f
                             inst.spriteU0 = spr[0]; inst.spriteU1 = spr[1]
                             inst.spriteV0 = spr[2]; inst.spriteV1 = spr[3]
+                            inst.texW = spr[4]; inst.texH = spr[5]; inst.borderPx = spr[6]
+                            inst.sectorU0 = sw.u0
+                            inst.sectorU1 = sw.u1
+                            inst.arcBase = wallPrefixArcs[i]
+                            inst.downstreamMix = wallPrefixArcs[frames.size]
                             if (sw.translucent) {
                                 inst.waterTileSpan = 2f
-                                inst.arcBase = wallPrefixArcs[i]
-                                inst.downstreamMix = wallPrefixArcs[frames.size]
                             }
                             instances.add(inst)
                         }
@@ -1526,71 +1531,78 @@ class WaterslideTubeVisual(
             if (isOpenEnd(curve.bePositions.first)) {
                 val capModels = if (first.prevProfile == null) models
                 else WaterslideTubeMesh.modelsFor(config, first.prevRadius, first.prevProfile)
-                val startCapInstancer: Instancer<WaterslideTubeInstance> =
-                    instancerProvider().instancer(
-                        WaterslideTubeInstanceType.INSTANCE,
-                        if (translucent) capModels.startCapTranslucent else capModels.startCap
-                    )
-                val startCap = startCapInstancer.createInstance()
                 val startTip = first.prevSpine
                 val startTan = first.prevTangent
                 val startLight = tubeLight(level, startTip.add(origin))
-                startCap
-                    .setSegment(
-                        startTip, startTip.add(startTan.scale(0.001)),
-                        startTan, startTan,
-                        first.prevLateral, first.prevLateral,
-                        first.prevRadius, first.prevRadius
-                    )
-                    .light(startLight)
-                    .setChanged()
-                startCap.wallThickness = wallThickness
-                startCap.mirror = mirror
-                startCap.isWater = 0f
-                val capSpr = firstSectorSprite()
-                if (capSpr != null) {
-                    startCap.spriteU0 = capSpr[0]; startCap.spriteU1 = capSpr[1]
-                    startCap.spriteV0 = capSpr[2]; startCap.spriteV1 = capSpr[3]
+                // one cap instance per sector so every material keeps its own sprite
+                val startTargets: List<Pair<dev.engine_room.flywheel.api.model.Model, FloatArray?>> = if (translucent) {
+                    listOf(capModels.startCapTranslucent to firstSectorSprite())
+                } else {
+                    capModels.sectorStartCaps.map { it.model to WaterslideTubeMesh.spriteInfoFor(it.blockId) }
                 }
-                if (translucent) {
-                    startCap.color(1f, 1f, 1f, 0.35f)
+                for ((model, capSpr) in startTargets) {
+                    val startCap = instancerProvider()
+                        .instancer(WaterslideTubeInstanceType.INSTANCE, model).createInstance()
+                    startCap
+                        .setSegment(
+                            startTip, startTip.add(startTan.scale(0.001)),
+                            startTan, startTan,
+                            first.prevLateral, first.prevLateral,
+                            first.prevRadius, first.prevRadius
+                        )
+                        .light(startLight)
+                        .setChanged()
+                    startCap.wallThickness = wallThickness
+                    startCap.mirror = mirror
+                    startCap.isWater = 0f
+                    if (capSpr != null) {
+                        startCap.spriteU0 = capSpr[0]; startCap.spriteU1 = capSpr[1]
+                        startCap.spriteV0 = capSpr[2]; startCap.spriteV1 = capSpr[3]
+                        startCap.texW = capSpr[4]; startCap.texH = capSpr[5]; startCap.borderPx = capSpr[6]
+                    }
+                    if (translucent) {
+                        startCap.color(1f, 1f, 1f, 0.35f)
+                    }
+                    instances.add(startCap)
                 }
-                instances.add(startCap)
             }
 
             if (isOpenEnd(curve.bePositions.second)) {
                 val capModels = if (last.currProfile == null) models
                 else WaterslideTubeMesh.modelsFor(config, last.currRadius, last.currProfile)
-                val endCapInstancer: Instancer<WaterslideTubeInstance> =
-                    instancerProvider().instancer(
-                        WaterslideTubeInstanceType.INSTANCE,
-                        if (translucent) capModels.endCapTranslucent else capModels.endCap
-                    )
-                val endCap = endCapInstancer.createInstance()
                 val endTip = last.currSpine
                 val endTan = last.currTangent
                 val endLight = tubeLight(level, endTip.add(origin))
-                endCap
-                    .setSegment(
-                        endTip, endTip.add(endTan.scale(0.001)),
-                        endTan, endTan,
-                        last.currLateral, last.currLateral,
-                        last.currRadius, last.currRadius
-                    )
-                    .light(endLight)
-                    .setChanged()
-                endCap.wallThickness = wallThickness
-                endCap.mirror = mirror
-                endCap.isWater = 0f
-                val capSprEnd = firstSectorSprite()
-                if (capSprEnd != null) {
-                    endCap.spriteU0 = capSprEnd[0]; endCap.spriteU1 = capSprEnd[1]
-                    endCap.spriteV0 = capSprEnd[2]; endCap.spriteV1 = capSprEnd[3]
+                val endTargets: List<Pair<dev.engine_room.flywheel.api.model.Model, FloatArray?>> = if (translucent) {
+                    listOf(capModels.endCapTranslucent to firstSectorSprite())
+                } else {
+                    capModels.sectorEndCaps.map { it.model to WaterslideTubeMesh.spriteInfoFor(it.blockId) }
                 }
-                if (translucent) {
-                    endCap.color(1f, 1f, 1f, 0.35f)
+                for ((model, capSprEnd) in endTargets) {
+                    val endCap = instancerProvider()
+                        .instancer(WaterslideTubeInstanceType.INSTANCE, model).createInstance()
+                    endCap
+                        .setSegment(
+                            endTip, endTip.add(endTan.scale(0.001)),
+                            endTan, endTan,
+                            last.currLateral, last.currLateral,
+                            last.currRadius, last.currRadius
+                        )
+                        .light(endLight)
+                        .setChanged()
+                    endCap.wallThickness = wallThickness
+                    endCap.mirror = mirror
+                    endCap.isWater = 0f
+                    if (capSprEnd != null) {
+                        endCap.spriteU0 = capSprEnd[0]; endCap.spriteU1 = capSprEnd[1]
+                        endCap.spriteV0 = capSprEnd[2]; endCap.spriteV1 = capSprEnd[3]
+                        endCap.texW = capSprEnd[4]; endCap.texH = capSprEnd[5]; endCap.borderPx = capSprEnd[6]
+                    }
+                    if (translucent) {
+                        endCap.color(1f, 1f, 1f, 0.35f)
+                    }
+                    instances.add(endCap)
                 }
-                instances.add(endCap)
             }
 
             buildWaterBand(wallThickness, mirror)
