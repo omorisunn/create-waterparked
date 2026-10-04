@@ -160,6 +160,8 @@ class SlideProfile private constructor(
         const val MAX_MULTIPLIER = 3.0f
         const val DEFAULT_TRANSITION = 1.5f
 
+        val CIRCLE = FloatArray(SAMPLES) { 1f }
+
         const val MODE_NONE: Byte = 0
         const val MODE_SYMMETRIC: Byte = 1
         const val MODE_FREE: Byte = 2
