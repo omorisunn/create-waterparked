@@ -102,6 +102,21 @@ class WaterslideTubeInstance(
     var spriteV1 = 1f
 
     @JvmField
+    var texW = 16f
+
+    @JvmField
+    var texH = 16f
+
+    @JvmField
+    var borderPx = 2f
+
+    @JvmField
+    var sectorU0 = 0f
+
+    @JvmField
+    var sectorU1 = 0f
+
+    @JvmField
     var isWater = 0f
 
     @JvmField

@@ -1,7 +1,7 @@
 out vec4 flw_tubeSprite;
 out vec3 flw_tubeTex;
 out vec4 flw_tubeFlags;
-out vec2 flw_tubeExtra;
+out vec4 flw_tubeExtra;
 
 const float BASE_WALL = 0.1;
 // keep in sync with WaterFlowSimulation.WATER_V_CYCLES_PER_BLOCK
@@ -67,10 +67,9 @@ void flw_instanceVertex(in FlwInstance i) {
     float spriteV0 = i.spriteV0;
     float spriteV1 = i.spriteV1;
     float isWater = i.isWater;
-    // block sprites are 16px; border pixels fixed at the default (2)
-    float texW = 16.0;
-    float texH = 16.0;
-    float borderPx = 2.0;
+    float texW = max(i.texW, 1.0);
+    float texH = max(i.texH, 1.0);
+    float borderPx = max(i.borderPx, 0.0);
     float boundaryFactor = 1.0;
     flw_tubeSprite = vec4(spriteU0, spriteU1, spriteV0, spriteV1);
     flw_tubeTex = vec3(texW, texH, borderPx);
@@ -178,7 +177,11 @@ void flw_instanceVertex(in FlwInstance i) {
                 );
             } else {
                 flw_vertexTexCoord = vec2(-uBlocks, vBlocks);
-                flw_tubeExtra = vec2(0.0, i.downstreamMix);
+                // glass walls keep the (vUp, totalArc) pair in xy; opaque walls carry their
+                // sector's ring-arc bounds plus the curve's world v range for border bands
+                flw_tubeExtra = i.waterTileSpan > 1.5
+                    ? vec4(0.0, i.downstreamMix, 0.0, 0.0)
+                    : vec4(i.sectorU0, i.sectorU1, i.arcBase, i.downstreamMix);
             }
         }
     }
@@ -217,12 +220,12 @@ void flw_instanceVertex(in FlwInstance i) {
                 spriteU0 + mod(uf, 1.0) * (spriteU1 - spriteU0),
                 spriteV0 + mod(vSpan, 1.0) * (spriteV1 - spriteV0)
             );
-            flw_tubeExtra = vec2(
-                spriteV0 + mod(vSpan, 1.0) * (spriteV1 - spriteV0), i.downstreamMix
+            flw_tubeExtra = vec4(
+                spriteV0 + mod(vSpan, 1.0) * (spriteV1 - spriteV0), i.downstreamMix, 0.0, 0.0
             );
         } else {
             flw_vertexTexCoord = vec2(uf, vSpan);
-            flw_tubeExtra = vec2(vSpan, i.downstreamMix);
+            flw_tubeExtra = vec4(vSpan, i.downstreamMix, 0.0, 0.0);
         }
     } else {
     }
