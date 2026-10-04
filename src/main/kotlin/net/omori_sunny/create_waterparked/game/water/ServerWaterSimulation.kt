@@ -51,6 +51,11 @@ object ServerWaterSimulation {
     private const val SIG_MIX_A = -49064778989728563L
     private const val SIG_MIX_B = -4265267296055464877L
 
+    // dirty marks go quiet: chunk streaming re-marks every anchor load, so a recalc waits
+    // until marks stop arriving (or the cap) instead of firing every cooldown window
+    private const val QUIET_TICKS = 20L
+    private const val MAX_PENDING_TICKS = 200L
+
     private val DEBUG = CreateWaterparked.LOGGER.isDebugEnabled
 
     data class WaterSegment(
@@ -223,6 +228,18 @@ object ServerWaterSimulation {
         Thread(r, "Create-Waterparked-WaterSim").apply { isDaemon = true }
     }
     private val waterCalcRunning = ConcurrentHashMap.newKeySet<ResourceKey<Level>>()
+    private val lastDirtyAt = ConcurrentHashMap<String, Long>()
+    private val pendingSince = ConcurrentHashMap<String, Long>()
+
+    private fun markKey(key: String, gameTime: Long, force: Boolean = false) {
+        dirty += key
+        if (force) {
+            lastDirtyAt[key] = 0L
+            return
+        }
+        pendingSince.putIfAbsent(key, gameTime)
+        lastDirtyAt[key] = gameTime
+    }
 
     private fun spaceKey(access: SlideSpaceAccess): String = access.space.cacheKey(access.level)
 
@@ -237,25 +254,24 @@ object ServerWaterSimulation {
     }
 
     fun markDirty(level: Level) {
-        if (!level.isClientSide) dirty += SlideSpace.Main.cacheKey(level)
+        if (!level.isClientSide) markKey(SlideSpace.Main.cacheKey(level), level.gameTime)
     }
 
     fun markSpaceDirty(level: Level, space: SlideSpace) {
-        if (!level.isClientSide) dirty += space.cacheKey(level)
+        if (!level.isClientSide) markKey(space.cacheKey(level), level.gameTime)
     }
 
     fun resync(level: Level) {
         if (level.isClientSide) return
-        val key = SlideSpace.Main.cacheKey(level)
-        dirty += key
-        lastSig.remove(key)
+        markKey(SlideSpace.Main.cacheKey(level), level.gameTime)
+        lastSig.remove(SlideSpace.Main.cacheKey(level))
     }
 
     fun refresh(level: ServerLevel) {
         if (level.isClientSide) return
         for (a in allAccesses(level)) {
             val key = spaceKey(a)
-            dirty += key
+            markKey(key, level.gameTime, force = true)
             lastSig.remove(key)
             fields.remove(key)
         }
@@ -340,7 +356,9 @@ object ServerWaterSimulation {
             sub.latestLinearVelocity.lengthSquared() > 4.0
         }
         val lastCrossScan = lastCrossScanTick[dim]
-        val crossSig = if (lastCrossScan == null || level.gameTime - lastCrossScan >= 20) {
+        val crossSig = if (lastCalcAll[dim] != null &&
+            (lastCrossScan == null || level.gameTime - lastCrossScan >= 20)
+        ) {
             lastCrossScanTick[dim] = level.gameTime
             crossLinkSignature(level)
         } else {
@@ -350,7 +368,7 @@ object ServerWaterSimulation {
             val pending = pendingCrossSigWhileMoving.remove(dim)
             if (pending != null && pending != lastCrossLinkSig[dim]) {
                 lastCrossLinkSig[dim] = pending
-                for (a in accesses) dirty += spaceKey(a)
+                for (a in accesses) markKey(spaceKey(a), level.gameTime)
                 if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterCross] settled after movement -> recalc")
             }
         }
@@ -360,33 +378,41 @@ object ServerWaterSimulation {
                 if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterCross] deferred while sub-level is moving")
             } else {
                 lastCrossLinkSig[dim] = crossSig
-                for (a in accesses) dirty += spaceKey(a)
+                for (a in accesses) markKey(spaceKey(a), level.gameTime)
                 if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterCross] link signature changed -> recalc")
             }
         }
 
-        for (a in accesses) {
-            val key = spaceKey(a)
-            val last = lastStableCheckTick[key]
-            if (last != null && level.gameTime - last < 100) continue
-            lastStableCheckTick[key] = level.gameTime
-            val sig = try {
-                stableStructureSignature(a)
-            } catch (e: Exception) {
-                CreateWaterparked.LOGGER.error("Stable water sig failed space={}", key, e)
-                continue
+        if (lastCalcAll[dim] != null) {
+            for (a in accesses) {
+                val key = spaceKey(a)
+                val last = lastStableCheckTick[key]
+                if (last != null && level.gameTime - last < 100) continue
+                lastStableCheckTick[key] = level.gameTime
+                val sig = try {
+                    stableStructureSignature(a)
+                } catch (e: Exception) {
+                    CreateWaterparked.LOGGER.error("Stable water sig failed space={}", key, e)
+                    continue
+                }
+                val old = lastStableSig[key]
+                if (old != null && old != sig) {
+                    markKey(key, level.gameTime)
+                    if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterCross] slide structure changed -> recalc")
+                }
+                lastStableSig[key] = sig
             }
-            val old = lastStableSig[key]
-            if (old != null && old != sig) {
-                dirty += key
-                if (DEBUG) CreateWaterparked.LOGGER.debug("[WaterCross] slide structure changed -> recalc")
-            }
-            lastStableSig[key] = sig
         }
         for (a in accesses) {
             if (fields[spaceKey(a)] == null) dirty += spaceKey(a)
         }
-        if (accesses.none { dirty.contains(spaceKey(it)) }) return
+        val now = level.gameTime
+        val readyKeys = accesses.map(::spaceKey).distinct().filter { key ->
+            dirty.contains(key) &&
+                (now - (lastDirtyAt[key] ?: 0L) >= QUIET_TICKS ||
+                    now - (pendingSince[key] ?: 0L) >= MAX_PENDING_TICKS)
+        }
+        if (readyKeys.isEmpty()) return
 
         if (!waterCalcRunning.add(dim)) return
         val last = lastCalcAll[dim]
@@ -394,7 +420,10 @@ object ServerWaterSimulation {
             waterCalcRunning.remove(dim)
             return
         }
-        for (a in accesses) dirty.remove(spaceKey(a))
+        for (k in readyKeys) {
+            dirty.remove(k)
+            pendingSince.remove(k)
+        }
         lastCalcAll[dim] = level.gameTime
 
         val prepared = try {
