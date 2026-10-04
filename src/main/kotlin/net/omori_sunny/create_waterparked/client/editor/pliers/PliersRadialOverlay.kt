@@ -159,7 +159,7 @@ object PliersRadialOverlay {
 
         graphics.drawCenteredString(
             font,
-            Component.literal("Tab 切换环 · Ctrl+滚轮 切换设置"),
+            Component.translatable("create_waterparked.pliers.dial.hint"),
             cx, cy + 104, ((fade * 200).toInt() shl 24) or 0xB8B8C0
         )
     }

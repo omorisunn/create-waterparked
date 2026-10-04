@@ -163,5 +163,6 @@
   "create_waterparked.pliers.plane.oxy": "Oxy",
   "create_waterparked.pliers.plane.oxz": "Oxz",
   "create_waterparked.pliers.plane.oyz": "Oyz",
-  "create_waterparked.pliers.activated": "黄铜钳已锁定此锚点"
+  "create_waterparked.pliers.activated": "黄铜钳已锁定此锚点",
+  "create_waterparked.pliers.dial.hint": "Tab 切换环 · Ctrl+滚轮 切换设置"
 }

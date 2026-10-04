@@ -22,10 +22,12 @@ public abstract class CoasterAnchorpointBlockEntityRemoveCurveMixin {
         if (!((Object) this instanceof WaterslideAnchorBlockEntity be)) return;
         be.removeSectorConfig(peer);
         be.removeGhostBlocksForPeer(peer);
+        be.setCurveProfile(peer, null);
         be.resetRadiusIfEmpty();
         if (level.getBlockEntity(peer) instanceof WaterslideAnchorBlockEntity peerBe) {
             peerBe.removeSectorConfig(be.getBlockPos());
             peerBe.removeGhostBlocksForPeer(be.getBlockPos());
+            peerBe.setCurveProfile(be.getBlockPos(), null);
             peerBe.resetRadiusIfEmpty();
         }
     }
