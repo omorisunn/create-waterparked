@@ -61,23 +61,12 @@ public abstract class ColorwheelWaterEntityMixin {
                 if (v < minV) minV = v;
                 if (v > maxV) maxV = v;
             }
-            boolean sideWall = minU < 0f;
-            if (sideWall) {
-                // decode the negative side wall u back to the atlas coordinate
-                for (int k = 0; k < 4; k++) {
-                    vertexView.u(base + k, -vertexView.u(base + k) - 1f);
-                }
-                minU = Float.MAX_VALUE;
-                maxU = -Float.MAX_VALUE;
-                for (int k = 0; k < 4; k++) {
-                    float u = vertexView.u(base + k);
-                    if (u < minU) minU = u;
-                    if (u > maxU) maxU = u;
-                }
-            }
+            // negative u is the world-arc wall encoding (shells, fins, caps): the tube
+            // shaders fold it into the sprite, so it must reach them untouched
+            if (minU < 0f) continue;
             float rangeU = maxU - minU;
             float rangeV = maxV - minV;
-            boolean changed = sideWall;
+            boolean changed = false;
             if (rangeU > MIN_UV_RANGE && rangeV > MIN_UV_RANGE) {
                 // shrink the uv inset so sampling avoids sprite edges
                 float insetU = rangeU * UV_INSET_RATIO;
@@ -96,8 +85,8 @@ public abstract class ColorwheelWaterEntityMixin {
             }
             if (changed) {
                 CreateWaterparked.INSTANCE.getLOGGER().debug(
-                    "[UvSan] quad {} {} uv=({},{})-({},{})",
-                    sideWall ? "sidewall" : "mesh", q, minU, maxU, minV, maxV
+                    "[UvSan] quad {} uv=({},{})-({},{})",
+                    q, minU, maxU, minV, maxV
                 );
             }
         }
